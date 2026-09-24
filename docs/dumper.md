@@ -10,32 +10,30 @@ functions the port had to re-implement — `Mathf.PerlinNoise`, `UnityEngine.Ran
 
 **It is meant to be installed, run, and then disarmed or removed.** It is not a mod to play with.
 
+**To run it yourself**, follow [`game-data.md`](game-data.md): the step-by-step guide for readers who
+have never installed a mod, from BepInEx to a checked `data\` folder and the dumper removed again.
+
 ## Its state on this machine, right now
 
-It **has been run three times, and a fourth run is installed and waiting.**
+It **has run six times and is not installed.** Run 6 (2026-09-24, assets only: the dungeon doors'
+captions and the Vegvisir pins) was imported the same day, and the plugin was retired to
+`_ModSource\_retired\DoomMachine-SeedLabDumper-20260924-run6`. **F4** is free.
 
-The 2026-09-23 RNG defect - a `RandomGuard` struct whose constructor never ran, which zeroed Unity's
-global generator and made every new world's suggested seed `aaaaaaaaaa` for the rest of the session -
-retired the affected build to `_ModSource\_retired\DoomMachine-SeedLabDumper-20260923\`. The build
-now installed is a different one: `RandomGuard` is a reference type with private constructors, a single
+```
+retired 2026-09-24 (run 6)  SeedLab.Dumper.dll     85F54A8566E3AC50CCB549521C332E7079D37AD712E5DC2625F64705B6103C7A
+                            SeedLab.Contracts.dll  81056CC679D78575F29BEB13006D7BDDD34A42CEDF8F1112C3C351297D4FAF6F
+                            dumper.enable          "assets"
+```
+
+Run 6's log is also the live check on the 2026-09-23 RNG fix: `Random.state` was identical at the start
+and the end of the asset dump. (The defect: a `RandomGuard` struct whose constructor never ran zeroed
+Unity's global generator and made every new world's suggested seed `aaaaaaaaaa` for the rest of the
+session. `RandomGuard` is now a reference type with private constructors, a single
 `RandomStateSafe.Restore` is the assembly's only writer of `Random.state` and it refuses to write an
-all-zero state, and eleven preflight gates hold the contract.
+all-zero state, and preflight gates hold the contract. The affected build is in
+`_ModSource\_retired\DoomMachine-SeedLabDumper-20260923\`.)
 
-**Why there is a fourth run.** A field-coverage audit found that `locationprefabs.json` carried 10 of
-`DungeonGenerator`'s 24 public instance fields and `roomchildren.json` carried no `RoomConnection` data
-at all - between them, everything an offline reproduction of a camp or a crypt interior needs.
-`preflight.ps1` now enforces the coverage rule so the same gap cannot open again.
-
-```
-installed 2026-09-23, BepInEx\plugins\DoomMachine-SeedLabDumper  SeedLab.Dumper.dll     B6E6A6BBAF93087DB4519F584970863BAD79E4F862B3AB1E439953927C59047A
-  SeedLab.Contracts.dll  3EF4668DC643C7AEC48CA13AB4702DA32CD7CEE5D0550CFAE758591254266EF5
-  dumper.enable          "all"
-preflight PASS 439 checks (457 with -SelfTest), 0 failures
-```
-
-**This run doubles as the live check on the RNG fix.** After it, the new-world dialog should offer a
-random seed rather than `aaaaaaaaaa`, and `BepInEx\LogOutput.log` should carry `RandomStateSafe`
-trace lines with no zero-state refusal.
+Making the data from your own copy of the game, step by step: [`game-data.md`](game-data.md).
 
 The data SeedLab ships came out of a run
 stamped `dumped=2026-09-22` — that is the **UTC** date the plugin writes (`DateTime.UtcNow` in

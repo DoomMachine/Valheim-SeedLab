@@ -284,7 +284,7 @@ Landmarks  (the game's own location placement, run for this seed)
 
 Two columns carry the honesty. `name` is the game's own string for the place, from the dumped
 localization table - a dash there means the dump names it nothing and the prefab is what it is
-called, which is the case for 169 of the 183 placed types. `one position?` answers `1 of 10` for a
+called, which is the case for 152 of the 183 placed types. `one position?` answers `1 of 10` for a
 `m_unique` type, because the game keeps exactly one of those candidates and which one is not a
 function of the seed.
 
@@ -746,16 +746,17 @@ So `data\1.0.15-59f53fb5\` holds what the running game was actually holding, rea
 objects by `tools\SeedLab.Dumper`, a BepInEx plugin: 232 `ZoneLocation` entries in list order, 257
 vegetation entries, 32 alt biomes, 186 location prefabs, the prefab and version constants, the
 seed-field limits, the constraint atlas and the native goldens. Every file carries a `DATA-STAMP`
-naming the game build and the SHA-256 of its `assembly_valheim.dll`, and every file's own SHA-256 is
-in `manifest.json` and is verified before it is parsed.
+naming the game build and the SHA-256 of its `assembly_valheim.dll`, and every dumped file the tool
+reads has its SHA-256 in `manifest.json`, verified before it is parsed.
 
 **The dumper is installed only for a named capture and retired after each.** The current data came out
-of runs 4 and 5 on 2026-09-23: run 4 captured the whole dungeon surface after a field-coverage audit
-found the earlier dumps had been carrying 10 of `DungeonGenerator`'s 24 public instance fields and no
-`RoomConnection` data at all, and run 5 the localization table that lets the map say "The Elder"
-rather than `GDKing`. Both copies were retired to `_ModSource\_retired\` afterwards. As of 2026-09-24
-it is **installed again for run 6** - dungeon names (`Teleport.m_enterText`) and Vegvisir pins - and
-holds **F4** until it is retired once more.
+of runs 4 and 5 on 2026-09-23 and run 6 on 2026-09-24: run 4 captured the whole dungeon surface after
+a field-coverage audit found the earlier dumps had been carrying 10 of `DungeonGenerator`'s 24 public
+instance fields and no `RoomConnection` data at all, run 5 the localization table that lets the map
+say "The Elder" rather than `GDKing`, and run 6 the captions on the dungeon doors
+(`Teleport.m_enterText`) that let it say "Burial Chambers" rather than `Crypt2`, with the Vegvisir
+pins. All three copies were retired to `_ModSource\_retired\`; the plugin is not installed and **F4**
+is free. Making this data from your own copy of the game, step by step: [`docs\game-data.md`](docs/game-data.md).
 
 **SeedLab itself needs no plugin and no console command.** The dumper is a capture tool, not a runtime
 dependency: terrain answers (biome, height, rivers, maps, seed arithmetic) are computed from the seed

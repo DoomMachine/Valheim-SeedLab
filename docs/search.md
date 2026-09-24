@@ -354,9 +354,12 @@ compiled and hashed, so the run hash, the checkpoint, the CSV column header and 
 value it always did. The substitution is announced once on stderr rather than done silently. A name
 is an input convenience; it never becomes the identity.
 
-Names come from the dumped localization table and from nothing else — 14 of the 183 placed types
-have one (8 bosses, 3 traders, 3 map-pin labels), and the other 169 answer only to their prefab
-because the game names them nothing. `vseed data --names` lists every spelling the engine accepts.
+Names come from the dumped localization table and from nothing else — 31 of the 183 placed types
+have one (8 bosses, 3 traders, 3 map-pin labels, and 17 dungeon entrances named by the caption on
+their door), and the other 152 answer only to their prefab because the game names them nothing. A
+caption several prefabs share ("Burial Chambers", "Infested Mine", "Putrid Hole") names each of them
+but picks none as a target: `location:Burial Chambers` is refused with the prefabs listed, and
+`group:burial_chambers` asks for all of them. `vseed data --names` lists every spelling the engine accepts.
 
 Two group targets come out of the same work. `group:axe_head_houses` is the two house types whose
 chests can hold an axe head, and its `nearest_distance` answers the same question bobmitch's

@@ -192,16 +192,26 @@ nearest house from spawn has a median of 189 / 194 m, and 150 m keeps 37.5 % / 3
 runs at about 4.1 seeds/s. It promises the house, never the axe head: what a chest holds is drawn when
 you first open it, from a generator no seed controls.
 
-## Dungeon names need one more dump (2026-09-24)
+## Dungeon names arrived (2026-09-24)
 
 The name you see when you walk into a crypt — "Burial Chambers", "Sunken Crypts", "Frost Caves" — is
 not in the game's code. It is a field on the dungeon's door (`Teleport.m_enterText`), stored in the
-game's compressed asset bundles, and the proven way to read it is the running game (the Unity editor
-you installed matches the game's build and could be a second route, but it is untried). So the map still shows
-`Crypt2` where you would say "Burial Chambers", and it will keep doing that rather than guess from a
-wiki (your wiki IDs are kept as the cross-check for when the real data arrives). The dumper has been
-taught to read every dungeon door and every Vegvisir, reviewed adversarially, and **installed and
-armed** for one run — see "Two things only you can do" below.
+game's compressed asset bundles. Your dumper run of 2026-09-24 read every door and every Vegvisir, and
+the map now calls `Crypt2` "Burial Chambers", `SunkenCrypt4` "Sunken Crypts" and so on, straight from
+the door's caption: **31 of the 183 placed types have a name now** (8 bosses, 3 traders, 3 map-pin
+labels, 17 dungeon entrances), up from 14, and 152 stand as their prefabs. Placement did not move: four
+seeds, every instance bit-identical before and after, and the world the dump ran in is a new hold-out
+the port had never seen (12,216 of 12,216 instances identical).
+
+- **A name several places share picks none of them.** Crypt2, Crypt3 and Crypt4 all read "Burial
+  Chambers" (so do the two Dvergr town entrances, "Infested Mine", and the three Putrid Holes), so
+  typing that name lists the prefabs instead of choosing one; `group:burial_chambers` asks for all
+  three.
+- **The wiki agrees wherever it has a page.** Bear Cave, Winding tunnels and Mörkhalla have no page to
+  check against, so they are the game's own captions and nothing more. DN_Bossroom carries a door
+  captioned "The Prison", but that door is switched off in the prefab, so it names nothing.
+- The dumper is retired again and **F4 is free**. Making the same data from your own copy of the game,
+  step by step: `docs\game-data.md`.
 
 ## A short run is cut so every worker can have a block, and a budget says what it really bounds (2026-09-24)
 
@@ -382,15 +392,10 @@ search indexer, a spreadsheet or an image viewer — and the same sentence also 
   save or a results write that meets one still ends the run. Saves write a temporary file first, so
   the checkpoint on disk stays the last one that was saved - by construction; no test fills a drive.
 
-## Two things only you can do
+## One thing only you can do
 
-1. **Run the dumper once more — it is installed and ARMED again (2026-09-24, run 6).** It is in
-   `BepInEx\plugins\DoomMachine-SeedLabDumper\`, armed for the asset dump only (`dumper.enable`
-   says `assets`), SHA-256 checked against the build. Start Valheim **solo**, create a **fresh
-   throwaway world**, stand in it, press **F4**, wait for `asset dump DONE`, quit. That is the whole
-   job — no console commands this time. It is retired again as soon as the data is checked.
-   (History: runs 4 and 5 on 2026-09-23 were retired to `_ModSource\_retired\` the same way; the
-   tool needs no plugin to work, and apart from this run only a Valheim update brings it back.)
+1. Done: **run 6 of the dumper** ran on 2026-09-24 and the plugin is retired again to
+   `_ModSource\_retired\DoomMachine-SeedLabDumper-20260924-run6`; F4 is free.
 2. **Type `y` once.** The confirmation prompt has only ever been exercised with stdin redirected,
    which proves the refusal-and-name-`--yes` path but not the interactive one. Run
    `vseed search gentle-start --all` in a real terminal, answer `n`, then `y`, and you will have

@@ -6,6 +6,11 @@ and a reference corpus for `Mathf.PerlinNoise`, `UnityEngine.Random` and `Mathf.
 
 **It is meant to be installed, run once or twice, and removed again.** It is not a mod to play with.
 
+**Never used a mod before?** [`docs\game-data.md`](../../docs/game-data.md) is the step-by-step guide:
+installing BepInEx by hand or through a mod manager, building the dumper, the safety check, the run,
+copying the data into SeedLab, checking it, and removing the dumper again, with every command
+written out. This README is the full technical manual behind it.
+
 Credits: see the root README - created and tested by DoomMachine; code, tests and docs written by Claude (Anthropic) in Claude Code.
 
 ---
@@ -193,6 +198,10 @@ Still, remove it when you're done. It is one more thing that can go wrong in a s
 
    `<game folder>` is the Valheim install, the folder that holds `valheim_Data`. Without
    `-p:ValheimDir` the project looks for the game where it is installed on the author's machine.
+
+   If BepInEx is not in the game folder (a mod manager keeps it in a profile folder), add
+   `-p:BepInExCore="<profile folder>\BepInEx\core"` to the build, and give the preflight a stand-in
+   folder: [`docs\game-data.md`](../../docs/game-data.md), sections 6 and 7.
 
    The preflight must print `PASS`. If it prints `FAIL`, **stop**: either a Valheim update renamed
    something the dumper reads — in which case the dump would be silently wrong — or the plugin has
@@ -547,7 +556,8 @@ dump prints the file's measured size as it writes it.
 `characters`, `traders`, `offeringBowls`, `runeStones` under `occupantsCaptured` (since 2026-09-23) -
 and, from run 6 (2026-09-24), every `Teleport` and `Vegvisir` under their own `waymarksCaptured`. A
 Teleport's `enterTextToken` is the dungeon's player-facing name (`$location_forestcrypt` = "Burial
-Chambers"), the only place the game keeps it. A Vegvisir's `locations[]` name the places it REVEALS,
+Chambers"), for most dungeons the only place the game keeps it (Hildir's two are also pinned by her
+map table). A Vegvisir's `locations[]` name the places it REVEALS,
 never its host. Each flag is false, with empty arrays, when that walk did not run or threw - an empty
 array under a true flag means "none here", under a false one "not known".
 
