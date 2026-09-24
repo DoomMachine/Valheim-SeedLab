@@ -29,6 +29,11 @@
   <div class="topmeta">
     <span class="chip" id="chipSeed" title="The int32 the world is actually generated from">&mdash;</span>
     <span class="chip chip-quiet" id="chipEngine">&mdash;</span>
+    <!-- Stop SeedLab (2026-09-24): in plain sight, because the user asked for a way to stop the server
+         from the page, and harmless to hit by accident - it only opens a dialog that says what stopping
+         does, and a second one when a search is running. The Help panel says the same at more length. -->
+    <button class="btn btn-small btn-stop" type="button" id="btnStopServer"
+            title="Stop SeedLab's web server (it asks first)">Stop SeedLab</button>
   </div>
 </header>
 
@@ -450,6 +455,26 @@
 
     <!-- ------------------------------------------------------------------ HELP -->
     <section class="panel" id="panelHelp" role="tabpanel" aria-labelledby="tabBtnHelp" tabindex="0" hidden>
+      <div class="card" id="cardServer">
+        <h2 class="card-title">SeedLab&rsquo;s web server</h2>
+        <p class="note">
+          This page comes from a small program running on this computer, in a window titled
+          <strong>SeedLab web server</strong>. It keeps running until you stop it &mdash; it never stops
+          by itself, and it never starts by itself.
+        </p>
+        <p class="note" id="idleNote"></p>
+        <div class="row-inline">
+          <button class="btn" type="button" id="btnStopServerHelp">Stop SeedLab&hellip;</button>
+        </div>
+        <p class="note">
+          Other ways to stop it: &lsquo;SeedLab 3 - Stop web page&rsquo; (<code>sh seedlab.sh stop</code>
+          on macOS and Linux, or <code>vseed serve --stop</code>), or <kbd>Ctrl</kbd>+<kbd>C</kbd> twice
+          in the server&rsquo;s own window. <kbd>Ctrl</kbd>+<kbd>C</kbd> in this browser only copies.
+          Whichever way, a running search is stopped with its checkpoint saved &mdash; except a search
+          still in a funnel&rsquo;s first stage, which has no resume point yet and loses that stage&rsquo;s
+          work (the warning says so).
+        </p>
+      </div>
       <div class="card">
         <h2 class="card-title">Keys</h2>
         <dl class="keys">
@@ -535,8 +560,9 @@
         <p class="note">
           This page came out of <code>vseed</code>'s own binary: no CDN, no web font, no external
           request of any kind, and a Content-Security-Policy that forbids one. The server listens on
-          127.0.0.1 alone, refuses any other <code>Host</code>, has no CORS policy, and writes
-          nothing anywhere.
+          127.0.0.1 alone, refuses any other <code>Host</code> and has no CORS policy. It writes a
+          results file only where the Search panel says, and otherwise only in its own cache folder:
+          checkpoints, map tiles, its logs, and a note that it is running.
         </p>
         <div class="kv" id="statsKv"></div>
       </div>
@@ -638,6 +664,78 @@
     <button class="btn" id="btnEvidenceClose" type="button">Close</button>
   </div>
 </dialog>
+
+<!-- Stopping SeedLab (2026-09-24): the first warning says what stopping does; the second, only when a
+     search is running, says which search, how far it got and how it can be continued. Then the page
+     says it has stopped and turns itself off. -->
+<dialog id="stopDialog" class="dlg" aria-labelledby="stopTitle">
+  <h2 class="card-title" id="stopTitle">Stop SeedLab?</h2>
+  <p class="note">
+    This closes SeedLab&rsquo;s web server &mdash; the program in the window titled
+    <strong>SeedLab web server</strong>. This page stops working until you start SeedLab again with
+    &lsquo;SeedLab 2 - Open web page&rsquo; or <code>vseed serve</code>.
+  </p>
+  <p class="note">
+    Nothing is lost: results files stay where they are, and if a search is running you are asked
+    about it before anything stops.
+  </p>
+  <div class="row-inline">
+    <button class="btn btn-danger" id="btnStopConfirm" type="button">Stop SeedLab</button>
+    <button class="btn" id="btnStopCancel" type="button">Cancel</button>
+  </div>
+  <p class="note" id="stopProblem" hidden></p>
+</dialog>
+
+<dialog id="stopSearchDialog" class="dlg" aria-labelledby="stopSearchTitle">
+  <h2 class="card-title" id="stopSearchTitle">A search is still running</h2>
+  <div id="stopSearchList"></div>
+  <p class="note">
+    Stopping SeedLab ends it at once. What that means for it is said above.
+  </p>
+  <p class="note" id="stopSaveQueryRow" hidden>
+    Its query file could not be saved beside the checkpoint, so keep a copy for that command:
+    <button class="btn btn-small" id="btnStopSaveQuery" type="button">Save the query file</button>
+  </p>
+  <div class="row-inline">
+    <button class="btn btn-danger" id="btnStopAnyway" type="button">Stop anyway</button>
+    <button class="btn btn-primary" id="btnKeepSearch" type="button">Keep running</button>
+  </div>
+</dialog>
+
+<!-- A stopped run of this same query left a resume point (2026-09-25): starting again replaces it, so the page
+     asks. The text is the server's own sentence; the command is shown whole, to copy. -->
+<dialog id="replaceDialog" class="dlg" aria-labelledby="replaceTitle">
+  <h2 class="card-title" id="replaceTitle">This search was stopped before, and can be continued</h2>
+  <p class="note" id="replaceText"></p>
+  <div class="cmdline" id="replaceCommand"></div>
+  <div class="row-inline">
+    <button class="btn btn-danger" id="btnReplaceStart" type="button">Start again from the first seed</button>
+    <button class="btn btn-primary" id="btnReplaceCancel" type="button">Cancel</button>
+  </div>
+</dialog>
+
+<!-- The idle reminder: a suggestion, never a stop. Ignored or answered with Keep running, it comes back
+     after another full period without use. -->
+<dialog id="idleDialog" class="dlg" aria-labelledby="idleTitle">
+  <h2 class="card-title" id="idleTitle">SeedLab hasn&rsquo;t been used for a while</h2>
+  <p class="note" id="idleText"></p>
+  <p class="note" id="idleMore"></p>
+  <div class="row-inline">
+    <button class="btn btn-danger" id="btnIdleStop" type="button">Stop SeedLab</button>
+    <button class="btn btn-primary" id="btnIdleKeep" type="button">Keep running</button>
+  </div>
+</dialog>
+
+<div class="stopped" id="stoppedOverlay" role="alertdialog" aria-modal="true" aria-labelledby="stoppedTitle" tabindex="-1" hidden>
+  <div class="stopped-box">
+    <h2 class="stopped-title" id="stoppedTitle">SeedLab has stopped.</h2>
+    <p class="note" id="stoppedText">You can close this tab.</p>
+    <div id="stoppedSearches"></div>
+    <div class="row-inline">
+      <button class="btn" id="btnStoppedReload" type="button" hidden>Reload this page</button>
+    </div>
+  </div>
+</div>
 
 <script src="/app.js"></script>
 </body>

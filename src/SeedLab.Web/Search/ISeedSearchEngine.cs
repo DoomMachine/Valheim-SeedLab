@@ -44,6 +44,23 @@ namespace SeedLab.Web.Search
         void Cancel();
 
         /// <summary>
+        /// Stop at once, for a server that is about to end (2026-09-24): every worker leaves its block
+        /// between two seeds, the checkpoint is saved at the last block written, and the run's
+        /// <c>done</c> event says that <paramref name="reason"/> stopped it. See
+        /// <c>SearchRun.Abandon</c>.
+        /// </summary>
+        void Abandon(string reason);
+
+        /// <summary>False once the run has ended, whatever way it ended.</summary>
+        bool IsRunning { get; }
+
+        /// <summary>Waits up to <paramref name="timeout"/> for the run to end; true when it has.</summary>
+        bool WaitEnded(TimeSpan timeout);
+
+        /// <summary>Name, progress, checkpoint and resume command, as they stand now.</summary>
+        SearchRunInfo Describe();
+
+        /// <summary>
         /// Tries again the last checkpoint save of a run that has ended, when that save failed - the
         /// page's "Retry saving". Safe to call at any time: a run still going, or one with nothing to
         /// save, says so and changes nothing.

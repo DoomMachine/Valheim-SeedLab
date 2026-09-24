@@ -71,10 +71,11 @@ exit codes:
   3 not found - or a file or folder SeedLab needs is in use, read-only, not allowed or on a
     full drive; also a finished rotated search whose manifest could not be saved
 
-session log: every command but hash, invert, space, presets, data, worlds and world
-  rewrites %LOCALAPPDATA%\SeedLab\logs\vseed.log (or <cache-dir>\logs\vseed.log) as it
-  starts - copy it first if you need the last one. A second vseed running at the same
-  time writes vseed.log.1 (up to .4) instead.
+session logs: every command but hash, invert, space, presets, data, worlds, world and
+  serve --status/--stop starts a new %LOCALAPPDATA%\SeedLab\logs\vseed.log (or
+  <cache-dir>\logs\vseed.log), and the last session's becomes vseed-prev.log beside it -
+  two files, this session's and the last one's. A second vseed running at the same time
+  writes vseed.log.1 (up to .4) instead and leaves both alone.
 
 A seed token that parses as an int32 is read as the INT; pass --text to read it as a seed text.
 ";
@@ -176,6 +177,20 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 // Both are read inside the try, so a bad --json or --threads is one error line like
                 // every other bad option rather than an unhandled exception and a stack trace.
                 bool json = a.Flag("json");
+
+                // 'vseed serve' decides some things before any runtime exists (2026-09-24): --status and
+                // --stop are answered whole, without creating the cache root, a session log or a
+                // self-test; a second serve opens the running one; and a server's window gets its title
+                // and banner before anything else is printed.
+                if (cmd == "serve")
+                {
+                    int? early = ServeCommand.BeforeRuntime(a, json);
+                    if (early.HasValue)
+                    {
+                        exit = early.Value;
+                        return exit;
+                    }
+                }
 
                 // ONE RuntimeContext per command, for every command that does real work. It probes
                 // the machine, opens the cache root, reaps what a killed run left behind, looks for a
@@ -335,7 +350,33 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
             }
             finally
             {
+                string? logPath = rt?.Log.Path;
                 rt?.End(exit);
+
+                // A server's window that was made for it closes the moment vseed ends. After a failure - a
+                // port that is taken, a self-test that failed - that would take the explanation with it, so
+                // such a window waits for Enter first (ten minutes at most). So does one whose stop left a
+                // search's checkpoint (review of 2026-09-25): the lines above say where it is and the command
+                // that continues it, and a stop from this window, a script or --stop left them nowhere else on
+                // screen. Any other clean stop closes at once.
+                if (cmd == "serve" && ServeConsole.Prepared)
+                {
+                    bool resumable = exit == ExitCodes.Ok && ServeConsole.StopLeftResumePoint();
+
+                    // Ctrl+C goes back to closing the window at once: nothing is left to stop gracefully.
+                    ServeConsole.Current?.Dispose();
+                    if (exit != ExitCodes.Ok) ServeConsole.PauseBeforeClosing();
+                    else if (resumable)
+                    {
+                        ServeConsole.PauseBeforeClosing(
+                            "The command above continues the stopped search. It is kept in the session log too"
+                            + (logPath != null ? " (" + logPath + ", which becomes vseed-prev.log the next time SeedLab starts)" : "")
+                            + ".");
+                    }
+
+                    // A server that could not start in someone's own terminal gives the window its title back.
+                    ServeConsole.RestoreTitle();
+                }
             }
         }
 

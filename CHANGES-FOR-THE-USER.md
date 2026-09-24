@@ -297,7 +297,9 @@ search indexer, a spreadsheet or an image viewer — and the same sentence also 
 
 - **Every command keeps a session log**: `%LOCALAPPDATA%\SeedLab\logs\vseed.log` (or under
   `--cache-dir`). It is **rewritten at the start of every command**, like the game's
-  `BepInEx\LogOutput.log` — copy it before running another `vseed` if you want to keep it. It holds
+  `BepInEx\LogOutput.log` — copy it before running another `vseed` if you want to keep it. (Changed
+  later the same day: the last session's log is now kept as `vseed-prev.log` - see "Starting and
+  stopping the web page" below.) It holds
   when and how the command was started, the machine, an access check of every SeedLab folder, the
   self-test, the warnings and errors that were printed (a question answered "no" shows only as the
   exit code), the retries behind a busy file, the full detail of an unexpected error, an integrity
@@ -365,6 +367,199 @@ search indexer, a spreadsheet or an image viewer — and the same sentence also 
   Search.Tests 443/443 (571 s), Runtime.Tests 173/173, `vseed serve --selftest` 15 PASS rows and 3
   MEASURED, `vseed selftest` 13 checks PASS, the proofs `refuse`, `policy` and `blocks` exit 0, and the
   kill tests 3/3 IDENTICAL both bounded and `keep all`.
+
+## Starting and stopping the web page, two session logs, and files that do it for you (2026-09-24)
+
+You asked for three things: that the web server is never left running without anyone knowing, with
+scripts and commands for starting and stopping it; exactly two session logs; and double-click files
+for people who are not power users. All three are built. The README's new
+[How to use it](README.md#how-to-use-it) section is the walk-through; this is what changed.
+
+- **The one-click files (Windows).** `SeedLab 1 - Install or update`, `2 - Open web page`, `3 - Stop
+  web page`, `4 - Command window`, `5 - Uninstall (keeps the build)` and `6 - Remove the build`, and
+  `SeedLab.bat`, which has all of them as a menu plus Status and Help. They ask before they install,
+  stop or remove anything, refuse to run as administrator, and say that installing the .NET SDK is
+  the one step that needs administrator rights (Windows' own prompt). On macOS and Linux the same
+  actions are `sh seedlab.sh` (and `SeedLab.command` on a Mac) - **not tested on macOS at all, not
+  yet on a real Linux**. [`docs\scripts.md`](docs/scripts.md) explains every step and question.
+- **The web server is a window you can see.** `vseed serve` titles its window **SeedLab web
+  server** and says first what it is and how to stop it. It never stops by itself and never starts by
+  itself. `SeedLab 2` starts it in a window of its own with nothing else in it, and a second start
+  opens the page of the one already running.
+- **Five ways to stop it.** Stop SeedLab on the page (with a second
+  warning if a search is running), `SeedLab 3 - Stop web page`, `vseed serve --stop` (asks when a
+  search is running; `--yes`, `--force`), Ctrl+C twice within 10 seconds in its window (the first
+  press stops nothing and says what is running), or closing the window. Every way stops a running
+  search at once with its checkpoint saved, and says the command that continues it - except a search
+  still in a funnel's first stage, which has no resume point yet and loses that stage's work (the
+  warnings say so; see the review section below).
+- **The 60-minute reminder.** After 60 minutes with nobody using the page, the page and the window
+  suggest stopping it, and again every 60 minutes. It never stops SeedLab. `--idle-reminder <minutes>`
+  changes it; `0` turns it off.
+- **`vseed serve --status`** says whether it is running, where, since when, and whether a search is
+  running in it. `--status` and `--stop` create nothing - not even the cache folder - so an
+  uninstall can ask them after removing it.
+- **Two session logs**: `logs\vseed.log` (this session) and `logs\vseed-prev.log` (the one before),
+  in the cache folder. A log past 4 MiB keeps only warnings and errors; past 16 MiB it stops.
+- **Uninstall** stops the web server through `vseed serve --stop`, asks separately when a search is
+  running (its checkpoint would go to the Recycle Bin with the cache folder), and removes the cache
+  folder with both session logs and the server's `serve\` file in it. A `vseed` started with
+  `--cache-dir` naming another folder is left out of it.
+- **`seedlab-results\`** (the page's results folder inside the SeedLab folder) is now in
+  `.gitignore`.
+
+**Checked** - the script test matrix, run on 2026-09-24/25 in a copy of the working tree (built
+there) with every script test redirection set: a scratch cache folder, a test registry key standing
+in for your user Path, and no browser. Windows, through `cmd /c SeedLab.bat` and the numbered files:
+
+| Row | Result |
+| --- | --- |
+| help; an unknown action; test mode without its safety settings; "Run as administrator" (simulated) | help exit 0; exit 2; refused, exit 2; refused, exit 3 |
+| .NET SDK missing (hidden): the W/B/C choice, answered C and with no answer | cancelled, exit 1, nothing changed |
+| install: build, Path entry added (still `REG_EXPAND_SZ`, `%USERPROFILE%` unexpanded), a planted entry for a deleted folder removed; install again | exit 0; second run "already registered", no duplicate; the cache folder was not created |
+| web (`--no-pause`, port 0): only `vseed`'s banner, no second one from the script; web again | server up with its cache in scratch; second run printed `vseed`'s "SeedLab is already running at ... (since 23:57)", exit 0 |
+| web in a real new window (no `--no-pause`) | a console window titled "SeedLab web server" with `vseed.exe` in it; `stop` closed it, and the window went away |
+| status with a server, with a search running, and with a second server of the same build started by hand with another `--cache-dir` | the address, pid and search progress; the other server listed as one no cache folder knows about |
+| stop with no search; stop with nothing running | stopped, exit 0; "not running - nothing to stop", exit 0 |
+| stop with a search running and nobody to answer | `vseed` refused, exit 1, the server kept running |
+| `stop --yes`; `stop --cache-dir <other folder>` | stopped; the search's checkpoint and the resume command printed; the other server stopped |
+| install while the server runs a search: n, then y | n: nothing built, exit 1; y: the server stopped through `vseed` with its checkpoint saved, then the build |
+| uninstall: n; y then n to "Stop it anyway?"; `stop --yes` and y | nothing changed; server left running, cache folder left in place, Path entry removed; cache folder to the Recycle Bin |
+| uninstall with everything: a search running, a `SEEDLAB_CACHE_DIR` folder holding a file of yours, two `SEEDLAB_...` settings, a fake dumper plugin and config, a dumper output folder (all y) | 6 items to the Recycle Bin (the cache folder; only `logs` and `serve` of the chosen folder, your file stayed; the plugin, its config, the output folder); the test Path back to exactly its two original entries; the settings removed |
+| after uninstall: uninstall again, status, stop, and a bare `vseed serve --status` / `--stop` | "Nothing to uninstall"; the cache folder stayed absent |
+| the removed cache folders, restored afterwards to look inside | each held `logs\vseed.log` (and `vseed-prev.log` where two sessions had run), and an empty `serve\` |
+| shell; menu s, h, q; the six numbered files; a changed source (n) | all ran; "The SeedLab source has changed ... Using the existing build." |
+| remove-build with the uninstall pending (y, y, y), and a decoy `docs\bin` | uninstall ran first, 24 `bin`/`obj` folders deleted (16.0 MB), the other 422 files and the decoy untouched |
+
+macOS/Linux script, under `dash` (Git for Windows) with the OS forced to linux, a scratch home and
+the Windows build of `vseed`: help, unknown action, the test-mode guard, the non-Linux refusal, root
+refusal (exit 3), missing SDK (C and no answer), install (launcher and three lines in `.bashrc`),
+web with `vseed`'s banner only, status, second web ("already running"), stop refused with a search
+running, uninstall y then n (server and cache kept), `stop --yes` (checkpoint and resume command),
+uninstall (cache deleted for good - Git Bash has no Trash - and `.bashrc` byte-identical to before),
+nothing recreated afterwards, unregistered servers from a fake process list (one of this build sent
+SIGTERM, one with another `--cache-dir` left out), remove-build with the uninstall pending
+(delete declined), the menu, a stale source, and `SeedLab.command`. `sh -n` / `dash -n` pass.
+
+**Nothing else regressed** - re-run in the real tree after the scripts and the documentation were
+done (a fresh Release build, 0 errors): `SeedLab.Search.Tests` **521/521** (616 s, including section
+18, the lifecycle: real Ctrl+C and Ctrl+Break sent to a server's own console), `SeedLab.Runtime.Tests`
+**206/206**, and `vseed serve --selftest` **17 PASS rows and 3 `MEASURED`**, exit 0 (its stop with a
+search running answered in 6 ms). The lifecycle work's own numbers, measured just before: the same
+521/521 and 206/206, the self-test twice at 17 PASS, `vseed selftest` 13 checks PASS, the proofs
+`refuse`, `policy` and `blocks` exit 0, and the kill tests 3/3 IDENTICAL both bounded and `keep all`.
+
+**Not tested:** anything on a real Mac or a real Linux (SIGTERM, SIGHUP, `open`/`xdg-open`, the
+terminal title, `gio`/`trash-put`, the zsh startup file, the ARM notice, `ps` output); closing the
+server's window for real; a Windows shutdown or logoff; typing an answer at `vseed`'s own `Stop
+anyway? [y/N]` (only the refusal with nobody to answer, and `--yes`, ran); `--force`; the 60-minute
+default itself (tests used seconds); Windows' "delete permanently?" warning for a folder too big for
+the Recycle Bin; installing the SDK for real (winget, the browser, `dotnet-install.sh`); the web
+action from the menu; 32-bit PowerShell; the SmartScreen and "file came from the internet" wording.
+Rows of the scripts' first test run (earlier on 2026-09-24) that were not run again this time: winget
+missing from the PC (W shown as not available); a double-clicked window pausing until Enter (the web
+action's new window was tested instead); the command window opening as a real new window (only its
+test-mode run in the same window); on the macOS/Linux side, the generated `~/.local/bin/vseed`
+running `vseed --version` and its exit-3 message with the build missing, remove-build actually
+deleting (declined this time; it deleted for real on Windows), and stopping a live process by
+SIGTERM (a fake process list stood in).
+
+**Found on the way, not fixed here:** **without `data\`, every search is refused** - even one that
+asks only about terrain - because the search's checker needs `data\...\constraint-atlas.json`
+(`vseed search archipelago --dry-run` in a copy without `data\`: `REFUSED ... the constraint atlas
+(constraint-atlas.json) was not found`, exit 1; the page's Search panel answers 400 with the same
+refusal). The README, `docs\game-data.md` and `docs\finding-a-seed.md` said terrain searches work
+without the game data; they now say what happens. Whether a missing atlas should refuse or only warn
+(its own message says "every such refusal is downgraded to a warning") is yours to decide.
+
+## After the review of the start-and-stop work (2026-09-25)
+
+Three reviews read the start-and-stop work, the scripts and the documents, and ran them against
+scratch folders. What they found, and what changed:
+
+- **The resume command now works as printed.** It used to say `vseed search <this query file>
+  --resume ...`, and after a stop from the server's window, a script or a closed window nothing could
+  give you that file any more. A page search now keeps its query file beside its checkpoint
+  (`<cache folder>\checkpoints\<hash>.ckpt.query.json`), and every resume command names it. The file
+  goes with the checkpoint (a finished search deletes both; `vseed clean` counts it under
+  checkpoints). The server's window now stays open until you press Enter (at most 10 minutes) when a
+  search it stopped left a checkpoint, so the command can be read or copied; the page's "stopped"
+  overlay lists that search even when the stop came from outside the page.
+- **A resume point is never replaced without asking.** Pressing **Find seeds** again on a search that
+  was stopped started it from the first seed and overwrote the checkpoint every stop had just promised
+  to keep. Now the page says a resume point exists, shows the command that continues it, and asks:
+  **Start again from the first seed** or **Cancel**. (`vseed search` in a terminal without `--resume`
+  still starts over without asking - that is older behaviour, not changed here.)
+- **Signing out of Windows or shutting it down now stops the server properly.** Windows sends a
+  console program no sign-out or shutdown event once it has loaded a certain Windows library, and
+  `vseed serve` has - so a shutdown ended it abruptly, losing up to 30 seconds of a search. The server
+  now keeps a hidden window that hears the session end and runs the same stop as every other way.
+- **A left-over "server is running" file no longer locks you out.** If the web server was ended
+  without cleaning up (Task Manager, a power cut), its small file in `serve\` could later name a
+  system process, and SeedLab then believed a server was running: `SeedLab 2` opened nothing, `SeedLab
+  3` could not stop it and the uninstall refused. Such a file is now recognised as left over, named as
+  safe to delete, and removed by the next server. The address in that file is also checked: only
+  `http://127.0.0.1:<port>` is ever opened or asked.
+- **The warnings say the truth about a funnel search in its first stage.** They promised "the finished
+  part is saved" and then said the work would be lost. Each running search now gets its own sentence:
+  saved, with its command - or, in a funnel's first stage, lost.
+- **Ctrl+C pressed again while SeedLab is stopping** says "SeedLab is already stopping; wait a moment"
+  instead of "nothing has been stopped yet".
+- **Uninstall** offers, from a folder you chose with `SEEDLAB_CACHE_DIR`, only folders with SeedLab's
+  names that hold nothing but SeedLab's kind of files (it used to offer any folder called `logs` or
+  `maps`, and any `*.log` file), and it says it did not finish - exit 1, and `SeedLab 6` stops - when
+  something was left running. On macOS and Linux it no longer rewrites a startup file whose SeedLab
+  block has lost its end line (it would have removed everything after the block); it leaves the file
+  as it is and says which lines to remove by hand.
+- **Install** does not ask to stop the web server when the build is already up to date; it says
+  "nothing to build" and goes on.
+- **Stop and Status** refuse "Run as administrator" (or root) like the other actions.
+- **Wording:** the ASP.NET Core runtime is needed by every `vseed` command, not only the web page; the
+  server's token keeps other web pages out, not other programs on the same computer; the README's
+  command table marks `vseed explain` as needing the game data; Updating from a ZIP now says to
+  unpack into a new folder; the Mac file's "no permission" fix is in the README.
+
+**Checked:** a clean Release build, 0 errors; `SeedLab.Search.Tests` **536/536** (614 s; section 18
+has the new checks: left-over registry files, the query file and a resume from it, the "same query
+again" refusal, a funnel stopped in its first stage, the session-end window's two messages sent to it,
+and a third Ctrl+C while it stops); `SeedLab.Runtime.Tests` **211/211** (a registry file naming a
+system process is stale, seven wrong addresses refused, a live log recognised by its last writer line);
+`vseed serve --selftest` **17 PASS rows and 3 `MEASURED`**, exit 0; `vseed selftest` 13 checks PASS;
+the proofs `refuse`, `policy` and `blocks` exit 0; the kill tests 3/3 IDENTICAL, bounded and `keep
+all`. In a browser against a scratch server: a search stopped with `vseed serve --stop --yes` was
+listed on the tab's overlay with its command; pressing Find seeds again on it showed "This search was
+stopped before, and can be continued" (Cancel kept it, Start again started over); the page's own Stop
+SeedLab showed the per-search text and no Save button. The script matrix again, in a fresh copy of the
+folder, test mode, scratch everything: Windows - install, install again with nothing to build (with and
+without a server running: no question), web, status, web again, stop refused with a search running
+(the command names the query file), uninstall y/n with a search running ("did NOT finish", exit 1),
+remove-build then refusing to go on (exit 1), `stop --yes`, stop and status as administrator
+(simulated, exit 3), a server started with another cache folder ("But a vseed web server IS
+running"), a left-over file naming pid 4 (not running; nothing to stop; not in the uninstall plan), a
+`SEEDLAB_CACHE_DIR` folder holding the user's own `notes.txt`, `build.log`, `logs\...` and `maps\...`
+(only `checkpoints` and `serve` offered; the user's files untouched), uninstall with only the Path
+entry (finished, exit 0), remove-build (24 build folders deleted, 16.4 MB); macOS/Linux script under
+`dash` - install, status and stop as root (exit 3), uninstall with an edited end line (`.bashrc`
+byte-identical, "did NOT finish", exit 1), the same with the end line put back (only SeedLab's lines
+removed, a conda block after it kept), and the chosen-folder case as on Windows. Status and Stop, on
+both, now also name a left-over "server is running" file as safe to delete (a planted one naming pid
+4 on Windows, pid 1 under `dash`). Rows of the first matrix that were **not** run again this time,
+although the scripts changed: the .NET SDK missing (W/B/C), the web page in a real new window, the six
+numbered files and the menu, the command window, the "source has changed" prompt, uninstall with a
+dumper plugin and `SEEDLAB_...` settings, "Run as administrator" for install, web and the command
+window, and on the macOS/Linux side the fake-process-list rows (servers of this and another folder)
+and remove-build.
+
+**Not tested:** clicking the server window's close button (a review sent the window its close message once, by
+hand: the search's checkpoint was saved and nothing was left behind - no automated test does that); a
+REAL sign-out or shutdown (the test sends the hidden window the two messages Windows sends; that
+Windows delivers them at a real sign-out is Microsoft's documented behaviour, not watched here); the
+server window waiting for Enter after a stop that left a checkpoint (it only waits in a window of its
+own with a keyboard, which a test cannot give it); typing an answer at `Stop anyway? [y/N]`; `--force`;
+two web servers in one cache folder at the same time; a stop during the short measurement a funnel
+makes between its two stages; the 60-minute default itself; and everything on a real Mac or Linux
+(SIGTERM, SIGHUP, file modes, `open`/`xdg-open`, `gio`/`trash-put`). After a stop from outside the
+page, a tab takes up to about 20 seconds to notice - known, not changed.
 
 ## Still not implemented — named so you do not go looking
 

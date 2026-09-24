@@ -1,2 +1,10 @@
 # LF in the repository and in the working tree: every file in this project is UTF-8 without a BOM, LF.
 * text=auto eol=lf
+
+# Except Windows batch files, which must be CRLF: cmd.exe misreads labels and some lines of a batch
+# file that has LF-only line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# And shell scripts stay LF on every checkout, whatever git's settings: sh cannot run a CRLF script.
+*.sh text eol=lf
+*.command text eol=lf

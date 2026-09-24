@@ -52,6 +52,26 @@ namespace SeedLab.Runtime.Storage
             return Math.Abs((actual.Value - startedUtc).TotalSeconds) < 1.5;
         }
 
+        /// <summary>
+        /// The same question, biased the other way: true only when pid is alive AND its start time can be
+        /// read AND it is the recorded one. For a file that says "a server is running here" - the web
+        /// servers' registry - where a wrong "alive" locks the user out rather than protecting anything.
+        ///
+        /// <para><b>Why the scratch reaper's bias is wrong there</b> (review of 2026-09-25). A registry file
+        /// left by a server that was ended without cleaning up (Task Manager, a power cut) names a pid the
+        /// operating system later gives to something else - after a reboot, often a system process whose
+        /// start time this account cannot read. <see cref="IsSameProcess"/> called that "alive", so the
+        /// next <c>vseed serve</c> said "already running" and started nothing, <c>--stop</c> could not stop
+        /// it and the uninstall refused - with nothing naming the file. The user's own vseed always has a
+        /// start time the user can read, so "cannot read it" means "not ours".</para>
+        /// </summary>
+        public static bool IsSameProcessStrict(int pid, DateTime startedUtc)
+        {
+            DateTime? actual = StartTimeUtc(pid);
+            if (actual == null) return false;
+            return Math.Abs((actual.Value - startedUtc).TotalSeconds) < 1.5;
+        }
+
         public static int CurrentPid => Environment.ProcessId;
 
         public static DateTime CurrentStartTimeUtc

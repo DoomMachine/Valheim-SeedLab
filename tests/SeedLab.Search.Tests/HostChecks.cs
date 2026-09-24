@@ -430,7 +430,7 @@ namespace SeedLab.SearchTests
             {
                 if (e.Data == null) return;
                 lock (lines) lines.Add(e.Data);
-                if (e.Data.Contains("press Ctrl+C to stop", StringComparison.Ordinal)) ready.Set();
+                if (e.Data.Contains("SeedLab is ready.", StringComparison.Ordinal)) ready.Set();
             };
             serve.ErrorDataReceived += (_, e) =>
             {
@@ -514,7 +514,11 @@ namespace SeedLab.SearchTests
                   "vseed.log.1 " + (staleGone ? "deleted" : "STILL THERE"));
 
             // ---- the clean's table says what happened to the category, not that it was chosen ------------
-            // Only vseed.log is left, and it is the clean's own log: kept, so the row may not say "removed".
+            // Only the clean's own log is left: kept, so the row may not say "removed". Since the two-log rule
+            // (2026-09-24) every session renames the last one's log to vseed-prev.log, which a clean may remove -
+            // so the folder is emptied first (no session is running now), and the clean's session starts with
+            // no last log to rename.
+            foreach (string f in Directory.GetFiles(Path.Combine(cache, "logs"))) TryDelete(f);
             (int e6, string cleanText) = RunToEnd(exe, dir, With(common, "clean", "--what", "logs", "--yes"), env);
             string? logsRow = null;
             foreach (string l in cleanText.Split('\n'))
@@ -782,7 +786,7 @@ namespace SeedLab.SearchTests
         // Helpers.
 
         /// <summary>The built vseed, fresh against this build's SeedLab.Search; null (and said) when it is not.</summary>
-        private static string? Vseed(Action<bool, string, string> check, out string root)
+        internal static string? Vseed(Action<bool, string, string> check, out string root)
         {
             root = "";
             for (DirectoryInfo? d = new DirectoryInfo(AppContext.BaseDirectory); d != null; d = d.Parent)
@@ -838,7 +842,7 @@ namespace SeedLab.SearchTests
         }
 
         /// <summary>A top-level field of a JSON object as text ("true", a string's value, a raw number), or null.</summary>
-        private static string? Field(string json, string name)
+        internal static string? Field(string json, string name)
         {
             try
             {
@@ -854,7 +858,7 @@ namespace SeedLab.SearchTests
         }
 
         /// <summary>A field of the first event of that type on an SSE stream, as <see cref="Field"/> gives it.</summary>
-        private static string? Event(string stream, string type, string field)
+        internal static string? Event(string stream, string type, string field)
         {
             foreach (string chunk in stream.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
             {
@@ -872,7 +876,7 @@ namespace SeedLab.SearchTests
         /// A vseed child, with stdin closed - nothing is reading a keyboard, as in a script - and
         /// SEEDLAB_CACHE_DIR at a root nothing is meant to reach.
         /// </summary>
-        private static ProcessStartInfo Start(string exe, string workDir, List<string> args, string fallback)
+        internal static ProcessStartInfo Start(string exe, string workDir, List<string> args, string fallback)
         {
             ProcessStartInfo psi = new ProcessStartInfo(exe)
             {
@@ -887,7 +891,7 @@ namespace SeedLab.SearchTests
             return psi;
         }
 
-        private static (int Exit, string Text) RunToEnd(string exe, string workDir, List<string> args, string fallback,
+        internal static (int Exit, string Text) RunToEnd(string exe, string workDir, List<string> args, string fallback,
                                                         bool stdoutOnly = false)
         {
             using Process p = Process.Start(Start(exe, workDir, args, fallback))!;
@@ -906,7 +910,7 @@ namespace SeedLab.SearchTests
         }
 
         /// <summary>vseed.log (0) or vseed.log.N, read sharing read and write as a live log needs; "" when absent.</summary>
-        private static string ReadLog(string cache, int index)
+        internal static string ReadLog(string cache, int index)
         {
             string p = Path.Combine(cache, "logs", index == 0 ? "vseed.log" : "vseed.log." + index);
             if (!File.Exists(p)) return "";
@@ -917,7 +921,7 @@ namespace SeedLab.SearchTests
 
         private static string Url(string text) => (LineWith(text, "SeedLab is serving at ") ?? "").Replace("SeedLab is serving at ", "").Trim();
 
-        private static string? LineWith(string text, string part)
+        internal static string? LineWith(string text, string part)
         {
             foreach (string l in text.Split('\n'))
             {
@@ -927,23 +931,23 @@ namespace SeedLab.SearchTests
             return null;
         }
 
-        private static string Joined(List<string> lines)
+        internal static string Joined(List<string> lines)
         {
             lock (lines) return string.Join("\n", lines);
         }
 
         /// <summary>Terminal text with its line wrapping undone, so a sentence can be looked for whole.</summary>
-        private static string Flat(string text) => Regex.Replace(text, @"\s+", " ");
+        internal static string Flat(string text) => Regex.Replace(text, @"\s+", " ");
 
-        private static string Tail(string text)
+        internal static string Tail(string text)
             => text.Length <= 600 ? text.Replace('\n', ' ') : "..." + text.Substring(text.Length - 600).Replace('\n', ' ');
 
-        private static bool Empty(string dir)
+        internal static bool Empty(string dir)
             => !Directory.Exists(dir) || Directory.GetFiles(dir, "*", SearchOption.AllDirectories).Length == 0;
 
-        private static bool Same(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
+        internal static bool Same(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
 
-        private static void TryDelete(string path)
+        internal static void TryDelete(string path)
         {
             try
             {
@@ -954,7 +958,7 @@ namespace SeedLab.SearchTests
             }
         }
 
-        private static void DeleteTree(string dir)
+        internal static void DeleteTree(string dir)
         {
             // A child that was just killed can hold a file for a moment after it exits.
             for (int i = 0; i < 10 && Directory.Exists(dir); i++)

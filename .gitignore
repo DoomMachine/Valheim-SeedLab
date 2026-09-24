@@ -12,6 +12,10 @@ build/
 /data/
 /groundtruth/
 
+# The web page's results files: vseed serve writes them into seedlab-results\ under the folder it was
+# started from, and the scripts start it from this folder. They are yours, not the project's.
+/seedlab-results/
+
 # Local IDE state.
 .vs/
 *.user

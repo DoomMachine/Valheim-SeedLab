@@ -264,12 +264,158 @@ namespace SeedLab.Web.Search
             string? refusal = AccessRefusal(p);
             if (refusal != null) throw new SearchRefusedException(pf, "refused", refusal);
 
-            EngineRun run = new EngineRun(p, _oracle, t.QueryJson, cq.Warnings, r => _measured = r);
-            if (p.OutPath != null && !ClaimOutput(p.OutPath, run.Id)) throw AlreadyWriting(p.OutPath);
+            // ---- a resume point a stop promised to keep (review of 2026-09-25) ---------------------
+            //
+            // The checkpoint is named by the query's hash, so pressing Find seeds again on the query a
+            // stop has just ended - what anyone does after 'SeedLab 2 - Open web page' - used to start at
+            // the first seed and overwrite the resume point every stop dialog, Ctrl+C and --stop had just
+            // said was saved. Now the page is told what is there and asks; only an answer of "start again"
+            // (ReplaceCheckpoint, a flag of its own - the page sends Confirmed with every run) replaces it.
+            // A run of this server that is using the same checkpoint right now is refused by name.
+            string ckptPath = p.Session.CheckpointPath;
+            string? owner = CheckpointOwner(ckptPath);
+            if (owner != null)
+            {
+                throw new ArgumentException(
+                    "a search of this same query is already running (run " + owner + ") and keeps its checkpoint at "
+                    + ckptPath + ". Two runs of one query would overwrite each other's resume point. Stop that run first, "
+                    + "or wait for it to finish.");
+            }
+
+            if (!query.ReplaceCheckpoint)
+            {
+                (string Message, string Command)? earlier = EarlierResumePoint(ckptPath, p.Session.QueryHash);
+                if (earlier != null)
+                {
+                    throw new SearchRefusedException(pf, "checkpoint-exists", earlier.Value.Message)
+                    {
+                        CheckpointPath = ckptPath,
+                        ResumeCommand = earlier.Value.Command,
+                    };
+                }
+            }
+
+            string queryFile = CheckpointStore.QueryFileFor(ckptPath);
+            EngineRun run = new EngineRun(p, _oracle, t.QueryJson, cq.Warnings, r => _measured = r, queryFile);
+            if (!ClaimCheckpoint(ckptPath, run.Id))
+            {
+                throw new ArgumentException("a search of this same query was started a moment ago and keeps its checkpoint at "
+                                            + ckptPath + ". Stop that run first, or wait for it to finish.");
+            }
+
+            if (p.OutPath != null && !ClaimOutput(p.OutPath, run.Id))
+            {
+                ReleaseCheckpoint(ckptPath, run.Id);
+                throw AlreadyWriting(p.OutPath);
+            }
+
+            // The query file beside the checkpoint, before a seed is scanned: every resume command this run
+            // prints names it, so the command works as printed after any stop - from the page, the server's
+            // window, a script or a closed window. A file that cannot be written is a warning, not a refusal:
+            // the run is still exact, and its commands then say "<this query file>" as they used to, with the
+            // page's Save button beside them.
+            try
+            {
+                DurableWrite.Text(queryFile, t.QueryJson, RetrySchedule.Quick);
+            }
+            catch (Exception ex) when (ex is FileAccessException or System.IO.IOException or UnauthorizedAccessException)
+            {
+                run.NoQueryFile();
+                _runtime.SessionLog.Write(SessionLogLevel.Warn, "search   the query file beside the checkpoint could not be written: "
+                                                                + queryFile + " (" + FileRetry.Describe(ex) + ")");
+            }
 
             run.Begin();
             return run;
         }
+
+        /// <summary>Checkpoints a live run of this server saves to, by run id - one run per resume point.</summary>
+        private static readonly Dictionary<string, string> CheckpointsInUse = new Dictionary<string, string>(
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+        internal static bool ClaimCheckpoint(string path, string runId)
+        {
+            string full = System.IO.Path.GetFullPath(path);
+            lock (CheckpointsInUse)
+            {
+                if (CheckpointsInUse.ContainsKey(full)) return false;
+                CheckpointsInUse[full] = runId;
+                return true;
+            }
+        }
+
+        internal static void ReleaseCheckpoint(string? path, string runId)
+        {
+            if (path == null) return;
+            string full = System.IO.Path.GetFullPath(path);
+            lock (CheckpointsInUse)
+            {
+                if (CheckpointsInUse.TryGetValue(full, out string? id) && id == runId) CheckpointsInUse.Remove(full);
+            }
+        }
+
+        private static string? CheckpointOwner(string path)
+        {
+            string full = System.IO.Path.GetFullPath(path);
+            lock (CheckpointsInUse) return CheckpointsInUse.TryGetValue(full, out string? id) ? id : null;
+        }
+
+        /// <summary>
+        /// The sentence that tells a person a stopped run of this query left a resume point at
+        /// <paramref name="checkpointPath"/> - how far it got, what starting again does to it, and the
+        /// command that continues it instead - or null when there is no readable checkpoint of THIS query
+        /// there (nothing to lose: a file that is not a checkpoint, or one of another query, is not a resume
+        /// point this run could take away).
+        /// </summary>
+        private static (string Message, string Command)? EarlierResumePoint(string checkpointPath, string queryHash)
+        {
+            Checkpoint c;
+            try
+            {
+                if (!System.IO.File.Exists(checkpointPath)) return null;
+                c = Checkpoint.Load(checkpointPath);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+
+            if (!string.Equals(c.QueryHash, queryHash, StringComparison.OrdinalIgnoreCase)) return null;
+
+            // A resume point at the first seed holds no work: starting again loses nothing, so nothing is asked.
+            if (c.SeedsEvaluated <= 0) return null;
+
+            string when = "";
+            try
+            {
+                when = ", saved " + System.IO.File.GetLastWriteTime(checkpointPath).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+            }
+            catch (Exception)
+            {
+            }
+
+            string queryFile = CheckpointStore.QueryFileFor(checkpointPath);
+            bool haveQueryFile = System.IO.File.Exists(queryFile);
+            string command = ResumeCommandFor(checkpointPath, haveQueryFile ? queryFile : null);
+            string message = "A search of this same query was stopped earlier and left a resume point: "
+                             + c.SeedsEvaluated.ToString("N0", CultureInfo.InvariantCulture) + " of "
+                             + c.Limit.ToString("N0", CultureInfo.InvariantCulture) + " seeds were done" + when + ". It is kept in "
+                             + checkpointPath + ". Starting the search again here begins at the first seed and REPLACES that "
+                             + "resume point. To continue it instead, run this in a terminal: " + command
+                             + (haveQueryFile ? "" : " (the query file that command needs is the one Export saves)") + ".";
+            return (message, command);
+        }
+
+        /// <summary>
+        /// The command that continues a run from <paramref name="checkpointPath"/>: with the query file
+        /// saved beside it when there is one, else with the placeholder the page's Save button fills.
+        /// </summary>
+        internal static string ResumeCommandFor(string checkpointPath, string? queryFile) =>
+            "vseed search " + (queryFile != null ? "\"" + queryFile + "\"" : QueryFilePlaceholder)
+            + " --resume --checkpoint \"" + checkpointPath + "\"";
+
+        /// <summary>What a resume command says in place of the query file when none could be saved beside the checkpoint.</summary>
+        public const string QueryFilePlaceholder = "<this query file>";
 
         private static ArgumentException AlreadyWriting(string outPath) => new ArgumentException(
             "a search that is still running is already writing " + outPath
@@ -473,8 +619,30 @@ namespace SeedLab.Web.Search
             private Thread? _thread;
             private volatile bool _cancelRequested;
 
+            /// <summary>A stop that cannot wait for the block in hand: the server is ending (<see cref="Abandon"/>).</summary>
+            private volatile bool _abandonRequested;
+            private volatile string _abandonReason = "";
+
+            /// <summary>Set when the worker thread has finished, for <see cref="WaitEnded"/>.</summary>
+            private readonly ManualResetEventSlim _endedSignal = new ManualResetEventSlim(false);
+
+            /// <summary>
+            /// A funnel's stage one is running: it has no resume point of its own (a stop throws its survivors
+            /// away, <see cref="StoppedInStageOne"/>), so while it runs no resume command may be offered.
+            /// </summary>
+            private volatile bool _inStageOne;
+
             /// <summary>The run's outcome, once it has one; <see cref="RetrySave"/> works on it.</summary>
             private SearchOutcome? _outcome;
+
+            /// <summary>
+            /// The query file saved beside the checkpoint (<see cref="CheckpointStore.QueryFileFor"/>), which every
+            /// resume command names - null when it could not be written, and the commands say "&lt;this query file&gt;".
+            /// </summary>
+            private volatile string? _queryFile;
+
+            /// <summary>The checkpoint path this run claimed in <see cref="EngineSearchEngine.Start"/>, released when it ends.</summary>
+            private readonly string _claimedCheckpoint;
 
             /// <summary>The worker thread has finished, whatever way it ended.</summary>
             private volatile bool _ended;
@@ -495,9 +663,11 @@ namespace SeedLab.Web.Search
             private readonly double _bytesPerRecord;
 
             public EngineRun(SearchPlanner.Planned planned, ILocationOracle oracle, string queryJson,
-                             IReadOnlyList<string> warnings, Action<double> reportRate)
+                             IReadOnlyList<string> warnings, Action<double> reportRate, string? queryFile = null)
             {
                 _planned = planned;
+                _queryFile = queryFile;
+                _claimedCheckpoint = planned.Session.CheckpointPath;
                 _session = planned.Session;
                 _q = _session.Query;
                 _cq = _session.Compiled;
@@ -573,6 +743,72 @@ namespace SeedLab.Web.Search
                 _run?.RequestStop();
             }
 
+            /// <summary>
+            /// Stop now, for a server that is ending: the same remembering as <see cref="Cancel"/> - a run
+            /// built after this call is abandoned the moment it exists, which covers the gap between a
+            /// funnel's two stages - but through <c>SearchRun.Abandon</c>, which does not wait for the block
+            /// each worker holds.
+            /// </summary>
+            public void Abandon(string reason)
+            {
+                _abandonReason = reason ?? "";
+                _abandonRequested = true;
+                _cancelRequested = true;
+                _run?.Abandon();
+            }
+
+            public bool IsRunning => !_ended;
+
+            public bool WaitEnded(TimeSpan timeout)
+            {
+                if (_ended) return true;
+                if (_thread == null) return false;
+                return _endedSignal.Wait(timeout < TimeSpan.Zero ? TimeSpan.Zero : timeout);
+            }
+
+            /// <summary>This run for the stop dialogs, <c>--status</c> and <c>--stop</c>.</summary>
+            public SearchRunInfo Describe()
+            {
+                long scanned, limit, passed;
+                string status;
+                string? message;
+                lock (_lock)
+                {
+                    scanned = _progress.Scanned;
+                    limit = _progress.Limit;
+                    passed = _progress.Passed;
+                    status = _progress.Status;
+                    message = _progress.Message;
+                }
+
+                // Before the run has ended its checkpoint is the one it WILL save to - the session names it
+                // before a seed is scanned. Once it has ended, the outcome says whether a resume point was
+                // left, and where.
+                // During a funnel's stage one there is none at all: the path the session names is stage two's,
+                // and a stop now leaves nothing there - so the stop dialogs and --stop must not promise one.
+                string? checkpoint;
+                lock (_retryGate)
+                {
+                    checkpoint = _ended ? _outcome?.CheckpointPath : _inStageOne ? null : _session.CheckpointPath;
+                }
+
+                return new SearchRunInfo
+                {
+                    Id = Id,
+                    Name = string.IsNullOrWhiteSpace(_q.Name) ? "(unnamed search)" : _q.Name!,
+                    Status = status,
+                    Scanned = scanned,
+                    Limit = limit,
+                    Passed = passed,
+                    Percent = limit > 0 ? Math.Min(100.0, 100.0 * scanned / limit) : 0,
+                    Message = message,
+                    CheckpointPath = checkpoint,
+                    ResumeCommand = ResumeCommand(checkpoint),
+                    QueryJson = _queryJson,
+                    StillStopping = _abandonRequested && !_ended,
+                };
+            }
+
             public System.Collections.Generic.IAsyncEnumerable<SearchEvent> ReadEvents(CancellationToken ct)
                 => _hub.Read(ct);
 
@@ -637,22 +873,32 @@ namespace SeedLab.Web.Search
 
                     SurvivorSink sink = new SurvivorSink();
                     System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
-                    SearchOutcome res = one.Run(sink, p =>
+                    _inStageOne = true;
+                    SearchOutcome res;
+                    try
                     {
-                        lock (_lock)
+                        res = one.Run(sink, p =>
                         {
-                            _progress.Status = "running";
-                            _progress.Message = "stage 1 of 2: " + p.Evaluated.ToString("N0", CultureInfo.InvariantCulture)
-                                                + " of " + p.Limit.ToString("N0", CultureInfo.InvariantCulture)
-                                                + " seeds measured, " + sink.Count.ToString("N0", CultureInfo.InvariantCulture)
-                                                + " kept";
-                            _progress.Scanned = p.Evaluated;
-                        }
-                    }, _q.Search.Wall, TimeSpan.FromSeconds(30), run =>
+                            lock (_lock)
+                            {
+                                _progress.Status = "running";
+                                _progress.Message = "stage 1 of 2: " + p.Evaluated.ToString("N0", CultureInfo.InvariantCulture)
+                                                    + " of " + p.Limit.ToString("N0", CultureInfo.InvariantCulture)
+                                                    + " seeds measured, " + sink.Count.ToString("N0", CultureInfo.InvariantCulture)
+                                                    + " kept";
+                                _progress.Scanned = p.Evaluated;
+                            }
+                        }, _q.Search.Wall, TimeSpan.FromSeconds(30), run =>
+                        {
+                            _run = run;
+                            if (_abandonRequested) run.Abandon();
+                            else if (_cancelRequested) run.RequestStop();
+                        }, Warning);
+                    }
+                    finally
                     {
-                        _run = run;
-                        if (_cancelRequested) run.RequestStop();
-                    }, Warning);
+                        _inStageOne = false;
+                    }
 
                     sw.Stop();
                     stageOneSeconds = sw.Elapsed.TotalSeconds;
@@ -778,15 +1024,21 @@ namespace SeedLab.Web.Search
             private double MeasurePlacement(int[] survivors)
             {
                 if (survivors.Length == 0) return 0.0;
+
+                // Five full evaluations - about five seconds of a location query - and nothing else between
+                // the stages checks for a stop, so a server being stopped asks here too; stage two, which
+                // is abandoned the moment it is built, then saves the checkpoint.
+                if (_abandonRequested) return 0.0;
                 SeedEvaluator warm = new SeedEvaluator(_session.Compiled, _oracle);
                 warm.Evaluate(survivors[0]);
 
                 int n = Math.Min(4, survivors.Length);
                 SeedEvaluator timed = new SeedEvaluator(_session.Compiled, _oracle);
                 System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
-                for (int i = 0; i < n; i++) timed.Evaluate(survivors[i]);
+                int measured = 0;
+                for (int i = 0; i < n && !_abandonRequested; i++, measured++) timed.Evaluate(survivors[i]);
                 sw.Stop();
-                return sw.Elapsed.TotalSeconds / n;
+                return measured > 0 ? sw.Elapsed.TotalSeconds / measured : 0.0;
             }
 
             /// <summary>
@@ -797,7 +1049,9 @@ namespace SeedLab.Web.Search
             /// </summary>
             private void StoppedInStageOne(SearchOutcome res, long stageOneLimit, long kept)
             {
-                string why = res.StoppedByUser ? "you stopped it" : "the wall-clock budget ran out";
+                string why = res.StoppedByUser
+                    ? (_abandonRequested ? AbandonWords() : "you stopped it")
+                    : "the wall-clock budget ran out";
                 string message = "stopped during stage 1 - " + why + " after "
                                  + res.Evaluated.ToString("N0", CultureInfo.InvariantCulture) + " of "
                                  + stageOneLimit.ToString("N0", CultureInfo.InvariantCulture) + " seeds, with "
@@ -934,7 +1188,8 @@ namespace SeedLab.Web.Search
                         {
                             _run = run;
                             run.OnResult = OnResult;
-                            if (_cancelRequested) run.RequestStop();
+                            if (_abandonRequested) run.Abandon();
+                            else if (_cancelRequested) run.RequestStop();
                         }, Warning);
                     _outcome = outcome;
 
@@ -989,7 +1244,10 @@ namespace SeedLab.Web.Search
 
                     string status = outcome.StoppedByUser ? "cancelled" : "done";
                     string? message = outcome.StoppedByUser
-                        ? "stopped at a block boundary; every seed below the count above was evaluated"
+                        ? (_abandonRequested
+                            ? "stopped because " + AbandonWords() + "; every seed below the count above was evaluated"
+                              + (outcome.CheckpointPath != null ? ", and the checkpoint keeps them" : "")
+                            : "stopped at a block boundary; every seed below the count above was evaluated")
                         : outcome.StoppedByWall
                             ? "the wall-clock budget ran out"
                             : outcome.Complete ? null : "the run ended before the range was exhausted";
@@ -1103,10 +1361,37 @@ namespace SeedLab.Web.Search
                 {
                     try { _sink?.Dispose(); } catch (Exception) { }
                     ReleaseOutput(_planned.OutPath);
+                    DropQueryFileWithoutCheckpoint();
+                    ReleaseCheckpoint(_claimedCheckpoint, Id);
                     _ended = true;
+                    _endedSignal.Set();
                     _hub.Close();
                 }
             }
+
+            /// <summary>
+            /// The query file goes when the run leaves no checkpoint to go with it: a funnel stopped in its first
+            /// stage, a failure before the first save. A finished run's was retired with its checkpoint; a run
+            /// whose last save failed keeps it, because "Retry saving" can still write the checkpoint it belongs to.
+            /// </summary>
+            private void DropQueryFileWithoutCheckpoint()
+            {
+                string? qf = _queryFile;
+                if (qf == null) return;
+                try
+                {
+                    bool retryable = _outcome?.CheckpointError != null;
+                    if (!retryable && !System.IO.File.Exists(_claimedCheckpoint) && System.IO.File.Exists(qf)) System.IO.File.Delete(qf);
+                }
+                catch (Exception)
+                {
+                    // Litter of a few hundred bytes in the checkpoints folder; 'vseed clean' removes it.
+                }
+            }
+
+            /// <summary>"SeedLab's web server was stopped (...)" - the reason the server gave, or that.</summary>
+            private string AbandonWords() =>
+                string.IsNullOrWhiteSpace(_abandonReason) ? "SeedLab's web server was stopped" : _abandonReason;
 
             /// <summary>A warning the run gave while it went on - a checkpoint save that failed - to every tab, and to the log.</summary>
             private void Warning(string text)
@@ -1189,10 +1474,14 @@ namespace SeedLab.Web.Search
                 }
             }
 
-            private static string? ResumeCommand(string? checkpointPath) =>
+            /// <summary>The command that continues this run from <paramref name="checkpointPath"/>, naming its saved query file.</summary>
+            private string? ResumeCommand(string? checkpointPath) =>
                 checkpointPath == null
                     ? null
-                    : "vseed search <this query file> --resume --checkpoint \"" + checkpointPath + "\"";
+                    : ResumeCommandFor(checkpointPath, _queryFile != null ? CheckpointStore.QueryFileFor(checkpointPath) : null);
+
+            /// <summary>The query file could not be written beside the checkpoint: the commands fall back to the placeholder.</summary>
+            public void NoQueryFile() => _queryFile = null;
 
             /// <summary>The failed last save, for the page: its sentence, the file, and what is on disk instead.</summary>
             private static object? ErrorJson(CheckpointError? e) => e == null

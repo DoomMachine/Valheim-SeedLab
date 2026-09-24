@@ -168,14 +168,24 @@ namespace SeedLab.Search.Execution
             new[] { SnapshotPathFor(checkpointPath), SecondSnapshotPathFor(checkpointPath) };
 
         /// <summary>
-        /// Every file a checkpoint can have beside it: the checkpoint, both snapshot generations, and
-        /// the temp file of each.
+        /// The query file a web run keeps beside its checkpoint, <c>&lt;ckpt&gt;.query.json</c> (2026-09-25):
+        /// the exact text the run was compiled from, so the resume command it prints -
+        /// <c>vseed search "&lt;this file&gt;" --resume --checkpoint "&lt;ckpt&gt;"</c> - works as printed,
+        /// after any stop, with nothing for the user to have saved first. It goes with the checkpoint:
+        /// <see cref="Retire"/> deletes it, and <c>vseed clean</c> counts it under checkpoints.
+        /// </summary>
+        public static string QueryFileFor(string checkpointPath) => checkpointPath + ".query.json";
+
+        /// <summary>
+        /// Every file a checkpoint can have beside it: the checkpoint, both snapshot generations, the temp
+        /// file of each, and a web run's query file.
         /// </summary>
         public static IReadOnlyList<string> FilesOf(string checkpointPath) => new[]
         {
             checkpointPath, checkpointPath + ".tmp",
             SnapshotPathFor(checkpointPath), SnapshotPathFor(checkpointPath) + ".tmp",
             SecondSnapshotPathFor(checkpointPath), SecondSnapshotPathFor(checkpointPath) + ".tmp",
+            QueryFileFor(checkpointPath),
         };
 
         /// <summary>
@@ -353,8 +363,9 @@ namespace SeedLab.Search.Execution
         }
 
         /// <summary>
-        /// Deletes a finished run's checkpoint, both generations of its kept-set snapshot, and their
-        /// temp files. Returns the files it could not delete - empty when everything went.
+        /// Deletes a finished run's checkpoint, both generations of its kept-set snapshot, their temp
+        /// files and a web run's query file (<see cref="QueryFileFor"/>). Returns the files it could not
+        /// delete - empty when everything went.
         ///
         /// <para><b>The checkpoint first</b> (2026-09-24). It is the commit point: once it is gone,
         /// nothing will resume from the snapshots, so they are litter and go too. When IT cannot be

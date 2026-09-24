@@ -292,6 +292,7 @@ namespace SeedLab.Search.Execution
         private long _blocksFinished;
         private volatile bool _stop;
         private volatile bool _userStop;
+        private volatile bool _abandon;
         private volatile bool _wallHit;
         private volatile bool _limitHit;
         private long _startBlock;
@@ -365,6 +366,31 @@ namespace SeedLab.Search.Execution
             _userStop = true;
             _stop = true;
         }
+
+        /// <summary>
+        /// Stop NOW, for a process that is about to end - the web server being stopped, its window being
+        /// closed, the machine shutting down (2026-09-24).
+        ///
+        /// <para><b>Why a second stop.</b> <see cref="RequestStop"/> stops at the next CLAIM: a worker
+        /// finishes the block it holds, and the collector waits for all of them. A block of a location
+        /// query is minutes of work (256 seeds at about a second each), and closing a console window
+        /// gives the process about five seconds before Windows ends it - so a stop that waits for the
+        /// block in hand is a stop that loses everything since the last 30 s checkpoint, which is what
+        /// closing the window did before this existed. Here every worker leaves its block between two
+        /// seeds, the block is thrown away (it is a pure function of its seeds; the resume recomputes
+        /// it), and the run ends as any stopped run does: the checkpoint is saved at the last block the
+        /// collector wrote, on the quick retry schedule rather than the patient one, so the whole stop
+        /// is bounded by one seed's evaluation plus one save. The outcome reads as stopped by the user.</para>
+        /// </summary>
+        public void Abandon()
+        {
+            _abandon = true;
+            _userStop = true;
+            _stop = true;
+        }
+
+        /// <summary>True once <see cref="Abandon"/> has been called.</summary>
+        public bool Abandoned => _abandon;
 
         /// <summary>
         /// The original entry point, kept source-compatible for callers that stream to a
@@ -675,7 +701,11 @@ namespace SeedLab.Search.Execution
                     // budget stop the terminal used to sit silent for about 15 s before the error, which
                     // reads as a hang to anyone who is not watching the session log.
                     bool announced = false;
-                    RetrySchedule finalRetry = ckp.FinalRetry;
+
+                    // An abandoned run is one whose process is about to end - closing a console window
+                    // leaves about five seconds - so its last save gets the quick schedule, not the
+                    // fifteen-second one: a save still waiting when the process is ended is no save.
+                    RetrySchedule finalRetry = _abandon ? RetrySchedule.Quick : ckp.FinalRetry;
                     Action<RetryAttempt> waiting = a =>
                     {
                         if (a.Succeeded || announced || a.Attempt >= a.Attempts) return;
@@ -952,8 +982,18 @@ namespace SeedLab.Search.Execution
 
                     long lo = _plan.BlockStart(block), hi = _plan.BlockEnd(block);
                     List<SeedResult> hits = new List<SeedResult>();
+                    bool abandoned = false;
                     for (long i = lo; i < hi; i++)
                     {
+                        // Abandon leaves between two seeds (see Abandon): the half-done block is never
+                        // stored, so the collector's gap stops at the block before it, and the
+                        // checkpoint's "every block below next_block is written" stays true.
+                        if (_abandon)
+                        {
+                            abandoned = true;
+                            break;
+                        }
+
                         SeedResult r = ev.Evaluate(_plan.SeedAt(i));
                         if (!r.Pass) continue;
 
@@ -964,6 +1004,8 @@ namespace SeedLab.Search.Execution
                         r.SeedText = SeedLab.Seeds.SeedText.Invert(r.Seed, SeedLab.Seeds.SeedAlphabet.Alnum62);
                         hits.Add(r);
                     }
+
+                    if (abandoned) break;
 
                     done[block] = hits;
                     int pending = done.Count;

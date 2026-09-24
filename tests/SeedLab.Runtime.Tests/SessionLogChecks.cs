@@ -26,6 +26,10 @@ namespace SeedLab.RuntimeTests
             try
             {
                 Purge(check, Path.Combine(tempRoot, "purge"));
+                TwoLogs(check, Path.Combine(tempRoot, "two"));
+                HeldPrevious(check, Path.Combine(tempRoot, "held-prev"));
+                LiveHolder(check, Path.Combine(tempRoot, "live"));
+                Cap(check, Path.Combine(tempRoot, "cap"));
                 Fallbacks(check, Path.Combine(tempRoot, "fallback"));
                 NeverThrows(check, Path.Combine(tempRoot, "never"));
                 Format(check, Path.Combine(tempRoot, "format"));
@@ -68,6 +72,222 @@ namespace SeedLab.RuntimeTests
             check(second.Contains("second session's line", StringComparison.Ordinal),
                   "every line reaches the file as it is written, readable by a reader that shares read and write",
                   "read back while the log was still open");
+        }
+
+        // =========================================================================================
+        // Two logs: this session's and the last one's (the user's decision of 2026-09-24).
+
+        private static void TwoLogs(Action<bool, string, string> check, string dir)
+        {
+            string plain = Path.Combine(dir, SessionLog.FileName);
+            string prev = SessionLog.PreviousName(dir);
+            check(prev == Path.Combine(dir, "vseed-prev.log"), "the last session's log is vseed-prev.log, beside vseed.log", prev);
+
+            using (SessionLog a = SessionLog.Open(dir))
+            {
+                a.Info("session A's marker");
+                check(a.PreviousPath == null && !File.Exists(prev),
+                      "the very first session has no last one, and makes no vseed-prev.log", a.PreviousPath ?? "(none)");
+            }
+
+            SessionLog b = SessionLog.Open(dir);
+            b.Info("session B's marker");
+            string bNow = SharedRead.AllText(plain);
+            check(b.Index == 0 && b.PreviousPath == prev && SharedRead.AllText(prev).Contains("session A's marker", StringComparison.Ordinal)
+                  && !bNow.Contains("session A's marker", StringComparison.Ordinal),
+                  "the next session renames vseed.log to vseed-prev.log and starts vseed.log again",
+                  "vseed-prev.log has A's lines, vseed.log has only B's");
+            check(bNow.Contains("INFO   log      the last session's log is now " + prev, StringComparison.Ordinal)
+                  && b.Rotation.Count == 1,
+                  "and says so in its own log, right after the first line", ShortLine(bNow, "the last session's log"));
+            b.Dispose();
+
+            using (SessionLog c = SessionLog.Open(dir))
+            {
+                c.Info("session C's marker");
+            }
+
+            string[] logs = Directory.GetFiles(dir);
+            string prevText = SharedRead.AllText(prev);
+            check(logs.Length == 2 && prevText.Contains("session B's marker", StringComparison.Ordinal)
+                  && !prevText.Contains("session A's marker", StringComparison.Ordinal)
+                  && SharedRead.AllText(plain).Contains("session C's marker", StringComparison.Ordinal),
+                  "a third session replaces the older vseed-prev.log: two files, this session's and the last one's",
+                  logs.Length + " files: " + string.Join(", ", Array.ConvertAll(logs, Path.GetFileName)));
+        }
+
+        // vseed-prev.log held by another program (an editor, a viewer that locks): kept, said, and nothing lost.
+        private static void HeldPrevious(Action<bool, string, string> check, string dir)
+        {
+            string plain = Path.Combine(dir, SessionLog.FileName);
+            string prev = SessionLog.PreviousName(dir);
+            using (SessionLog a = SessionLog.Open(dir)) a.Info("session A");
+            using (SessionLog b = SessionLog.Open(dir)) b.Info("session B");
+
+            string d;
+            using (new FileStream(prev, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                using SessionLog c = SessionLog.Open(dir);
+                c.Info("session C");
+                d = SharedRead.AllText(plain);
+                check(c.Index == 0 && c.PreviousPath == prev,
+                      "with vseed-prev.log held, the session still writes vseed.log", "index " + c.Index);
+            }
+
+            string prevText = SharedRead.AllText(prev);
+            check(prevText.Contains("session A", StringComparison.Ordinal) && !prevText.Contains("session B", StringComparison.Ordinal),
+                  "the held vseed-prev.log is kept as it was", "still session A's");
+            check(d.Contains("session B", StringComparison.Ordinal) && d.Contains("session C", StringComparison.Ordinal)
+                  && d.IndexOf("session B", StringComparison.Ordinal) < d.IndexOf("session C", StringComparison.Ordinal)
+                  && d.Contains(prev + " could not be replaced - another program has it open - so it was kept as it is",
+                                StringComparison.Ordinal),
+                  "the last session's lines are kept in vseed.log above this one's, and the log says why",
+                  ShortLine(d, "could not be replaced"));
+
+            using (SessionLog e = SessionLog.Open(dir)) e.Info("session E");
+            string after = SharedRead.AllText(prev);
+            check(after.Contains("session B", StringComparison.Ordinal) && after.Contains("session C", StringComparison.Ordinal)
+                  && !SharedRead.AllText(plain).Contains("session C", StringComparison.Ordinal),
+                  "once it is let go, the next session rotates as usual - B and C together become vseed-prev.log",
+                  "vseed-prev.log has B and C");
+        }
+
+        // vseed.log held by a live session: nothing renamed, no wait. Held by another program: waited for, then .1.
+        private static void LiveHolder(Action<bool, string, string> check, string dir)
+        {
+            string plain = Path.Combine(dir, SessionLog.FileName);
+            string prev = SessionLog.PreviousName(dir);
+            using (SessionLog a = SessionLog.Open(dir)) a.Info("session A");
+
+            using (SessionLog live = SessionLog.Open(dir))
+            {
+                live.Info("the live session");
+                System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
+                using SessionLog second = SessionLog.Open(dir);
+                long ms = sw.ElapsedMilliseconds;
+                second.Info("the second session");
+                check(second.Index == 1 && (second.Problem ?? "").Contains("vseed.log is in use by another session (process "
+                                                                          + Environment.ProcessId + ")", StringComparison.Ordinal),
+                      "a live session's vseed.log is recognised by its first line: the second session writes vseed.log.1",
+                      second.Problem ?? "(no problem said)");
+                check(ms < 500, "without waiting out the rename's retries", ms + " ms");
+                check(SharedRead.AllText(plain).Contains("the live session", StringComparison.Ordinal)
+                      && SharedRead.AllText(prev).Contains("session A", StringComparison.Ordinal)
+                      && second.PreviousPath == null && second.Rotation.Count == 0,
+                      "and neither vseed.log nor vseed-prev.log is touched", "");
+            }
+
+            // A vseed.log that holds two sessions (review of 2026-09-25): when vseed-prev.log could not be
+            // replaced, a session appends below the last one, so the FIRST "written by process" line names a
+            // writer that has ended and the live one is further down. It used to be read from the first line
+            // only: the live session was taken for "another program", and the next one waited out the
+            // rename's retries first.
+            string appended = Path.Combine(dir, "appended");
+            Directory.CreateDirectory(appended);
+            string aPlain = Path.Combine(appended, SessionLog.FileName);
+            string aPrev = SessionLog.PreviousName(appended);
+            File.WriteAllText(aPlain, "2020-01-01 00:00:00.000  INFO   vseed session log, written by process 999999 (started "
+                                      + "2020-01-01 00:00:00 UTC). An old session that has ended.\n");
+            File.WriteAllText(aPrev, "the session before that\n");
+            using (new FileStream(aPrev, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (SessionLog liveBelow = SessionLog.Open(appended))
+            {
+                liveBelow.Info("the live session, below the old one");
+                string both = SharedRead.AllText(aPlain);
+                int holder = SessionLog.HolderOf(aPlain);
+                System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
+                using SessionLog third = SessionLog.Open(appended);
+                long ms = sw.ElapsedMilliseconds;
+                check(liveBelow.Index == 0 && both.IndexOf("process 999999", StringComparison.Ordinal) >= 0
+                      && both.IndexOf("process 999999", StringComparison.Ordinal) < both.IndexOf("process " + Environment.ProcessId + " ", StringComparison.Ordinal)
+                      && holder == Environment.ProcessId,
+                      "a vseed.log with an ended session's first line and a live one's below it is recognised by its LAST writer line",
+                      "HolderOf = " + holder);
+                check(third.Index == 1 && (third.Problem ?? "").Contains("in use by another session (process " + Environment.ProcessId + ")",
+                                                                         StringComparison.Ordinal) && ms < 500,
+                      "so the next session writes vseed.log.1 at once and says why - not \"another program\" after the retries",
+                      (third.Problem ?? "(no problem said)") + ", " + ms + " ms");
+            }
+
+            // Held by something that is not a vseed session: the rename is retried, then the session moves on.
+            string other = Path.Combine(dir, "other");
+            Directory.CreateDirectory(other);
+            string held = Path.Combine(other, SessionLog.FileName);
+            using (FileStream fs = new FileStream(held, FileMode.Create, FileAccess.Write, FileShare.Read))
+            {
+                byte[] b = System.Text.Encoding.UTF8.GetBytes("a program that is not vseed\n");
+                fs.Write(b, 0, b.Length);
+                fs.Flush();
+                System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
+                using SessionLog s2 = SessionLog.Open(other);
+                long ms = sw.ElapsedMilliseconds;
+                check(s2.Index == 1 && (s2.Problem ?? "").Contains("vseed.log is in use by another program", StringComparison.Ordinal),
+                      "a vseed.log another program holds is waited for (the rename is retried), then the session writes vseed.log.1",
+                      (s2.Problem ?? "(none)") + ", " + ms + " ms");
+            }
+        }
+
+        // The size cap: INFO dropped past the first limit (said once, counted at the end), everything past the second.
+        private static void Cap(Action<bool, string, string> check, string dir)
+        {
+            string plain = Path.Combine(dir, SessionLog.FileName);
+            string line = new string('i', 90);
+            using (SessionLog log = SessionLog.Open(dir, limits: new SessionLogLimits(4000, 12000)))
+            {
+                for (int i = 0; i < 60; i++) log.Info("ordinary " + i.ToString("00") + " " + line);
+                log.Warn("a warning after the cap");
+                log.Error("an error after the cap");
+                log.Info("an ordinary line after the cap");
+                check(log.DroppedLines > 0, "past the INFO limit ordinary lines are counted as dropped", log.DroppedLines + " dropped");
+                log.Last("session  ended after 1.0 s with exit code 0");
+            }
+
+            string text = SharedRead.AllText(plain);
+            int notices = CountOf(text, "so from here on it keeps only warnings and errors");
+            check(notices == 1, "the drop is said once, as a warning", notices + " notice(s)");
+            check(text.Contains("a warning after the cap", StringComparison.Ordinal) && text.Contains("an error after the cap", StringComparison.Ordinal)
+                  && !text.Contains("an ordinary line after the cap", StringComparison.Ordinal)
+                  && !text.Contains("ordinary 59", StringComparison.Ordinal),
+                  "warnings and errors are still written, ordinary lines are not", "");
+            check(text.Contains("ordinary lines were left out of this log after it passed 3.91 KiB", StringComparison.Ordinal)
+                  && text.TrimEnd().EndsWith("session  ended after 1.0 s with exit code 0", StringComparison.Ordinal),
+                  "the session's last line is still written, after the count of what was left out",
+                  ShortLine(text, "were left out"));
+
+            string dir2 = Path.Combine(dir, "total");
+            using (SessionLog log = SessionLog.Open(dir2, limits: new SessionLogLimits(1000, 6000)))
+            {
+                for (int i = 0; i < 200; i++) log.Warn("a warning that repeats forever " + i.ToString("000") + " " + line);
+                check(!log.IsOpen, "past the total limit the log closes itself", "");
+                log.Error("nothing more");
+            }
+
+            string path2 = Path.Combine(dir2, SessionLog.FileName);
+            string t2 = SharedRead.AllText(path2);
+            long len = new FileInfo(path2).Length;
+            check(CountOf(t2, "so nothing more is written to it in this session") == 1 && len <= 6000 + 400
+                  && !t2.Contains("nothing more\n", StringComparison.Ordinal),
+                  "a flood of warnings stops at the total limit, said once: the file ends at the limit plus that one line",
+                  len + " bytes for a 6,000-byte limit");
+            check(SessionLogLimits.Default.InfoBytes == 4L << 20 && SessionLogLimits.Default.TotalBytes == 16L << 20,
+                  "the shipped limits: 4 MiB of ordinary lines, 16 MiB in all", "");
+        }
+
+        private static int CountOf(string text, string part)
+        {
+            int n = 0;
+            for (int at = text.IndexOf(part, StringComparison.Ordinal); at >= 0; at = text.IndexOf(part, at + part.Length, StringComparison.Ordinal)) n++;
+            return n;
+        }
+
+        private static string ShortLine(string text, string part)
+        {
+            foreach (string l in text.Split('\n'))
+            {
+                if (l.Contains(part, StringComparison.Ordinal)) return l.Length > 200 ? l.Substring(0, 200) + "..." : l;
+            }
+
+            return "(no line with '" + part + "')";
         }
 
         // =========================================================================================
@@ -182,6 +402,8 @@ namespace SeedLab.RuntimeTests
                   "a log folder that cannot be created gives no log and no exception", log?.Problem ?? "(threw)");
 
             // A read-only vseed.log: BepInEx catches only the sharing failure, and this one escapes it.
+            // Since the two-log rule (2026-09-24) the last session's log is RENAMED, which a read-only file
+            // allows, so it becomes vseed-prev.log and the session writes vseed.log as usual.
             string ro = Path.Combine(dir, "readonly");
             Directory.CreateDirectory(ro);
             string plain = Path.Combine(ro, SessionLog.FileName);
@@ -199,11 +421,35 @@ namespace SeedLab.RuntimeTests
                 threw = true;
             }
 
-            check(!threw && fallback != null && fallback.Index == 1
-                  && (fallback.Problem ?? "").Contains("read-only", StringComparison.Ordinal),
-                  "a read-only vseed.log moves the session on to vseed.log.1 instead of throwing",
-                  fallback?.Problem ?? "(threw)");
+            string prevRo = SessionLog.PreviousName(ro);
+            check(!threw && fallback != null && fallback.Index == 0 && File.Exists(prevRo) && File.ReadAllText(prevRo) == "old",
+                  "a read-only vseed.log is moved to vseed-prev.log and the session writes vseed.log, without throwing",
+                  fallback == null ? "(threw)" : "index " + fallback.Index + ", vseed-prev.log " + (File.Exists(prevRo) ? "holds it" : "MISSING"));
             fallback?.Dispose();
+
+            // And then a read-only vseed-prev.log, which the next rename cannot replace: it is kept, said, and
+            // the last session's lines stay in vseed.log above the new ones.
+            SessionLog? again = null;
+            threw = false;
+            try
+            {
+                again = SessionLog.Open(ro);
+                again.Info("the session after");
+            }
+            catch (Exception)
+            {
+                threw = true;
+            }
+
+            string plainText = SharedRead.AllText(plain);
+            check(!threw && again != null && again.Index == 0 && File.ReadAllText(prevRo) == "old"
+                  && plainText.Contains("written anyway", StringComparison.Ordinal)
+                  && plainText.Contains("the session after", StringComparison.Ordinal)
+                  && plainText.Contains("could not be replaced - it is read-only", StringComparison.Ordinal),
+                  "a read-only vseed-prev.log is kept and said; the last session's lines stay in vseed.log, above this one's",
+                  again == null ? "(threw)" : ShortLine(plainText, "could not be replaced"));
+            again?.Dispose();
+            fallback = again;
 
             threw = false;
             try
@@ -253,9 +499,11 @@ namespace SeedLab.RuntimeTests
             string expected = (local < TimeSpan.Zero ? "-" : "+") + local.ToString(@"hh\:mm");
             check(offset == expected, "the time is local, with its UTC offset", offset + " (this machine: " + expected + ")");
 
-            check(lines[0].Contains("emptied at the start of every session", StringComparison.Ordinal)
+            check(lines[0].Contains("written by process " + Environment.ProcessId + " (started ", StringComparison.Ordinal)
+                  && lines[0].Contains("renamed vseed-prev.log", StringComparison.Ordinal)
+                  && lines[0].Contains("so there are two", StringComparison.Ordinal)
                   && lines[0].Contains("vseed.log.1", StringComparison.Ordinal),
-                  "the first line says it is rewritten every session and names the fallback rule",
+                  "the first line names the process that writes it, the two-log rule and the fallback rule",
                   lines[0].Length > 120 ? lines[0].Substring(0, 120) + "..." : lines[0]);
             string all = string.Join("\n", lines);
             check(all.Contains("  WARN   a warning", StringComparison.Ordinal)

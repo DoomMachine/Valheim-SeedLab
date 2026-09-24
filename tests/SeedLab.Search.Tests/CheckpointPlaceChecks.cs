@@ -410,7 +410,7 @@ namespace SeedLab.SearchTests
             {
                 if (e.Data == null) return;
                 lock (lines) lines.Add(e.Data);
-                if (e.Data.Contains("press Ctrl+C to stop", StringComparison.Ordinal)) ready.Set();
+                if (e.Data.Contains("SeedLab is ready.", StringComparison.Ordinal)) ready.Set();
             };
             p.ErrorDataReceived += (_, e) =>
             {

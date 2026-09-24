@@ -132,8 +132,8 @@ DiskUsageReport usage = cache.MeasureUsage(outputPath);
 
 One wipeable place per OS - `%LOCALAPPDATA%\SeedLab`, `$XDG_CACHE_HOME/seedlab` (or `~/.cache/seedlab`),
 `~/Library/Caches/SeedLab` - overridden by `SEEDLAB_CACHE_DIR` or `--cache-dir`, with
-`checkpoints/ runs/ maps/ tiles/ scratch/ selftest/ logs/` inside it. Deleting the whole root at any moment
-must never lose anything the user asked to keep.
+`checkpoints/ runs/ maps/ tiles/ scratch/ selftest/ logs/` inside it, and `serve/` once a web server has
+registered (below). Deleting the whole root at any moment must never lose anything the user asked to keep.
 
 * **Scratch** is `scratch/pid-<pid>-<process start, UTC>` plus an `owner.txt` recording both. It is
   deleted on dispose and, because a killed process cannot clean up after itself, **reaped by the next
@@ -187,15 +187,48 @@ that opened the file every 50 ms. So:
   yet renamed - for a caller that asks before giving up on the rename (`vseed map` keeps the rendered
   image while it asks). `Stream`, `Checkpoint.Save`, `BoundedResultSet.SaveSnapshot` and a rotated
   run's manifest take an `onAttempt` hook, so a front end can say "waiting" at the first failure.
-* **`SessionLog`** - `<cache root>\logs\vseed.log`, emptied at the start of every session, the way
-  BepInEx writes `LogOutput.log` (`FileMode.Create`, write access, sharing read only): a second live
-  session writes `vseed.log.1` .. `.4`, then none; unlike BepInEx it deletes numbered logs no session is
-  using, flushes every line, and never throws. Lines are
-  `yyyy-MM-dd HH:mm:ss.fff zzz  LEVEL  text`. `RuntimeContext.Start` opens it straight after the cache
-  root and writes the session's header (time with its UTC offset, program and version, the command
-  line, pid, OS and .NET, the cache root), the access check of the root and every category, the reap,
-  the self-test and every `RuntimeOptions.Log` line; `Dispose` writes the end with `ExitCode`.
-  `SessionLog.Current` is the log for code too deep to be handed one. Read it sharing read AND write.
+* **`SessionLog`** - two files, the user's decision of 2026-09-24: *"a current log, and a last session
+  log. That way, we can retain information, but not a lot of information, and there can be redundancy
+  in case of issues."* `<cache root>\logs\vseed.log` is this session's; at the start of every session
+  that starts a runtime the last one's is renamed **`vseed-prev.log`** (replacing the one before it) and
+  `vseed.log` starts again, the way BepInEx writes `LogOutput.log` (`FileMode.Create`, write access,
+  sharing read only). The rules:
+  * the rename is retried (~0.8 s) while another program holds either file;
+  * **`vseed-prev.log` held** (an editor that locks it, a read-only file): it is kept as it is, this
+    session writes on in `vseed.log` AFTER the last session's lines instead of deleting them (unless
+    those are already past the 4 MiB INFO cap), and the log says so, with the cause;
+  * **`vseed.log` held by a live session** (a `vseed serve` in another window): nothing is renamed and
+    nothing is waited for - the first line of every log names the process that writes it and when that
+    process started (`written by process 1234 (started 2026-09-24 11:03:12 UTC)`), and a held log whose
+    writer is alive is told apart from one another program holds. The new session writes `vseed.log.1`
+    .. `.4`, then none; numbered logs no session is using are deleted by a later session. "Held" is asked
+    of the file (an exclusive open), which works on Linux and macOS too, where a rename or a delete never
+    fails because a file is open - without it a second session there would rename or empty a live one's log;
+  * **a size cap** (`SessionLogLimits`): past 4 MiB of this session's lines, INFO lines are dropped (said
+    once, counted at the end) and warnings and errors still written; past 16 MiB nothing more is
+    written, said once. A normal session is a few kilobytes and a `vseed serve` left open for days adds a
+    line per idle reminder, so the cap is only ever reached by a fault that repeats - and it keeps such a
+    fault from filling the drive. `Last(text)` writes the session's final line past the INFO cap.
+  It flushes every line and never throws. Lines are `yyyy-MM-dd HH:mm:ss.fff zzz  LEVEL  text`.
+  `RuntimeContext.Start` opens it straight after the cache root and writes the session's header (time
+  with its UTC offset, program and version, the command line, pid, OS and .NET, the cache root, this log
+  and the last session's), the access check of the root and every category, the reap, the self-test and
+  every `RuntimeOptions.Log` line; `Dispose` writes the end with `ExitCode`. `SessionLog.Current` is the
+  log for code too deep to be handed one. Read it sharing read AND write.
+* **`ServerRegistry`** (2026-09-24) - `<cache root>\serve\server-<pid>.json`, one per running
+  `vseed serve`: `{pid, process_started_utc, port, url, started_utc, version, token}`, written with
+  `DurableWrite` once the port is bound and deleted when the server stops. `Scan` sorts the files into
+  live (pid alive AND its start time readable AND matching, `ProcessLiveness.IsSameProcessStrict`) and
+  stale, and creates and deletes nothing - `vseed serve --status` and `--stop` read it before any
+  runtime exists; `ReapStale` is for a starting server. The strict check, not the scratch reaper's
+  lenient `IsSameProcess`: for a registry an unreadable start time means "not ours" (a system process
+  or another account's), and a file believed live on a guess locks the user out (review of
+  2026-09-25). `Read` admits a record only when its `url` is exactly `http://127.0.0.1:<its port>`
+  (`IsServerUrl`). `NewToken` is 32 random bytes as hex; it keeps other web pages out, not local
+  programs, which can read it from the server's `/api/meta`. `serve/` is deliberately NOT one of
+  `CacheRoot.Categories`: those are created at every start and emptied by `vseed clean`, and a live
+  server's file must not be cleaned. On Linux and macOS the folder and the file are created owner-only
+  (0700, 0600) - the temp file is narrowed before the rename puts it in place.
 * **`SharedRead`** opens the files a run writes (checkpoints, snapshots, survivor lists) sharing read,
   write and delete, so a reader never stops a writer's delete or open.
 

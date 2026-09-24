@@ -630,3 +630,33 @@ kbd {
 }
 .dlg::backdrop { background: #000a; }
 .dlg .card-title { margin-top: 0; }
+
+/* ------------------------------------------------------------ stopping SeedLab (2026-09-24)
+   Stop is the one control that ends the program, so it is the one that looks different: a muted red
+   that reads as "careful" without shouting from the top bar. Every button that stops something is
+   behind a dialog that says what it does. */
+.btn-danger { background: #3a1c17; border-color: #7a3326; color: #f0c2b6; }
+.btn-danger:hover { background: #4a231c; border-color: var(--bad); }
+.btn-stop { background: transparent; border-color: var(--line-2); color: var(--ink-dim); }
+.btn-stop:hover { background: #3a1c17; border-color: #7a3326; color: #f0c2b6; }
+.stop-search { border-left: 2px solid var(--accent); padding: 4px 0 4px 10px; margin: 8px 0; }
+.stop-search .ss-name { color: var(--accent-hi); font-weight: 600; }
+.cmdline {
+  font-family: var(--mono); font-size: 12px; background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 4px; padding: 6px 8px; margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: all;
+  /* A command is copied and typed: "--resume" must not be drawn as a dash by a coding font's ligature. */
+  font-variant-ligatures: none;
+}
+
+/* The page after SeedLab has stopped: one message over everything, and nothing behind it answers. */
+.stopped {
+  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(8, 10, 12, .94);
+}
+.stopped[hidden] { display: none; }
+.stopped-box {
+  max-width: 640px; width: 100%; background: var(--panel); border: 1px solid var(--line-2);
+  border-radius: var(--r); padding: 20px 22px; max-height: calc(100vh - 32px); overflow: auto;
+}
+.stopped-title { margin: 0 0 8px; font-size: 20px; color: var(--ink); }

@@ -284,6 +284,7 @@ namespace SeedLab.Runtime
             foreach (string line in hw.Lines()) slog.Info("machine  " + line);
             slog.Info("cache    " + cache.Path + " (" + cache.SourceDetail + ")");
             slog.Info("log      " + slog.Path + (slog.Problem != null ? " - " + slog.Problem : ""));
+            if (slog.PreviousPath != null) slog.Info("log      the last session's log: " + slog.PreviousPath);
             foreach (string gone in slog.DeletedStale)
             {
                 slog.Info("log      deleted " + gone + ", a numbered log no session was using");
@@ -347,6 +348,8 @@ namespace SeedLab.Runtime
             l.Add("log         " + (SessionLog.Path != null
                       ? SessionLog.Path + (SessionLog.Problem != null ? " (" + SessionLog.Problem + ")" : "")
                       : "none - " + (SessionLog.Problem ?? "no log was opened")));
+            // The two files the user asked for, both named: this session's, and the last one's.
+            if (SessionLog.PreviousPath != null) l.Add("            the last session's: " + SessionLog.PreviousPath);
             l.Add("mode        " + ResourceModes.Describe(EffectiveMode)
                   + (Throttle.IsThrottled ? "  [auto-throttled by " + Throttle.ThrottledBy + "]" : ""));
             l.AddRange(_startupLines);
@@ -365,7 +368,8 @@ namespace SeedLab.Runtime
             try { _scratch?.Dispose(); } catch (Exception) { }
             try { _priority?.Dispose(); } catch (Exception) { }
 
-            SessionLog.Info("session  ended after "
+            // Last, not Info: the line a report needs most is written even past the log's INFO cap.
+            SessionLog.Last("session  ended after "
                             + _clock.Elapsed.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " s"
                             + (ExitCode.HasValue
                                 ? " with exit code " + ExitCode.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)

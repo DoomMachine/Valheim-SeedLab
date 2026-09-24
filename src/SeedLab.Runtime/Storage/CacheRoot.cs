@@ -68,10 +68,19 @@ namespace SeedLab.Runtime.Storage
         public string SelfTest => Sub("selftest");
 
         /// <summary>
-        /// The session log (<see cref="SessionLog"/>): <c>vseed.log</c>, emptied at the start of every
-        /// session, and <c>vseed.log.1</c> .. <c>.4</c> while sessions overlap (2026-09-24).
+        /// The session logs (<see cref="SessionLog"/>): <c>vseed.log</c> for this session and
+        /// <c>vseed-prev.log</c> for the last one, and <c>vseed.log.1</c> .. <c>.4</c> while sessions
+        /// overlap (2026-09-24).
         /// </summary>
         public string Logs => Sub("logs");
+
+        /// <summary>
+        /// The running web servers, one file each (<see cref="ServerRegistry"/>). Deliberately NOT one of
+        /// the <see cref="Categories"/>: those are created at every start, measured, and emptied by
+        /// <c>vseed clean</c>, and a live server's file must not be deleted by a clean. This folder is
+        /// made by the first server that registers, and goes with the cache root on an uninstall.
+        /// </summary>
+        public string Serve => Sub(ServerRegistry.FolderName);
 
         private string Sub(string name) => System.IO.Path.Combine(Path, name);
 

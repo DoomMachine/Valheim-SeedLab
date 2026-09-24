@@ -15,6 +15,9 @@ namespace SeedLab.SearchTests
 
         public static int Main(string[] args)
         {
+            // Section 18's helper: this program started again on a console of its own, to send a real Ctrl+C.
+            if (args.Length > 0 && args[0] == "--ctrlc-helper") return LifecycleChecks.CtrlCHelper(args);
+
             bool quick = Array.IndexOf(args, "--quick") >= 0;
 
             // '--only 15,17' runs just those sections - for working on one of them; a full run is the
@@ -111,6 +114,11 @@ namespace SeedLab.SearchTests
             if (Section("17. The terminal and the page when a file is in the way: start checks, warnings, the last save, the session log"))
             {
                 HostChecks.Run(Check);
+            }
+
+            if (Section("18. The web server's lifecycle: status, stop, a second serve, the idle reminder, Ctrl+C and the two logs"))
+            {
+                LifecycleChecks.Run(Check);
             }
 
             Console.WriteLine();

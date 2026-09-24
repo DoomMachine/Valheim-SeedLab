@@ -4,9 +4,11 @@ This page is for anyone who cloned SeedLab and wants **location answers**: where
 and dungeons of a seed are. It assumes no modding experience. Every command is written out, and every
 step says what you should see.
 
-You do **not** need any of this for **terrain answers**. Biomes, heights, rivers, map images, seed
-text arithmetic and terrain searches work straight after building SeedLab. They are computed from the
-seed alone.
+You do **not** need any of this for **terrain answers**. Biomes, heights, rivers, map images and seed
+text arithmetic work straight after building SeedLab. They are computed from the seed alone.
+**Searches do need it, today** - even a search that asks only about terrain: the search's checker
+reads one file of the game data (`constraint-atlas.json`), and without it every search is refused
+with a message naming that file.
 
 **Tested on Windows only.** The dumper has never been run on Linux or macOS. See
 [section 16](#16-linux-and-macos).
@@ -51,7 +53,8 @@ the dumper reads those tables from memory and writes them to JSON files in
 
 Without that folder:
 
-- **terrain answers work**: biome, height, rivers, maps, seed text arithmetic and terrain searches;
+- **terrain answers work**: biome, height, rivers, maps and seed text arithmetic;
+- **searches refuse**, even terrain-only ones, naming `constraint-atlas.json` (see above);
 - **location answers refuse** with exit code 3 and a message saying the data is missing. That is
   anything that names a location, a dungeon or a trader, such as `vseed locations`.
 

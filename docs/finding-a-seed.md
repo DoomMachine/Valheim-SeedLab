@@ -8,18 +8,29 @@ never knows it ran.
 
 ---
 
-## 0. Build it once (about two minutes)
+## 0. Install it once (a few minutes)
 
-You need the **.NET 10 SDK**. There are **no NuGet packages** — it builds offline.
+The README's [How to use it](../README.md#how-to-use-it) is the way in. On Windows, double-click
+**`SeedLab 1 - Install or update`** in the SeedLab folder: it checks for the .NET 10 SDK (and helps
+you install it), builds SeedLab and makes `vseed` a command. Then **`SeedLab 4 - Command window`**
+opens a window where every command below works, and **`SeedLab 2 - Open web page`** opens the map
+(section 5). On macOS and Linux it is `sh seedlab.sh install` - untested there so far; the README
+says what that means.
+
+By hand instead, you need the **.NET 10 SDK** (there are **no NuGet packages** - it builds offline);
+in PowerShell, in the SeedLab folder:
 
 ```powershell
-cd E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab
 dotnet build src\SeedLab.Cli\SeedLab.Cli.csproj -c Release
-Set-Alias vseed E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab\src\SeedLab.Cli\bin\Release\net10.0\vseed.exe
+Set-Alias vseed "$PWD\src\SeedLab.Cli\bin\Release\net10.0\vseed.exe"
 ```
 
-Run it **from the SeedLab folder** (or set `SEEDLAB_DATA_DIR` to `data\1.0.15-59f53fb5\`), otherwise
-the location commands fail closed and say so.
+**Searching needs the game data** (`data\`, which you make from your own copy of Valheim:
+[`game-data.md`](game-data.md)). Without it every search - even one that only asks about terrain -
+is refused with a message naming `constraint-atlas.json`, and the location commands fail closed and
+say so. `vseed` finds `data\` by looking up from the folder you run it in and from the folder its
+build is in, so leave the build where it was built (or set `SEEDLAB_DATA_DIR` to
+`data\1.0.15-59f53fb5\`).
 
 Check it against the game before trusting a single number:
 

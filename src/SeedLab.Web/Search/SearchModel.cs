@@ -209,6 +209,15 @@ namespace SeedLab.Web.Search
         public bool AcceptScanOrder { get; set; }
 
         /// <summary>
+        /// Start this query again although a stopped run of it left a resume point, which the new run then
+        /// replaces (2026-09-25). Without it such a start is refused with kind <c>checkpoint-exists</c>, and
+        /// the page asks. A flag of its own, not <see cref="Confirmed"/>: the page sends that with every run,
+        /// so it cannot also mean "I was told a resume point would be replaced". Not part of the query file
+        /// or its hash.
+        /// </summary>
+        public bool ReplaceCheckpoint { get; set; }
+
+        /// <summary>
         /// A shallow copy, so a server-side rewrite (dropping unmeasurable nice-to-haves) never
         /// mutates the object the request was deserialised into.
         /// </summary>
@@ -344,8 +353,14 @@ namespace SeedLab.Web.Search
 
         public PreflightReport Report { get; }
 
-        /// <summary>refused | confirm</summary>
+        /// <summary>refused | confirm | checkpoint-exists (a stopped run of this query left a resume point)</summary>
         public string Kind { get; }
+
+        /// <summary>For <c>checkpoint-exists</c>: the resume point a new start would replace.</summary>
+        public string? CheckpointPath { get; init; }
+
+        /// <summary>For <c>checkpoint-exists</c>: the command that continues that resume point instead.</summary>
+        public string? ResumeCommand { get; init; }
     }
 
     /// <summary>
@@ -371,6 +386,51 @@ namespace SeedLab.Web.Search
 
         /// <summary>The save that failed again, when it did (<c>message</c>, <c>path</c>, <c>onDiskBlock</c>, ...).</summary>
         public object? CheckpointError { get; set; }
+    }
+
+    /// <summary>
+    /// One search as the stop dialogs, <c>vseed serve --status</c> and <c>vseed serve --stop</c> describe it
+    /// (2026-09-24): which search, how far it has got, and how it can be continued once it is stopped.
+    /// </summary>
+    public sealed class SearchRunInfo
+    {
+        public string Id { get; set; } = "";
+
+        /// <summary>The query's name, or "(unnamed search)".</summary>
+        public string Name { get; set; } = "";
+
+        /// <summary>running | done | cancelled | failed</summary>
+        public string Status { get; set; } = "running";
+
+        public long Scanned { get; set; }
+
+        public long Limit { get; set; }
+
+        public long Passed { get; set; }
+
+        /// <summary>Scanned / Limit, 0..100; 0 when the limit is not known yet.</summary>
+        public double Percent { get; set; }
+
+        /// <summary>"stage 1 of 2: ..." and the like, or the run's final sentence once it has ended.</summary>
+        public string? Message { get; set; }
+
+        /// <summary>
+        /// The run's checkpoint: where it is saved when the run stops (a running run may not have written
+        /// it yet), or null when a stopped run left none a resume could read.
+        /// </summary>
+        public string? CheckpointPath { get; set; }
+
+        /// <summary>
+        /// The command that continues this run from its checkpoint, or null when there is none. It names the
+        /// query file saved beside the checkpoint (<c>&lt;checkpoint&gt;.query.json</c>), so it works as printed.
+        /// </summary>
+        public string? ResumeCommand { get; set; }
+
+        /// <summary>The query file this run is, so a page can offer to save a copy of it.</summary>
+        public string QueryJson { get; set; } = "";
+
+        /// <summary>A stop was asked for and the run had not ended when it was described.</summary>
+        public bool StillStopping { get; set; }
     }
 
     /// <summary>One line on the wire. <c>Type</c> is the SSE event name.</summary>

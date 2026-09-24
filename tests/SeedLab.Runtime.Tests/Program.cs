@@ -39,8 +39,11 @@ namespace SeedLab.RuntimeTests
             Section("6. The machine self-test fails closed");
             SelfTestChecks.Run(Check);
 
-            Section("7. The session log, access checks, and a busy file waited out or named");
+            Section("7. The session logs (this one and the last one), access checks, and a busy file waited out or named");
             SessionLogChecks.Run(Check);
+
+            Section("8. The web servers' registry: found, told live from stale, and never made by reading it");
+            ServerRegistryChecks.Run(Check);
 
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));

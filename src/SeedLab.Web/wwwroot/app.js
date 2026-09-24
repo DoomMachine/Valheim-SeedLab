@@ -1641,6 +1641,7 @@ const Search = {
   warned: new Set(),   // the run's warnings already listed, by time and text
   finalSave: null,     // the last save as the server has it NOW, for a tab that rejoined an ended run
   checking: false,     // a lost stream is being checked against GET /api/search/{id}
+  lastDone: null,      // this tab's last run as its done event left it, for the "stopped" overlay
 };
 
 const GRID_LADDER = [
@@ -2596,6 +2597,17 @@ async function postSearch(query) {
         }
         return;
       }
+      // A stopped run of this same query left a resume point (2026-09-25). Starting again replaces it, so
+      // the server asks, and only "Start again" sends replaceCheckpoint - never Confirmed, which every run
+      // carries.
+      if (started.kind === 'checkpoint-exists') {
+        $('searchProgress').hidden = true;
+        if (await askToReplace(started)) {
+          query.replaceCheckpoint = true;
+          return postSearch(query);
+        }
+        return;
+      }
       throw new Error(started.error || r.statusText);
     }
   } catch (e) {
@@ -2612,6 +2624,33 @@ async function postSearch(query) {
   $('btnCancelSearch').disabled = false;
   selectTab('Search');
   openStream();
+}
+
+/**
+ * "This search was stopped before and can be continued": the resume point, the command that continues it,
+ * and what starting again does to it. Resolves true only for "Start again from the first seed".
+ */
+function askToReplace(refusal) {
+  return new Promise((resolve) => {
+    const dlg = $('replaceDialog');
+    $('replaceText').textContent = refusal.error || '';
+    $('replaceCommand').textContent = refusal.resumeCommand || '';
+    $('replaceCommand').hidden = !refusal.resumeCommand;
+    const done = (ok) => {
+      $('btnReplaceStart').removeEventListener('click', yes);
+      $('btnReplaceCancel').removeEventListener('click', no);
+      dlg.removeEventListener('close', onClose);
+      try { dlg.close(); } catch (e) { /* already closed */ }
+      resolve(ok);
+    };
+    const yes = () => done(true);
+    const no = () => done(false);
+    const onClose = () => done(false);
+    $('btnReplaceStart').addEventListener('click', yes);
+    $('btnReplaceCancel').addEventListener('click', no);
+    dlg.addEventListener('close', onClose);
+    dlg.showModal();
+  });
 }
 
 function askToConfirm(pf) {
@@ -2697,6 +2736,7 @@ function openStream() {
     const d = JSON.parse(ev.data);
     Search.queryJson = d.queryJson || '';
     Search.started = d;
+    Search.lastDone = null;
     if (d.preflight) {
       Search.pf = d.preflight;
       renderPreflightPlan(d.preflight);
@@ -2754,6 +2794,15 @@ function openStream() {
       : d;
     renderProgress(shown, true);
     stopStream();
+
+    // Kept for the "stopped" overlay (2026-09-25): a stop from the server's window, a script or a closed
+    // window reaches this tab only as this event, and the overlay must still say what became of the search
+    // and how to continue it.
+    let name = '';
+    try { name = (JSON.parse(Search.queryJson || '{}').name) || ''; } catch (e) { /* not JSON */ }
+    Search.lastDone = Object.assign({}, shown, { name: name || '(unnamed search)', queryJson: Search.queryJson });
+    if (Server.stopped) renderStoppedSearches(null);
+
     if (d.status === 'failed') showSearchError(d.message);
     if (shown.checkpointError) showSaveError(false, shown.checkpointError.message);
     else if (d.checkpointError && shown.checkpointPath) {
@@ -2770,6 +2819,7 @@ function openStream() {
 
 async function checkLostStream(es) {
   if (Search.checking || Search.es !== es) return;
+  if (Server.stopped) { stopStream(); return; }
   Search.checking = true;
   try {
     const r = await fetch('/api/search/' + encodeURIComponent(Search.id), { headers: { 'Accept': 'application/json' } });
@@ -3058,13 +3108,28 @@ function renderFeed() {
  */
 async function pollRuntime() {
   if (Search.runtimeTimer) clearTimeout(Search.runtimeTimer);
+  if (Server.stopped) return;
   let r;
   try {
     r = await getJson('/api/runtime');
+    Server.failures = 0;
   } catch (e) {
+    // No answer at all - not an HTTP error, which getJson turns into a message - is the server gone:
+    // stopped from its window, a script or another tab. Said after two in a row, so one dropped poll
+    // does not turn the page off; the second comes 5 s after the first.
+    if (e instanceof TypeError) {
+      Server.failures++;
+      if (Server.failures >= 2) { showStopped(null, true); return; }
+      Search.runtimeTimer = setTimeout(pollRuntime, 5000);
+      return;
+    }
     Search.runtimeTimer = setTimeout(pollRuntime, 30000);
     return;
   }
+
+  // The lifecycle (2026-09-24): a stop another tab or the terminal began, and the idle reminder.
+  if (r.stopping) { showStopped(null, false); return; }
+  showIdle(r.idle);
 
   Search.runtime = r;
   Search.meta.defaultThreads = r.defaultThreads;
@@ -3091,6 +3156,282 @@ async function pollRuntime() {
   }
 
   Search.runtimeTimer = setTimeout(pollRuntime, Math.max(5000, (r.pollIntervalS || 15) * 1000));
+}
+
+// ---------------------------------------------------------------------------- stopping SeedLab
+/*
+ * The web server's lifecycle, as the user decided it (2026-09-24): "a very serious mix".
+ *
+ * <p><b>Stop SeedLab</b> asks twice when it has to. The first dialog says what stopping does; the server
+ * then answers 409 if a search is running, and the SECOND dialog names that search, how far it got and -
+ * for that search, only when it has a resume point - the command that continues it, which names the query
+ * file saved beside its checkpoint (2026-09-25). Only a "Stop anyway" sends stopSearch: true. Afterwards the
+ * page says it has stopped, lists what became of the search - from the server's report, or from this tab's
+ * own done event when the stop came from elsewhere - and turns itself off.</p>
+ *
+ * <p><b>The idle reminder</b> is the server's, not this tab's: it knows what counts as use (anything a
+ * person does, never this page's own polling, and a running search) across every tab. /api/runtime carries
+ * it; this shows it once per reminder. "Keep running" restarts the server's clock; closing the dialog
+ * leaves the next reminder to come after another full period, as the user asked.</p>
+ *
+ * <p><b>The token.</b> Both requests carry X-SeedLab-Token, read from /api/meta. Another web page can read
+ * neither the token nor this server's replies (there is no CORS), and could not send that header without a
+ * preflight this server never answers. It keeps out web pages, not programs on this computer: those can
+ * read /api/meta as this page does.</p>
+ */
+const Server = {
+  token: '',
+  stopped: false,
+  stopping: false,
+  idleShown: 0,        // the reminder count already shown; a new reminder has a higher one
+  failures: 0,         // /api/runtime polls in a row that got no answer at all
+  report: null,        // the server's own account of a stop this tab asked for; null for a stop from elsewhere
+  pendingQuery: '',    // the query text the second warning's Save button saves, when a command needs it
+};
+
+function openDialog(id) {
+  const d = $(id);
+  if (!d.open) { try { d.showModal(); } catch (e) { d.setAttribute('open', ''); } }
+}
+
+function closeDialog(id) {
+  const d = $(id);
+  if (d.open) { try { d.close(); } catch (e) { d.removeAttribute('open'); } }
+}
+
+function renderIdleNote() {
+  const s = App.meta && App.meta.server;
+  const every = s ? s.idleReminderSeconds : 0;
+  $('idleNote').textContent = every > 0
+    ? 'If nobody uses this page for ' + spanText(every) + ', it suggests stopping SeedLab — and again after every '
+      + 'further ' + spanText(every) + '. It never stops SeedLab by itself.'
+    : 'The idle reminder is off (vseed serve --idle-reminder 0).';
+}
+
+/** "45 seconds", "60 minutes", "2 hours" - the server's own wording for its --idle-reminder period. */
+function spanText(seconds) {
+  if (seconds < 120) return Math.floor(seconds) + ' seconds';
+  const m = Math.floor(seconds / 60);
+  if (m < 120) return m + ' minutes';
+  const h = Math.floor(m / 60), r = m % 60;
+  return h + ' hours' + (r ? ' ' + r + ' minute' + (r === 1 ? '' : 's') : '');
+}
+
+function askStopServer() {
+  if (Server.stopped) return;
+  $('stopProblem').hidden = true;
+  $('btnStopConfirm').disabled = false;
+  openDialog('stopDialog');
+}
+
+/**
+ * POST /api/server/stop. 409 is the second warning (a search is running); 200 is "stopped", with what was
+ * stopped. A request that never gets an answer means the server went away under it - which is also stopped.
+ */
+async function postStop(stopSearch, by) {
+  let r;
+  try {
+    r = await fetch('/api/server/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-SeedLab-Token': Server.token },
+      body: JSON.stringify({ stopSearch: !!stopSearch, by: by || 'page' }),
+    });
+  } catch (e) {
+    showStopped(null, false);
+    return;
+  }
+
+  let body = {};
+  try { body = await r.json(); } catch (e) { /* not JSON */ }
+  if (r.status === 409 && body.kind === 'search-running') {
+    showStopSearch(body.searches || [], by);
+    return;
+  }
+  if (r.ok) {
+    showStopped(body, false);
+    return;
+  }
+  // A refusal: the token did not match (a server restarted under this tab), or the request came from
+  // somewhere the server does not trust. Said in the dialog that is open, in the server's words.
+  closeDialog('stopSearchDialog');
+  openDialog('stopDialog');
+  $('stopProblem').hidden = false;
+  $('stopProblem').textContent = 'SeedLab did not stop: ' + (body.error || (r.status + ' ' + r.statusText))
+    + (r.status === 403 ? ' Reload this page and try again.' : '');
+  $('btnStopConfirm').disabled = false;
+}
+
+function describeSearch(s) {
+  const pct = (s.percent || 0).toFixed(1);
+  return nf(s.scanned) + ' of ' + nf(s.limit) + ' seeds checked (' + pct + ' %), '
+    + nf(s.passed) + ' match' + (s.passed === 1 ? '' : 'es') + ' so far';
+}
+
+/** The second warning: which search, how far it got, and how it can be continued. */
+function showStopSearch(searches, by) {
+  closeDialog('stopDialog');
+  closeDialog('idleDialog');
+  const host = $('stopSearchList');
+  host.textContent = '';
+  Server.pendingQuery = '';
+  for (const s of searches) {
+    const box = el('div', 'stop-search');
+    const head = el('div');
+    head.appendChild(el('span', 'ss-name', '“' + s.name + '”'));
+    head.appendChild(document.createTextNode(' — ' + describeSearch(s) + '.'));
+    box.appendChild(head);
+    if (s.message && /^stage/.test(s.message)) box.appendChild(el('div', 'note', s.message));
+    // Said for THIS search (2026-09-25): "saved" only beside one that has a resume point.
+    if (s.resumeCommand) {
+      box.appendChild(el('div', 'note', 'Stopping it saves the part it has finished. To continue it later, from a terminal:'));
+      box.appendChild(el('div', 'cmdline', s.resumeCommand));
+      if (needsQueryCopy(s.resumeCommand) && !Server.pendingQuery && s.queryJson) Server.pendingQuery = s.queryJson;
+    } else {
+      box.appendChild(el('div', 'note', 'It is in its first stage, which has no resume point yet: stopping it now loses its work so far.'));
+    }
+    host.appendChild(box);
+  }
+  $('stopSaveQueryRow').hidden = !Server.pendingQuery;
+  Server.pendingBy = by;
+  $('btnStopAnyway').disabled = false;
+  openDialog('stopSearchDialog');
+}
+
+/** True when a resume command still says <this query file>: its query file could not be saved beside the checkpoint. */
+function needsQueryCopy(cmd) {
+  return !!cmd && cmd.indexOf('<this query file>') >= 0;
+}
+
+function saveQueryFile(text) {
+  if (!text) return;
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = el('a');
+  a.href = url;
+  a.download = 'seedlab-query.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  flash('query file saved as seedlab-query.json — use it in place of <this query file> in the command');
+}
+
+/**
+ * The end: one message over the whole page, and nothing behind it that still answers. `report` is the
+ * server's own account of what it stopped; null when this tab only found the server gone.
+ */
+function showStopped(report, gone) {
+  if (Server.stopped) return;
+  Server.stopped = true;
+  for (const id of ['stopDialog', 'stopSearchDialog', 'idleDialog', 'confirmDialog', 'evidenceDialog', 'replaceDialog']) closeDialog(id);
+  // A stop from elsewhere while this tab's search runs: its done event - what the overlay lists - may still
+  // be on the way, so the stream is left to deliver it (it closes itself after it). Otherwise closed now.
+  if (Search.es && !(report === null && Search.running)) { try { Search.es.close(); } catch (e) { /* closed */ } Search.es = null; }
+  if (Search.runtimeTimer) clearTimeout(Search.runtimeTimer);
+
+  $('stoppedTitle').textContent = gone ? 'SeedLab is not answering.' : 'SeedLab has stopped.';
+  $('stoppedText').textContent = gone
+    ? 'Its web server has probably been stopped — from its window, a script or another tab. You can close this tab. '
+      + 'To use SeedLab again, start it (“SeedLab 2 - Open web page” or vseed serve) and reload this page.'
+    : 'You can close this tab. To use SeedLab again, start it with “SeedLab 2 - Open web page” or vseed serve.';
+  Server.report = report;
+  renderStoppedSearches(report);
+  $('btnStoppedReload').hidden = !gone;
+
+  // Nothing behind the message can be reached, by pointer or by keyboard.
+  for (const sel of ['header.topbar', 'main.layout']) {
+    const n = document.querySelector(sel);
+    if (n) { n.inert = true; n.setAttribute('aria-hidden', 'true'); }
+  }
+  $('stoppedOverlay').hidden = false;
+  $('btnStoppedReload').hidden ? $('stoppedOverlay').focus() : $('btnStoppedReload').focus();
+}
+
+/**
+ * The searches the overlay lists: the server's own account when this tab stopped it, else this tab's last
+ * run as its done event left it - a stop from the server's window, a script or a closed window reaches the
+ * tab only as that event (2026-09-25). Called again when that event arrives after the overlay is up.
+ */
+function renderStoppedSearches(report) {
+  const rep = report || Server.report || null;
+  let list = (rep && rep.searches) || [];
+  if (!rep) {
+    const d = Search.lastDone;
+    const stoppedByServer = d && (d.checkpointPath || /web server was stopped/.test(d.message || ''));
+    list = stoppedByServer ? [{
+      name: d.name, scanned: d.scanned, limit: d.limit, stillStopping: false,
+      checkpointPath: d.checkpointPath || null, resumeCommand: d.resumeCommand || null, queryJson: d.queryJson || '',
+    }] : [];
+  }
+  const host = $('stoppedSearches');
+  host.textContent = '';
+  for (const s of list) {
+    const box = el('div', 'stop-search');
+    box.appendChild(el('div', null, 'The search “' + s.name + '” ' + (s.stillStopping ? 'was still stopping' : 'stopped')
+      + ' after ' + nf(s.scanned) + ' of ' + nf(s.limit) + ' seeds.'));
+    if (s.checkpointPath && s.resumeCommand) {
+      box.appendChild(el('div', 'note', 'The part it finished is saved (' + s.checkpointPath + '). To continue it, run this in a terminal:'));
+      box.appendChild(el('div', 'cmdline', s.resumeCommand));
+      if (needsQueryCopy(s.resumeCommand) && s.queryJson) {
+        const b = el('button', 'btn btn-small', 'Save the query file');
+        b.type = 'button';
+        b.addEventListener('click', () => saveQueryFile(s.queryJson));
+        box.appendChild(b);
+      }
+    } else {
+      box.appendChild(el('div', 'note', 'It left no checkpoint to continue from.'));
+    }
+    host.appendChild(box);
+  }
+}
+
+/** The idle reminder, once per reminder the server raises. */
+function showIdle(idle) {
+  if (Server.stopped || !idle) return;
+  if (!idle.reminder) {
+    // Someone used SeedLab (here or in another tab): the reminder is withdrawn.
+    Server.idleShown = 0;
+    closeDialog('idleDialog');
+    return;
+  }
+  if (idle.count <= Server.idleShown) return;
+  if ($('stopDialog').open || $('stopSearchDialog').open) return;
+  Server.idleShown = idle.count;
+  $('idleText').textContent = 'SeedLab hasn’t been used for ' + idle.idleText + '. Stop it now?';
+  $('idleMore').textContent = 'It is still running in its window, titled SeedLab web server, and it never stops by '
+    + 'itself. Keep running and this asks again after another ' + (idle.everyText || 'while') + ' without use.';
+  openDialog('idleDialog');
+}
+
+async function keepAlive() {
+  closeDialog('idleDialog');
+  try {
+    await fetch('/api/server/keep-alive', {
+      method: 'POST',
+      headers: { 'Accept': 'application/json', 'X-SeedLab-Token': Server.token },
+    });
+  } catch (e) { /* the next poll says whether the server is still there */ }
+}
+
+function bindServerControls() {
+  Server.token = (App.meta.server && App.meta.server.token) || '';
+  renderIdleNote();
+  $('btnStopServer').addEventListener('click', askStopServer);
+  $('btnStopServerHelp').addEventListener('click', askStopServer);
+  $('btnStopCancel').addEventListener('click', () => closeDialog('stopDialog'));
+  $('btnStopConfirm').addEventListener('click', () => {
+    $('btnStopConfirm').disabled = true;
+    postStop(false, 'page');
+  });
+  $('btnKeepSearch').addEventListener('click', () => closeDialog('stopSearchDialog'));
+  $('btnStopAnyway').addEventListener('click', () => {
+    $('btnStopAnyway').disabled = true;
+    postStop(true, Server.pendingBy || 'page');
+  });
+  $('btnStopSaveQuery').addEventListener('click', () => saveQueryFile(Server.pendingQuery));
+  $('btnIdleKeep').addEventListener('click', keepAlive);
+  $('btnIdleStop').addEventListener('click', () => { closeDialog('idleDialog'); postStop(false, 'idle'); });
+  $('btnStoppedReload').addEventListener('click', () => location.reload());
 }
 
 // ---------------------------------------------------------------------------- tabs, toolbar, keys
@@ -3351,6 +3692,7 @@ async function boot() {
     + '  ·  worldGen ' + App.meta.worldGenVersion;
 
   initSearch();
+  bindServerControls();
 
   resizeCanvas();
   bindMap();

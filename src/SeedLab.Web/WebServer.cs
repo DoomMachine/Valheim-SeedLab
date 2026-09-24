@@ -131,6 +131,36 @@ namespace SeedLab.Web
         /// against a REAL socket rather than against the code that is supposed to implement them.</para>
         /// </summary>
         public Action<string>? OnStarted { get; set; }
+
+        /// <summary>
+        /// Write <c>&lt;cache root&gt;\serve\server-&lt;pid&gt;.json</c> once the port is bound, and delete it
+        /// when the server stops (<see cref="SeedLab.Runtime.Storage.ServerRegistry"/>), so that
+        /// <c>vseed serve --status</c>, <c>--stop</c> and a second <c>vseed serve</c> can find this one.
+        /// On for <c>vseed serve</c>; off for <c>--selftest</c>'s own server, which a <c>--status</c> run at
+        /// the same moment must not mistake for the user's.
+        /// </summary>
+        public bool Register { get; set; }
+
+        /// <summary>
+        /// After this long with nobody using the page, the page and the host's window suggest stopping
+        /// SeedLab; ignored, the suggestion comes back after every further period. It never stops the
+        /// server by itself. <see cref="TimeSpan.Zero"/> turns it off. <c>--idle-reminder</c>, default 60
+        /// minutes (the user's figure, 2026-09-24).
+        /// </summary>
+        public TimeSpan IdleReminder { get; set; } = TimeSpan.FromMinutes(60);
+
+        /// <summary>The host's handle on this server: the graceful stop, what is running, the idle reminder.</summary>
+        public WebServerControl? Control { get; set; }
+
+        /// <summary>The server's secret for its stop and keep-alive endpoints; null makes a new one.</summary>
+        public string? Token { get; set; }
+
+        /// <summary>
+        /// The last line of the startup block, which says how to stop the server. A host that has no
+        /// console of its own (the self-test) can say something else.
+        /// </summary>
+        public string ReadyLine { get; set; } =
+            "SeedLab is ready. To stop it: Stop SeedLab on the page, 'vseed serve --stop', or Ctrl+C twice in this window.";
     }
 
     /// <summary>
@@ -154,10 +184,13 @@ namespace SeedLab.Web
     /// <see cref="WebServerOptions.ResultsDirectory"/>, and only as a bare file name -
     /// <see cref="SeedLab.Web.Search.QueryTranslator.Clean"/> refuses a separator, a drive, a
     /// <c>..</c> and any extension but <c>.jsonl</c>, <c>.csv</c> and <c>.json</c>;</item>
-    /// <item>the <b>checkpoint</b> and its kept-set snapshot, in the runtime cache root, which is tool
-    /// state rather than the user's data;</item>
+    /// <item>the <b>checkpoint</b>, its kept-set snapshot and (since 2026-09-25) the run's query file
+    /// beside it, which every resume command names, in the runtime cache root - tool state rather than
+    /// the user's data;</item>
     /// <item>the <b>tile cache's</b> second tier, also in the cache root, which is a cache of a pure
-    /// function and can be deleted at any moment.</item>
+    /// function and can be deleted at any moment;</item>
+    /// <item>the <b>registry file</b> that says this server is running, where and with which token
+    /// (<c>&lt;cache root&gt;\serve\server-&lt;pid&gt;.json</c>, 2026-09-24), deleted when it stops.</item>
     /// </list>
     /// <para>Nothing is written beside the working directory, nothing is written to a path a browser
     /// chose, and the only file-shaped thing SERVED is the four embedded assets in
@@ -181,6 +214,22 @@ namespace SeedLab.Web
         private readonly EngineSearchEngine _engineImpl;
         private readonly object _throttleLock = new object();
         private readonly List<object> _throttleChanges = new List<object>();
+
+        // ---- the lifecycle (2026-09-24) ---------------------------------------------------------------
+        private readonly string _token;
+        private readonly object _stopGate = new object();
+        private readonly CancellationTokenSource _stopCts = new CancellationTokenSource();
+        private Task<ServerStopReport>? _stopTask;
+        private volatile bool _stopping;
+        private SeedLab.Runtime.Storage.ServerRecord? _registered;
+
+        // The idle clock, in Environment.TickCount64 milliseconds.
+        private readonly long _idlePeriodMs;
+        private long _lastActivityMs = Environment.TickCount64;
+        private long _lastReminderMs = long.MinValue;
+        private volatile bool _reminderActive;
+        private int _remindersSinceActivity;
+        private Timer? _idleTimer;
 
         private static readonly JsonSerializerOptions Json = new JsonSerializerOptions
         {
@@ -206,6 +255,8 @@ namespace SeedLab.Web
             });
 
             _worlds = new WorldCache(_options.WorldCacheSeeds);
+            _token = string.IsNullOrEmpty(_options.Token) ? SeedLab.Runtime.Storage.ServerRegistry.NewToken() : _options.Token!;
+            _idlePeriodMs = _options.IdleReminder > TimeSpan.Zero ? (long)_options.IdleReminder.TotalMilliseconds : 0;
 
             // Rendering used to size itself from Environment.ProcessorCount, which is a number about
             // the machine and not about what SeedLab has been allowed to take. The renderer and the
@@ -248,6 +299,9 @@ namespace SeedLab.Web
                     while (_throttleChanges.Count > 8) _throttleChanges.RemoveAt(0);
                 }
             };
+
+            // Last: a stop the host asked for before this point (Ctrl+C during startup) is applied now.
+            _options.Control?.Attach(this);
         }
 
         /// <summary>The URL the server ended up on, once it has started.</summary>
@@ -280,6 +334,16 @@ namespace SeedLab.Web
             // nothing is lost, because the exception it is describing is still thrown.
             builder.Logging.AddFilter("Microsoft.Extensions.Hosting.Internal.Host", LogLevel.None);
 
+            // The host's own console lifetime is replaced (2026-09-24). It stopped the server on the first
+            // Ctrl+C, and did it by ending the process under a running search: WaitForShutdownAsync
+            // returned, the searches were asked to stop at their next block and nothing waited for them,
+            // so everything since the last 30 s checkpoint was lost. Ctrl+C, closing the window and a
+            // shutdown now belong to the host (vseed serve), which asks this server for its one graceful
+            // stop (WebServerControl); this lifetime does nothing at all. The shutdown timeout bounds how
+            // long a stop waits for an open request - the page's own stop request among them.
+            builder.Services.AddSingleton<IHostLifetime, NoConsoleLifetime>();
+            builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(3));
+
             builder.WebHost.ConfigureKestrel(k =>
             {
                 // Loopback and only loopback. Listen() is used rather than UseUrls() precisely because
@@ -291,6 +355,15 @@ namespace SeedLab.Web
 
             WebApplication app = builder.Build();
             Configure(app);
+
+            // A stop asked for while the host was still starting (Ctrl+C twice during the self-test or the
+            // data load): the port is never bound, and nothing says the server is up.
+            if (_stopping)
+            {
+                try { if (_stopTask != null) await _stopTask.ConfigureAwait(false); } catch (Exception) { }
+                if (_ownsRuntime) _runtime.Dispose();
+                return 0;
+            }
 
             await app.StartAsync(ct).ConfigureAwait(false);
 
@@ -304,6 +377,31 @@ namespace SeedLab.Web
             }
 
             Url = address.Replace("[::1]", "127.0.0.1").Replace("localhost", "127.0.0.1");
+
+            // The registry file, BEFORE the first line that says the server is up: a script that reads
+            // "SeedLab is serving at" and runs 'vseed serve --status' must find it. A file that cannot be
+            // written is a warning - the page works either way - and says what it costs.
+            string? registryProblem = null;
+            if (_options.Register && !_stopping)
+            {
+                try
+                {
+                    int port = new Uri(Url).Port;
+                    _registered = SeedLab.Runtime.Storage.ServerRegistry.Register(_runtime.Cache.Path, port, Url,
+                                                                                   _options.EngineVersion, _token);
+                    SeedLab.Runtime.Storage.SessionLog.Current?.Info("serve    registered as " + _registered.File);
+                }
+                catch (Exception ex)
+                {
+                    registryProblem = "SeedLab could not write "
+                                      + SeedLab.Runtime.Storage.ServerRegistry.FileFor(_runtime.Cache.Path, Environment.ProcessId)
+                                      + " (" + (SeedLab.Runtime.Storage.FileRetry.DiagnoseEscaped(ex)?.Cause ?? ex.Message) + "), so "
+                                      + "'vseed serve --status' and '--stop' will not find this server. Stop it with Stop SeedLab on "
+                                      + "the page, or Ctrl+C twice in this window.";
+                    SeedLab.Runtime.Storage.SessionLog.Current?.Exception("serve    the registry file could not be written", ex);
+                }
+            }
+
             log("SeedLab is serving at " + Url);
             log("  bound to 127.0.0.1 only; no CORS, no external requests");
             log("  cache       " + _runtime.Cache.Path);
@@ -318,18 +416,356 @@ namespace SeedLab.Web
                 foreach (string line in _options.StartupLines) log("  " + line);
             }
 
-            log("  press Ctrl+C to stop");
+            log("  idle        " + (_idlePeriodMs > 0
+                ? "after " + WebServerControl.Span(_options.IdleReminder) + " with nobody using the page, the page and "
+                  + "this window suggest stopping SeedLab (it never stops by itself)"
+                : "no reminder (--idle-reminder 0)"));
+            if (registryProblem != null) log("  warning: " + registryProblem);
+            log("  " + _options.ReadyLine);
 
             _options.OnStarted?.Invoke(Url);
-            if (_options.OpenBrowser) TryOpenBrowser(Url, log);
+            if (_options.OpenBrowser) OpenBrowser(Url, log);
 
-            // The token stops the server as well as the start: a caller that owns the lifetime - the
-            // self-test - cancels and gets its port back. Ctrl+C still works through the host's own
-            // lifetime when the token is 'none', which is the ordinary 'vseed serve' case.
-            await app.WaitForShutdownAsync(ct).ConfigureAwait(false);
+            if (_idlePeriodMs > 0)
+            {
+                // Checked often enough to be on time to within an eighth of the period, never more than
+                // four times a second (a test's period of seconds) and never less than twice a minute.
+                long tick = Math.Clamp(_idlePeriodMs / 8, 250, 30_000);
+                _idleTimer = new Timer(IdleTick, null, tick, tick);
+            }
+
+            // One way out: the graceful stop (BeginStop), whoever asked for it. A caller that owns the
+            // lifetime through its token - the self-test - is routed into the same stop.
+            using (ct.Register(() => BeginStop("the program that started this server asked it to stop")))
+            {
+                await app.WaitForShutdownAsync(_stopCts.Token).ConfigureAwait(false);
+            }
+
+            try { _idleTimer?.Dispose(); } catch (Exception) { }
+            try
+            {
+                if (_stopTask != null) await _stopTask.ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // The report is for the console and the page; the stop itself has happened.
+            }
+
+            // Belt and braces: every way out goes through BeginStop, which has already done both.
             _searches.CancelAll();
+            SeedLab.Runtime.Storage.ServerRegistry.Unregister(_registered);
             if (_ownsRuntime) _runtime.Dispose();
             return 0;
+        }
+
+        /// <summary>
+        /// The server's one graceful stop (2026-09-24), started once whoever asks: every running search is
+        /// stopped at once with its checkpoint saved, waited for (3.5 s at most - closing a console window
+        /// leaves about five), the registry file is deleted, and then the host is told to stop. The task
+        /// completes with what was stopped, before the host has finished stopping, so the page's own stop
+        /// request can still be answered with it.
+        /// </summary>
+        internal Task<ServerStopReport> BeginStop(string reason)
+        {
+            lock (_stopGate)
+            {
+                if (_stopTask != null) return _stopTask;
+                _stopping = true;
+                _stopTask = Task.Run(() => StopNow(reason));
+                return _stopTask;
+            }
+        }
+
+        internal bool IsStopping => _stopping;
+
+        internal Task<ServerStopReport>? StopTask => _stopTask;
+
+        private ServerStopReport StopNow(string reason)
+        {
+            Action<string> log = _options.Log ?? Console.Out.WriteLine;
+            ServerStopReport report = new ServerStopReport { Reason = reason };
+            try
+            {
+                SeedLab.Runtime.Storage.SessionLog.Current?.Info("serve    stopping: " + reason);
+                SafeLog(log, "");
+                SafeLog(log, "Stopping SeedLab: " + reason + ".");
+
+                List<ISearchRun> running = _searches.Running();
+                foreach (ISearchRun r in running) r.Abandon("SeedLab's web server was stopped (" + reason + ")");
+
+                System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
+                TimeSpan budget = TimeSpan.FromSeconds(3.5);
+                foreach (ISearchRun r in running)
+                {
+                    TimeSpan left = budget - sw.Elapsed;
+                    r.WaitEnded(left > TimeSpan.Zero ? left : TimeSpan.Zero);
+                }
+
+                foreach (ISearchRun r in running)
+                {
+                    SearchRunInfo info = r.Describe();
+                    report.Searches.Add(info);
+                    string line = "  the search \"" + info.Name + "\" " + (info.StillStopping ? "was still stopping" : "stopped")
+                                  + " after " + N(info.Scanned) + " of " + N(info.Limit) + " seeds";
+                    line += info.CheckpointPath != null
+                        ? (info.StillStopping
+                            ? "; the checkpoint on disk is its last saved one: " + info.CheckpointPath
+                            : "; its checkpoint: " + info.CheckpointPath)
+                          + ". To continue it from a terminal: " + info.ResumeCommand
+                        : "; it left no checkpoint to continue from.";
+                    SafeLog(log, line);
+                    SeedLab.Runtime.Storage.SessionLog.Current?.Info("serve    " + line.Trim());
+                }
+            }
+            catch (Exception ex)
+            {
+                SeedLab.Runtime.Storage.SessionLog.Current?.Exception("serve    the stop did not finish cleanly", ex);
+            }
+            finally
+            {
+                report.RegistryLeft = !SeedLab.Runtime.Storage.ServerRegistry.Unregister(_registered);
+                SeedLab.Runtime.Storage.SessionLog.Current?.Info("serve    stopped: " + reason);
+                _stopCts.Cancel();
+            }
+
+            return report;
+        }
+
+        private static void SafeLog(Action<string> log, string line)
+        {
+            try
+            {
+                log(line);
+            }
+            catch (Exception)
+            {
+                // A console that is being closed cannot be written to; the session log has the line.
+            }
+        }
+
+        private static string N(long v) => v.ToString("N0", CultureInfo.InvariantCulture);
+
+        /// <summary>The searches running now, as the stop dialogs and --status describe them.</summary>
+        internal IReadOnlyList<SearchRunInfo> RunningSearches()
+        {
+            List<SearchRunInfo> l = new List<SearchRunInfo>();
+            foreach (ISearchRun r in _searches.Running()) l.Add(r.Describe());
+            return l;
+        }
+
+        // -------------------------------------------------------------------------------------------
+        // The idle reminder. Activity is what a PERSON does - a tile, a seed report, a point, the places,
+        // a search started or checked by the page - and never the page's own polling; a running search
+        // counts as someone using SeedLab, for as long as it runs.
+        // -------------------------------------------------------------------------------------------
+
+        /// <summary>Someone used SeedLab now: the idle clock starts again, and a reminder showing is withdrawn.</summary>
+        private void Touch()
+        {
+            Interlocked.Exchange(ref _lastActivityMs, Environment.TickCount64);
+            if (!_reminderActive) return;
+            _reminderActive = false;
+            Interlocked.Exchange(ref _remindersSinceActivity, 0);
+            SeedLab.Runtime.Storage.SessionLog.Current?.Info("serve    in use again; the idle reminder is withdrawn");
+            _options.Control?.RaiseIdleEnded();
+        }
+
+        private void IdleTick(object? state)
+        {
+            try
+            {
+                if (_stopping || _idlePeriodMs <= 0) return;
+                if (_searches.AnyRunning()) Touch();
+
+                long now = Environment.TickCount64;
+                long last = Interlocked.Read(ref _lastActivityMs);
+                long since = Math.Max(last, Interlocked.Read(ref _lastReminderMs));
+                if (now - since < _idlePeriodMs) return;
+
+                // Due: the first reminder after the last activity, or the next one after a reminder that was
+                // left unanswered for a whole further period. Keep running answers it by resetting the clock.
+                Interlocked.Exchange(ref _lastReminderMs, now);
+                _reminderActive = true;
+                int count = Interlocked.Increment(ref _remindersSinceActivity);
+                IdleReminderInfo info = new IdleReminderInfo(TimeSpan.FromMilliseconds(now - last),
+                                                             TimeSpan.FromMilliseconds(_idlePeriodMs), count);
+                SeedLab.Runtime.Storage.SessionLog.Current?.Info("serve    idle reminder: nobody has used the page for "
+                                                                 + info.IdleText);
+                _options.Control?.RaiseIdle(info);
+            }
+            catch (Exception)
+            {
+                // A timer callback must never take the process down.
+            }
+        }
+
+        /// <summary>The idle state as /api/runtime and /api/server/state carry it.</summary>
+        private object IdleJson()
+        {
+            long now = Environment.TickCount64;
+            long idleMs = Math.Max(0, now - Interlocked.Read(ref _lastActivityMs));
+            return new
+            {
+                reminder = _reminderActive,
+                idleSeconds = idleMs / 1000.0,
+                idleText = WebServerControl.Span(TimeSpan.FromMilliseconds(idleMs)),
+                everySeconds = _idlePeriodMs / 1000.0,
+                everyText = _idlePeriodMs > 0 ? WebServerControl.Span(TimeSpan.FromMilliseconds(_idlePeriodMs)) : null,
+                count = Volatile.Read(ref _remindersSinceActivity),
+            };
+        }
+
+        /// <summary>
+        /// True for a request a person made. The page's polling is not: <c>/api/runtime</c>, a search's
+        /// event stream, and the server's own endpoints (a keep-alive resets the clock itself; a stop and a
+        /// status check are not "using" SeedLab).
+        /// </summary>
+        internal static bool IsActivity(PathString path)
+        {
+            string p = path.Value ?? "";
+            if (p.Equals("/api/runtime", StringComparison.OrdinalIgnoreCase)) return false;
+            if (p.StartsWith("/api/server/", StringComparison.OrdinalIgnoreCase)) return false;
+            if (p.StartsWith("/api/search/", StringComparison.OrdinalIgnoreCase)
+                && p.EndsWith("/stream", StringComparison.OrdinalIgnoreCase)) return false;
+            return true;
+        }
+
+        // -------------------------------------------------------------------------------------------
+        // The server's own endpoints (2026-09-24): its state, Keep running, and Stop SeedLab.
+        //
+        // The two that change something need BOTH guards: the cross-site middleware above (a POST from
+        // another page is refused before any route) AND this server's token in X-SeedLab-Token, which the
+        // page reads from /api/meta and 'vseed serve --stop' from the registry file. A custom header on a
+        // request from another origin also forces a CORS preflight, which this server never answers - so
+        // another page cannot even send the request, let alone know the token. The guard is against WEB
+        // PAGES: a program on this computer, or another account on it, can read /api/meta like the page
+        // does and stop the server (review of 2026-09-25) - no worse than closing its window, which the
+        // same account can do anyway.
+        // -------------------------------------------------------------------------------------------
+        private void MapServer(WebApplication app)
+        {
+            app.MapGet("/api/server/state", () => Results.Json(new
+            {
+                pid = Environment.ProcessId,
+                url = Url,
+                startedUtc = _started,
+                version = _options.EngineVersion,
+                stopping = _stopping,
+                idle = IdleJson(),
+                searches = RunningSearches(),
+            }, Json));
+
+            app.MapPost("/api/server/keep-alive", (HttpContext ctx) =>
+            {
+                if (TokenRefusal(ctx) is IResult refused) return refused;
+                Touch();
+                return Results.Json(new { ok = true, nextReminderSeconds = _idlePeriodMs / 1000.0 }, Json);
+            });
+
+            app.MapPost("/api/server/stop", async (HttpContext ctx) =>
+            {
+                if (TokenRefusal(ctx) is IResult refused) return refused;
+
+                ServerStopRequest? body = null;
+                if (ctx.Request.ContentLength is > 0 || ctx.Request.HasJsonContentType())
+                {
+                    try
+                    {
+                        body = await ctx.Request.ReadFromJsonAsync<ServerStopRequest>(Json).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is JsonException || ex is InvalidOperationException)
+                    {
+                        return Results.Json(new { error = "the request is not valid JSON: " + ex.Message, kind = "refused" }, Json,
+                                            statusCode: StatusCodes.Status400BadRequest);
+                    }
+                }
+
+                // The second warning (the user's decision): a running search is not stopped by a request
+                // that did not say it may be. The page shows this reply as its second dialog; the terminal
+                // asks, or refuses without --yes.
+                IReadOnlyList<SearchRunInfo> running = RunningSearches();
+                if (running.Count > 0 && !(body?.StopSearch ?? false) && !_stopping)
+                {
+                    return Results.Json(new
+                    {
+                        kind = "search-running",
+                        error = running.Count == 1
+                            ? "a search is running; stopping SeedLab stops it. Send stopSearch: true to stop it anyway."
+                            : running.Count + " searches are running; stopping SeedLab stops them. Send stopSearch: true to stop them anyway.",
+                        searches = running,
+                    }, Json, statusCode: StatusCodes.Status409Conflict);
+                }
+
+                ServerStopReport report = await BeginStop(StopReason(body?.By)).ConfigureAwait(false);
+                return Results.Json(new
+                {
+                    stopped = true,
+                    reason = report.Reason,
+                    searches = report.Searches,
+                }, Json);
+            });
+        }
+
+        /// <summary>
+        /// Null when the request carries this server's token; otherwise the refusal: 401 when it carries
+        /// none, 403 when it carries another. Compared in constant time.
+        /// </summary>
+        private IResult? TokenRefusal(HttpContext ctx)
+        {
+            string given = ctx.Request.Headers["X-SeedLab-Token"].ToString();
+            if (given.Length == 0)
+            {
+                return Results.Json(new
+                {
+                    // Not "nothing else can" (review of 2026-09-25): GET /api/meta hands the token to anything on
+                    // this computer that can reach 127.0.0.1. What it keeps out is other web pages.
+                    error = "refused: this request did not carry SeedLab's token. SeedLab's own page and 'vseed serve --stop' send it; "
+                            + "other web pages cannot read it.",
+                    kind = "refused",
+                }, Json, statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            byte[] a = System.Text.Encoding.UTF8.GetBytes(given);
+            byte[] b = System.Text.Encoding.UTF8.GetBytes(_token);
+            bool same = a.Length == b.Length && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
+            if (same) return null;
+            return Results.Json(new
+            {
+                error = "refused: this request carried a token that is not this server's. Reload the page (a new server "
+                        + "has a new token), or run 'vseed serve --stop' with the same --cache-dir the server was started with.",
+                kind = "refused",
+            }, Json, statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        /// <summary>Who asked, in the words the console and the log use. Only known values; anything else is "a request".</summary>
+        private static string StopReason(string? by) => by switch
+        {
+            "page" => "Stop SeedLab was pressed on the page",
+            "idle" => "Stop SeedLab was chosen on the page's idle reminder",
+            "cli" => "'vseed serve --stop' asked it to",
+            _ => "a request with this server's token asked it to",
+        };
+
+        /// <summary>The body of <c>POST /api/server/stop</c>.</summary>
+        private sealed class ServerStopRequest
+        {
+            /// <summary>Stop even though a search is running (the second warning was answered).</summary>
+            public bool StopSearch { get; set; }
+
+            /// <summary>page | idle | cli - for the console and the log only.</summary>
+            public string? By { get; set; }
+        }
+
+        /// <summary>
+        /// The host lifetime that does nothing (2026-09-24): no Ctrl+C handler, no SIGTERM handler, no
+        /// "Application started" lines. The server stops only through <see cref="BeginStop"/>, which the
+        /// host's own handlers call - see the comment where this replaces ConsoleLifetime.
+        /// </summary>
+        private sealed class NoConsoleLifetime : IHostLifetime
+        {
+            public Task WaitForStartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+            public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         }
 
         private void Configure(WebApplication app)
@@ -348,6 +784,10 @@ namespace SeedLab.Web
                     await ctx.Response.WriteAsync("SeedLab only answers to 127.0.0.1.").ConfigureAwait(false);
                     return;
                 }
+
+                // A request that got this far is from this machine's own page or tool; one a person made
+                // restarts the idle clock (IsActivity).
+                if (IsActivity(ctx.Request.Path)) Touch();
 
                 ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
                 ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
@@ -393,6 +833,7 @@ namespace SeedLab.Web
             MapTiles(app);
             MapLocations(app);
             MapSearch(app);
+            MapServer(app);
 
             app.MapFallback(async ctx =>
             {
@@ -464,6 +905,18 @@ namespace SeedLab.Web
                 game = _options.GameVersion,
                 worldGenVersion = _options.WorldGenVersion,
                 startedUtc = _started,
+
+                // The server's secret for Stop SeedLab and Keep running (2026-09-24). Safe here against web
+                // pages: another page cannot read this reply (there is no CORS), and it is what the page sends
+                // back in the X-SeedLab-Token header, which another page could not send without a preflight
+                // this server never answers. NOT a secret from programs or other accounts on this computer,
+                // which can ask for this reply themselves (review of 2026-09-25).
+                server = new
+                {
+                    token = _token,
+                    idleReminderSeconds = _idlePeriodMs / 1000.0,
+                    registered = _registered != null,
+                },
                 tiles = new
                 {
                     worldSpanM = TileGrid.WorldSpanM,
@@ -581,6 +1034,11 @@ namespace SeedLab.Web
                     resultsDirectory = _options.ResultsDirectory == "" ? null : _options.ResolvedResultsDirectory,
                     selfTest = _runtime.SelfTestOutcome?.Message,
                     hardware = _runtime.Hardware.Lines(),
+
+                    // The lifecycle (2026-09-24): the idle reminder the page shows, and a stop that has begun
+                    // (another tab, the terminal, Ctrl+C), so every open tab can say the server is going.
+                    idle = IdleJson(),
+                    stopping = _stopping,
                 }, Json);
             });
         }
@@ -844,6 +1302,11 @@ namespace SeedLab.Web
                 }
 
                 if (q == null) return Results.BadRequest(new { error = "empty query." });
+                if (_stopping)
+                {
+                    return Results.Json(new { error = "SeedLab is stopping, so this search was not started.", kind = "stopping" },
+                                        Json, statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
 
                 try
                 {
@@ -857,8 +1320,16 @@ namespace SeedLab.Web
                     // refusal is a dead end with a named fix, a confirmation is a dialog. 'kind' says
                     // which, and the whole pre-run report travels with it so the dialog can show the
                     // same numbers the terminal would have printed.
-                    return Results.Json(new { error = ex.Message, kind = ex.Kind, preflight = ex.Report },
-                                        Json, statusCode: StatusCodes.Status400BadRequest);
+                    // checkpoint-exists (2026-09-25) carries the resume point and its command, for the page's
+                    // "start again?" dialog.
+                    return Results.Json(new
+                    {
+                        error = ex.Message,
+                        kind = ex.Kind,
+                        preflight = ex.Report,
+                        checkpointPath = ex.CheckpointPath,
+                        resumeCommand = ex.ResumeCommand,
+                    }, Json, statusCode: StatusCodes.Status400BadRequest);
                 }
                 catch (ArgumentException ex)
                 {
@@ -960,7 +1431,13 @@ namespace SeedLab.Web
         }
 
         // -------------------------------------------------------------------------------------------
-        private static void TryOpenBrowser(string url, Action<string> log)
+        /// <summary>
+        /// Opens <paramref name="url"/> in the default browser: the shell on Windows, <c>open</c> on macOS,
+        /// <c>xdg-open</c> on Linux. A failure is one line that says to open the address by hand, never an
+        /// exception - a machine with no browser (a server, WSL without a desktop) still runs the page for
+        /// whoever opens it. Public for <c>vseed serve</c>'s "already running" path.
+        /// </summary>
+        public static void OpenBrowser(string url, Action<string> log)
         {
             try
             {

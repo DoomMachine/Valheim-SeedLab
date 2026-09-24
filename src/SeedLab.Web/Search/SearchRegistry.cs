@@ -43,6 +43,35 @@ namespace SeedLab.Web.Search
             lock (_lock) { return _runs.TryGetValue(id, out run!); }
         }
 
+        /// <summary>The runs that have not ended yet, oldest first.</summary>
+        public List<ISearchRun> Running()
+        {
+            List<ISearchRun> all = new List<ISearchRun>();
+            lock (_lock)
+            {
+                for (LinkedListNode<string>? n = _order.Last; n != null; n = n.Previous)
+                {
+                    if (_runs.TryGetValue(n.Value, out ISearchRun? r) && r.IsRunning) all.Add(r);
+                }
+            }
+
+            return all;
+        }
+
+        /// <summary>True while any run has not ended - which the idle reminder counts as someone using SeedLab.</summary>
+        public bool AnyRunning()
+        {
+            lock (_lock)
+            {
+                foreach (ISearchRun r in _runs.Values)
+                {
+                    if (r.IsRunning) return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>Cancels everything still running. Called when the server shuts down.</summary>
         public void CancelAll()
         {

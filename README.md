@@ -18,16 +18,19 @@ Everything runs locally. Nothing is uploaded, and nothing in your save folders i
 
 ---
 
-**In a hurry?** [`docs\finding-a-seed.md`](docs/finding-a-seed.md) is the one page to read: from
-nothing installed, through a first search, to reading the result and opening it on the map.
+**In a hurry?** [How to use it](#how-to-use-it) gets SeedLab running without typing a command: on
+Windows, double-click `SeedLab 1 - Install or update`, then `SeedLab 2 - Open web page`. After that,
+[`docs\finding-a-seed.md`](docs/finding-a-seed.md) is the one page to read: a first search, reading
+the result and opening it on the map.
 
 ## Contents
 
 - [Cloned from GitHub? Two folders are not here](#cloned-from-github-two-folders-are-not-here)
+- [How to use it](#how-to-use-it)
 - [What it can and cannot tell you](#what-it-can-and-cannot-tell-you)
 - [Build it](#build-it)
 - [The commands](#the-commands)
-- [The session log, and a file another program holds](#the-session-log-and-a-file-another-program-holds)
+- [The session logs, and a file another program holds](#the-session-logs-and-a-file-another-program-holds)
 - [The web UI](#the-web-ui)
 - [Searching, and what it really costs](#searching-and-what-it-really-costs)
 - [Seeds: 853 quadrillion texts, 4.29 billion worlds](#seeds-853-quadrillion-texts-429-billion-worlds)
@@ -46,10 +49,13 @@ this README mentions are kept on the author's machine on purpose:
 - **`data\`** - the game data snapshot (`data\1.0.15-59f53fb5\`). It is read out of the running game
   by `tools\SeedLab.Dumper`, so it is Iron Gate's content - location tables, prefab constants, the
   game's own English text - and it is not redistributed. **Without it, terrain answers work** (biome,
-  height, rivers, maps, seed arithmetic, terrain searches: they need only the seed), and **location
-  answers refuse** with exit 3 and a message saying so, exactly as they do after a game update. To
-  get it, run the dumper against your own copy of Valheim - `tools\SeedLab.Dumper\README.md`, "The
-  short version" - and copy its output folder into `data\`.
+  height, rivers, maps, seed arithmetic: they need only the seed), and **location answers refuse**
+  with exit 3 and a message saying so, exactly as they do after a game update. **Searches refuse
+  too, today - even one that asks only about terrain**: the search's checker reads the constraint
+  atlas (`constraint-atlas.json`) from `data\`, and without it `vseed search` and the page's Search
+  panel refuse every run and name that file (checked 2026-09-24 on a copy without `data\`). To get
+  it, follow [`docs\game-data.md`](docs/game-data.md), which walks through running the dumper against
+  your own copy of Valheim step by step.
 - **`groundtruth\`** - two worlds the game generated on the author's machine, their map caches, a game
   log and the recorded native-function values. It is the evidence the gates compare against, so
   `vseed selftest`, `tests\SeedLab.Acceptance.Tests`, the location gate and the tile check in
@@ -59,6 +65,348 @@ this README mentions are kept on the author's machine on purpose:
 
 Paths in the documentation such as `E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab` are
 where the project lives on the author's machine; SeedLab itself does not depend on them.
+
+---
+
+## How to use it
+
+SeedLab is one program, `vseed`, used two ways: as a **web page** in your own browser (a map of any
+world, and a search for worlds you would like), and as a **command line** in a terminal window. Both
+run the same engine, so anything the page can do, the terminal can do too, and the other way round.
+
+Everything below is tested on Windows 10 with an ordinary x64 (Intel or AMD) processor. For macOS
+and Linux, see [On macOS and Linux](#on-macos-and-linux) at the end of this section.
+
+### On Windows: the one-click files
+
+The SeedLab folder has seven small files that do the setup, start and stop the web page, and take
+everything away again. Double-click them in File Explorer - the first time, in this order:
+
+| File | What it does |
+|---|---|
+| `SeedLab 1 - Install or update.bat` | checks for Microsoft's .NET 10 SDK (and helps you install it), builds SeedLab, and makes `vseed` a command you can type |
+| `SeedLab 2 - Open web page.bat` | opens the map and the search in your browser, starting SeedLab's web server first if it is not running |
+| `SeedLab 3 - Stop web page.bat` | stops the web server |
+| `SeedLab 4 - Command window.bat` | opens a PowerShell window in the SeedLab folder in which `vseed` works |
+| `SeedLab 5 - Uninstall (keeps the build).bat` | removes everything SeedLab put outside its own folder |
+| `SeedLab 6 - Remove the build.bat` | runs the uninstall if it has not been done, then deletes the build inside the SeedLab folder |
+| `SeedLab.bat` | all of the above as one numbered menu, plus **S**tatus (what is installed and what is running) and **H**elp |
+
+Each of them first does any earlier step that has not happened yet, and says so - open the web page
+before anything is installed and it offers to install first. **Nothing is installed or removed
+without asking.** Nothing is stopped without asking either, with one exception you ask for by name:
+`SeedLab 3 - Stop web page` stops the web server at once when no search is running in it (and asks
+first when one is). When there is nobody to answer, the answer is always "no". The window
+stays open at the end until you press Enter, so you can read what happened (except `SeedLab 2`'s,
+which closes by itself once the web server's own window has opened). All of them hand their
+work to one PowerShell script, `scripts\windows\seedlab.ps1`; [`docs\scripts.md`](docs/scripts.md)
+explains every step and every question.
+
+**Before the first run:**
+
+1. **Get the SeedLab folder.** On SeedLab's GitHub page choose **Code > Download ZIP**. Before you
+   unpack it, right-click the ZIP file, choose **Properties**, tick **Unblock** at the bottom and
+   click **OK** - that stops Windows from asking about every file in it (below). Unpack it somewhere
+   in your own folders: Documents, a games folder, a second drive. Not in `C:\Program Files`, which
+   needs administrator rights to write to. (Or clone it with git; a clone is not marked as coming
+   from the internet.)
+2. **"This file came from the internet."** If you did not unblock the ZIP, Windows asks before it
+   runs each file. You will see either a blue **"Windows protected your PC"** window (SmartScreen):
+   click **More info**, check that the file name is the SeedLab file you double-clicked, then
+   **Run anyway** - or an **"Open File - Security Warning"** window ("The publisher could not be
+   verified"): click **Run**. Only do this for files from SeedLab's own GitHub page.
+3. **Do not use "Run as administrator".** Every one of the files refuses to run that way, and says why: "Run as
+   administrator" can run them as a *different* Windows account - the one whose password was typed
+   into the prompt - and SeedLab would then be set up for that account instead of yours. Double-click
+   them normally.
+
+### What "Install or update" does
+
+It works in four steps and says each one as it goes:
+
+1. **The .NET 10 SDK.** SeedLab is built from its source code, here on your PC, and the .NET SDK is
+   Microsoft's free toolkit that does the building. It also brings the runtimes `vseed` needs - every
+   `vseed` command needs its ASP.NET Core runtime, not only the web page. If it is missing, the script
+   explains this and offers:
+   **W** - install it with winget, Windows' own package manager (about 200 MB, downloaded from
+   Microsoft); **B** - open Microsoft's download page, so you install it yourself; **C** - cancel.
+   **Installing the SDK is the only step of SeedLab that needs administrator rights**, because it is
+   installed for every account on the PC: Windows shows its own **User Account Control** prompt, and
+   you answer **Yes** to continue. Nothing else asks for those rights.
+2. **The build.** The first build takes a minute or two. **Telemetry:** the .NET SDK sends usage data
+   to Microsoft by default. SeedLab's scripts turn that off for the builds they run
+   (`DOTNET_CLI_TELEMETRY_OPTOUT=1`); your other uses of `dotnet` are not changed - to turn it off
+   for those too, set that variable for your account yourself. When the build is already up to date
+   with the source, nothing is built and nothing is stopped. Otherwise, if SeedLab's web page is still
+   open, Windows will not let the build replace the running program; the script says so and offers to
+   stop it first (a search running in it is stopped with its checkpoint saved).
+3. **The `vseed` command.** The build folder is added to **your own** Path, so that typing `vseed`
+   works in every Command Prompt or PowerShell window you open from now on (windows that are already
+   open do not see it). Nothing outside your account is changed.
+4. **A check.** It runs `vseed --version`, and tells you whether a new window will find this build.
+
+Run it again after every update of SeedLab. When there is nothing to do, it says so and changes
+nothing.
+
+### The web page
+
+Start it with **`SeedLab 2 - Open web page`** (or type `vseed serve` in a terminal). A few seconds
+later your browser opens `http://127.0.0.1:8731` by itself. The page works only on this computer:
+nothing is sent anywhere, and no other computer can reach it.
+
+**The server window.** The page comes from a small program on your PC, SeedLab's web server, and it
+runs in a window of its own titled **SeedLab web server**. The window says so first:
+
+```
+==============================================================================
+ This window IS SeedLab's web server. Minimise it - do not close it - while
+ you use the page. To stop it: Stop SeedLab on the page, 'SeedLab 3 - Stop
+ web page' (or vseed serve --stop), or press Ctrl+C in THIS window twice.
+==============================================================================
+```
+
+Keep it open (minimised is fine) while you use the page. **It never stops by itself, and it never
+starts by itself**: it is not hidden, not a service, and not started when you log in. It runs until
+you stop it.
+
+**Using the page.** Type a seed - the text you would type in the game, or its number - into the box
+at the top and press **Open** (or **Random**); drag to pan, scroll to zoom. The panels: **Seed**
+(land, biomes, islands, spawn), **Places** (location markers, once you have the game data),
+**Search** (find seeds), **Point** (click anywhere on the map for the exact values there) and
+**Help** (keys, and what the map and its markers mean). To find seeds, open **Search**, pick a
+**Preset** or **Add goal**, then **Find seeds**; matches appear as they are found. Name a **Results
+file** to keep them: it is written to the `seedlab-results` folder inside the SeedLab folder, and
+the page says where. **Export** saves the search as a query file that `vseed search` runs the same
+way.
+
+**Stopping it** - whichever of these is handy:
+
+- **Stop SeedLab** on the page: a button at the top, and another on the **Help** panel. It first
+  says what stopping does and asks. If a search is running, a **second** warning names it, says how
+  far it got and what stopping does to it, with the command that continues it later - then **Stop
+  anyway** or **Keep running**.
+- **`SeedLab 3 - Stop web page`**, or `vseed serve --stop` in a terminal. If a search is running,
+  it says which one and asks `Stop anyway? [y/N]` first.
+- **Ctrl+C twice in the server window**, within 10 seconds. The first press stops nothing: it says
+  what is running and what a second press would do. Ctrl+C counts only in that window - in the
+  browser, Ctrl+C is Copy.
+- **Close the server window.** That stops it at once, with no question - but a running search is
+  still stopped properly, with its checkpoint saved, before the program ends. **Signing out of
+  Windows, or shutting it down,** does the same.
+
+Every way stops a running search the same way: at once, with the part it finished saved in a
+checkpoint, so it can be continued from a terminal - **except a search still in the first stage of a
+two-stage ("funnel") search**, which has no resume point yet and loses that stage's work; every
+warning says so for that search. The command that continues a stopped search looks like this:
+
+```
+vseed search "C:\Users\...\SeedLab\checkpoints\675dc42410485df8.ckpt.query.json" --resume --checkpoint "C:\Users\...\SeedLab\checkpoints\675dc42410485df8.ckpt"
+```
+
+It works as printed: SeedLab keeps the search's query file beside its checkpoint, so there is nothing
+to save first. It is shown where the stop happened - in the page, in the terminal that ran
+`SeedLab 3` or `vseed serve --stop`, or in the server window, which then stays open until you press
+Enter (at most 10 minutes) - and it is always in the session log, `logs\vseed.log`, which becomes
+`vseed-prev.log` the next time SeedLab starts (see [The session logs](#the-session-logs)). The page
+then says **"SeedLab has stopped. You can close this tab."**, with the same command. After a stop from
+outside the page (the window, a script), the page takes up to about 20 seconds to notice.
+
+**Starting a stopped search again.** If you press **Find seeds** on a search that was stopped and can
+still be continued, the page says so first, shows the command that continues it, and asks: **Start
+again from the first seed** replaces that resume point; **Cancel** keeps it.
+
+Three different things are called "stop" - worth keeping apart: the **Stop** button on the Search
+panel ends one search and leaves SeedLab running; **Stop SeedLab** ends the web server itself; and
+**Ctrl+C** stops a `vseed search` running in a terminal (once), but the web server only when pressed
+twice in its own window.
+
+**The 60-minute reminder.** If nobody has used the page for 60 minutes, the page and the server
+window suggest stopping SeedLab, with a **Stop SeedLab** button. "Used" means something you did -
+the page's own automatic refreshing does not count, and a running search does. **Keep running**, or
+simply ignoring it, asks again after another 60 minutes, and so on. It never stops SeedLab by
+itself. `vseed serve --idle-reminder 30` makes it 30 minutes; `0` turns it off.
+
+**Opening it again** while it is running - `SeedLab 2` again, or a second `vseed serve` - opens the
+page of the server that is already running; it does not start a second one. If the browser does not
+open, go to the address the server window printed. If another program already uses port 8731,
+`vseed serve --port 0` lets Windows pick a free port and prints it.
+
+**Not yet tested for real** (2026-09-25): closing the server window with its **X** (it was tested
+once by sending the window its close message: the search's checkpoint was saved and nothing was left
+behind); a real Windows sign-out or shutdown (a test sends the server the same two messages Windows
+sends, and it stops properly - but nobody has yet watched Windows deliver them at a real sign-out);
+typing an answer at `vseed`'s own `Stop anyway? [y/N]` (only the refusal with nobody to answer, and
+`--yes`, were run); two web servers running in one cache folder at the same time; a stop during the
+short measurement a funnel search makes between its two stages; and all of this on macOS and Linux.
+A stop during a funnel's first stage **was** tested: every warning says that search's work is lost,
+and nothing of it is left behind.
+
+### The command line
+
+**`SeedLab 4 - Command window`** opens a PowerShell window in the SeedLab folder in which `vseed`
+works. After Install, `vseed` also works in any **new** Command Prompt or PowerShell window.
+`vseed --help` lists the commands, and `vseed <command> --help` explains one. (`vseed.exe` is a
+console program: double-clicking it opens a window that prints the command list and closes at once.)
+The everyday commands:
+
+| To | Type |
+|---|---|
+| see everything about one world | `vseed seed MWd8eV6svz` |
+| read one exact point (x, z in metres) | `vseed at MWd8eV6svz 120 -340` |
+| list where the places are (needs the game data) | `vseed locations MWd8eV6svz` |
+| save a map picture | `vseed map MWd8eV6svz --rivers -o world.png` |
+| see the ready-made searches | `vseed presets list` |
+| find seeds (needs the game data, below) | `vseed search gentle-start --seeds 4000 --keep 20 --out hits.jsonl` |
+| ask why one seed passed or failed (needs the game data) | `vseed explain -1957974196 gentle-start` |
+| turn a seed number into text you can type | `vseed invert -1957974196 --alphabet game` |
+| list your own worlds (read-only) | `vseed worlds` |
+| is the web page running? stop it | `vseed serve --status`, `vseed serve --stop` |
+
+A search prints its plan and its cost before it scans anything, and asks before anything expensive
+(`--yes` answers for you). **Ctrl+C stops a search at the next block and writes a checkpoint**; run
+the same command again with `--resume` to continue where it stopped.
+[`docs\finding-a-seed.md`](docs/finding-a-seed.md) walks through a first search with real output.
+
+### The session logs
+
+Every `vseed` command that does real work keeps a log of what it did - and SeedLab keeps exactly
+two of them:
+
+```
+%LOCALAPPDATA%\SeedLab\logs\vseed.log        this session: the last vseed command, or the web server that is running
+%LOCALAPPDATA%\SeedLab\logs\vseed-prev.log   the session before it
+```
+
+When a command starts, `vseed.log` becomes `vseed-prev.log` (replacing the older one) and a new
+`vseed.log` begins - the way Valheim's own `BepInEx\LogOutput.log` is rewritten at every start. So
+the last two sessions are always there, and never more. If you want to keep one, copy it before you
+run two more `vseed` commands. While another `vseed` is running - the web server, say - a second
+command cannot take over those two, so it writes `vseed.log.1` (up to `.4`) instead, and a numbered
+log nobody is using is deleted by a later command. **After the web server stops**, its log - with
+every search it stopped, where that search's checkpoint is and the command that continues it - is
+`vseed.log` until the next `vseed` command, then `vseed-prev.log`, and gone after one more: copy the
+command if you mean to continue the search later. A log that passes 4 MiB keeps only warnings and
+errors from then on, and one that passes 16 MiB stops, so the logs cannot fill a drive; a normal
+session is a few kilobytes. **The logs contain your folder paths** (on Windows usually
+`C:\Users\<your account name>\...`) - read them before you post them anywhere public. **S**tatus in
+`SeedLab.bat` shows where they are. More about them:
+[The session logs, and a file another program holds](#the-session-logs-and-a-file-another-program-holds).
+
+### Where things go
+
+- **Your results:** where `--out` says (terminal), or the `seedlab-results` folder inside the SeedLab
+  folder (the web page; to be exact, inside the folder `vseed serve` was started from).
+- **Everything else** goes to SeedLab's cache folder, `%LOCALAPPDATA%\SeedLab`: search checkpoints,
+  map pictures made without `-o`, the web page's map tiles, the self-test stamp, the two session logs,
+  and - while the web server runs - a small file that says where it is (`serve\`). Deleting the
+  folder loses nothing you asked to keep, except that an unfinished search can then no longer be
+  continued. `vseed clean` shows what is there and removes it with `--yes`. `--cache-dir <folder>` or
+  the `SEEDLAB_CACHE_DIR` setting puts it somewhere else.
+- **Your Valheim saves are never written.** `vseed worlds` and `vseed world` only read them.
+
+### Locations and searches need the game data
+
+**Terrain answers work straight after Install**: biomes, heights, rivers, maps, seed arithmetic,
+and the land and island figures of `vseed seed`. **Bosses, traders, dungeons and every other
+location need the `data\` folder**, which you make from your own copy of Valheim:
+[`docs\game-data.md`](docs/game-data.md) walks through it step by step. Until then those answers
+stop with a message that says so (exit code 3). **Searching and `vseed explain` need it too, for
+now - even for a search that only asks about terrain**: the search's checker reads one file of the
+game data (`constraint-atlas.json`), and without it every search and every explain is refused, on
+the page and in the terminal, with a message naming that file. `vseed data` shows what data SeedLab found and whether it matches
+your installed game.
+
+### Updating
+
+Stop the web page if it is open (the build cannot replace a running `vseed`; Install offers to stop
+it for you). Then:
+
+- **With git:** `git pull`, then run **`SeedLab 1 - Install or update`** again.
+- **With a ZIP:** do **not** unpack the new ZIP over the old folder - a file that a new version
+  deleted or renamed would stay behind, still be built, and could break the build or change what it
+  does. Unblock the new ZIP first (right-click, **Properties**, **Unblock**, as the first time),
+  unpack it into a **new** folder, and copy your `data\` folder and your `seedlab-results` folder (if
+  you have one) from the old folder into the new one. Then delete the old folder, and run
+  **`SeedLab 1 - Install or update`** in the new one: it notices that the `vseed` command still points
+  at the old folder, offers to take that off your Path, and registers the new one.
+
+`SeedLab 2` and `SeedLab 4` also notice when the source has changed since the last build and offer
+to rebuild first. After a **Valheim** update, see
+[The game data, and what to do after a Valheim update](#the-game-data-and-what-to-do-after-a-valheim-update).
+
+### Uninstalling
+
+**`SeedLab 5 - Uninstall (keeps the build)`** lists everything it will do and asks once. It stops
+the web server (and asks separately if a search is running, because that search's checkpoint goes
+with the cache folder), moves the cache folder `%LOCALAPPDATA%\SeedLab` - both session logs
+included - to the **Recycle Bin** (if Windows would have to delete it permanently instead, Windows
+itself warns first), and takes `vseed` off your Path. Then it asks separately about a cache folder
+you chose with `SEEDLAB_CACHE_DIR`, your `SEEDLAB_...` settings, SeedLab's dumper plugin in Valheim
+and the dumper's output folder. It keeps, on purpose: the SeedLab folder and its build, `data\`,
+your results, and the .NET SDK, which other programs may use (Windows **Settings > Apps** removes
+it). Run it again and it says there is nothing left to do.
+
+**`SeedLab 6 - Remove the build`** runs the uninstall first if it has not been done, then deletes the
+build folders inside the SeedLab folder (not to the Recycle Bin: Install rebuilds them exactly). To
+remove SeedLab completely, delete the SeedLab folder itself afterwards - save its `seedlab-results`
+folder first if you want your results.
+
+### Doing it by hand
+
+If you prefer a terminal, or a script step fails, this is what the scripts do. In PowerShell:
+
+1. **Install the .NET 10 SDK** from <https://dotnet.microsoft.com/download/dotnet/10.0> (the SDK
+   installer for Windows x64). It includes the ASP.NET Core runtime that every `vseed` command needs.
+   Nothing else is downloaded: SeedLab uses no NuGet packages.
+2. **Open a terminal in the SeedLab folder.** In File Explorer, open the folder, click the address
+   bar, type `powershell` and press Enter.
+3. **Build it:** `dotnet build src\SeedLab.Cli\SeedLab.Cli.csproj -c Release`. The program is
+   `src\SeedLab.Cli\bin\Release\net10.0\vseed.exe`. Leave it where the build put it: that is how it
+   finds the `data\` folder on its own, whichever folder you run it from.
+4. **Make `vseed` a command** for this terminal:
+   `Set-Alias vseed "$PWD\src\SeedLab.Cli\bin\Release\net10.0\vseed.exe"`. For every terminal from
+   now on, add that `bin\Release\net10.0` folder to your user **Path** (Start menu, *Edit environment
+   variables for your account*, **Path**, **Edit**, **New**), then open a new terminal.
+5. **Try it:** `vseed seed MWd8eV6svz`. The web page is `vseed serve`; `vseed serve --stop`, or
+   Ctrl+C twice in its window, stops it.
+6. **To remove it by hand:** delete `%LOCALAPPDATA%\SeedLab`, take the build folder off your Path,
+   and delete the SeedLab folder.
+
+### On macOS and Linux
+
+The same actions are in **`seedlab.sh`**: run `sh seedlab.sh` in a terminal in the SeedLab folder for
+the menu, or `sh seedlab.sh install | web | stop | status | shell | uninstall | remove-build`. On a
+Mac, double-clicking **`SeedLab.command`** in Finder opens the menu in Terminal (the first time,
+macOS may say the file is from an unidentified developer: right-click it, choose **Open**, then
+**Open** again). If it says instead that you do not have permission to open it, the file lost its
+"may be run" mark on the way (a ZIP can do that): run `chmod +x SeedLab.command seedlab.sh` once in a
+terminal in the SeedLab folder, or simply use `sh seedlab.sh`.
+
+**Say it plainly: these have not been tested on macOS at all - no Mac was available - and not yet on
+a real Linux system** (that is planned, in WSL). They were checked with `dash`, the strict shell
+Ubuntu uses, running against a Windows build of SeedLab. Treat them as a careful first version;
+[`docs\scripts.md`](docs/scripts.md) lists the manual steps each action automates.
+
+What differs from Windows:
+
+- They refuse to run as root, and never run `sudo`. If the .NET 10 SDK is missing they offer to
+  install it **for your account only** with Microsoft's installer script (into `~/.dotnet`, no
+  password needed), or tell you how to install it yourself (your distribution's package, or the
+  macOS installer - those ask for an administrator password).
+- The `vseed` command is a small script at `~/.local/bin/vseed`; if that folder is not on your PATH,
+  the script offers to add three marked lines to your shell's startup file, and uninstall takes
+  exactly those lines out again.
+- **The web server runs in the terminal you started it from** (on a Mac, the Terminal window
+  `SeedLab.command` opened). Keep it open while you use the page; stop it with Stop SeedLab on the
+  page, `sh seedlab.sh stop` from another terminal, or Ctrl+C twice in that terminal.
+- The cache folder, with the two session logs in its `logs` folder, is `~/Library/Caches/SeedLab`
+  on macOS and `~/.cache/seedlab` on Linux. Uninstall moves things to the Trash where the system has
+  one the script can use (macOS; Linux with `gio` or `trash-put`) and otherwise **deletes them for
+  good** - it says which before it asks.
+- **Apple Silicon and other ARM processors:** SeedLab has only ever been proven on x64 processors.
+  On ARM, `vseed` stops with `SELF-TEST UNPROVEN` and answers nothing unless you add
+  `--accept-unverified-platform` - and then its answers may differ from the game's. (Intel Macs are
+  x64.)
 
 ---
 
@@ -132,18 +480,22 @@ simply not implemented (`--strategy funnel|sample`, the D4/D5 count rules, GPU).
 
 ## Build it
 
-You need the **.NET 10 SDK**. `vseed serve` also needs the ASP.NET Core 10 shared runtime, which
-ships in the same install. **There are no NuGet packages** — the whole thing builds offline.
+(`SeedLab 1 - Install or update` does all of this for you - see [How to use it](#how-to-use-it).
+This is the same by hand.)
+
+You need the **.NET 10 SDK**. Every `vseed` command also needs the ASP.NET Core 10 shared runtime
+(the web server is built into the same program), which ships in the same install. **There are no NuGet packages** — the whole thing builds offline.
 
 ```
-cd E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab
+cd <your SeedLab folder>
 dotnet build src\SeedLab.Cli\SeedLab.Cli.csproj -c Release
 ```
 
-The tool is `src\SeedLab.Cli\bin\Release\net10.0\vseed.exe`. Put it on your PATH or alias it:
+The tool is `src\SeedLab.Cli\bin\Release\net10.0\vseed.exe`. Put it on your PATH or alias it - in
+PowerShell, from the SeedLab folder:
 
 ```powershell
-Set-Alias vseed E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab\src\SeedLab.Cli\bin\Release\net10.0\vseed.exe
+Set-Alias vseed "$PWD\src\SeedLab.Cli\bin\Release\net10.0\vseed.exe"
 ```
 
 Run it from inside the SeedLab folder, or set `SEEDLAB_DATA_DIR` to `data\1.0.15-59f53fb5\` — that is
@@ -157,7 +509,7 @@ vseed selftest --quick            # 1 cell in 16, about 4 s
 ```
 
 **If a build fails with MSB3027 or MSB3021**, a `vseed serve` or `vseed search` is still running and
-holding `bin\Release\`. Stop it and build again.
+holding `bin\Release\`. Stop it (`vseed serve --stop` for the web server) and build again.
 
 ---
 
@@ -177,7 +529,7 @@ options work on either side of the command name:
 |---|---|
 | `--mode background\|balanced\|full` | how much of the machine to use. **Default `balanced`** — about 50 % of the logical cores at Normal priority. `background` is ~25 % at BelowNormal, for while you play; `full` is every core, still capped by the memory guard. Every run prints the arithmetic: `workers 8 (balanced mode = 50 % of 16 logical cores -> 8; memory allowed 840)`. |
 | `--threads <n>` | override the worker count (1..64). Still capped by free memory, and the cap is printed. |
-| `--cache-dir <dir>` | where checkpoints, rendered maps, web tiles and the self-test stamp live. Default `%LOCALAPPDATA%\SeedLab`, or `$SEEDLAB_CACHE_DIR`. |
+| `--cache-dir <dir>` | where checkpoints, rendered maps, web tiles, the self-test stamp, the two session logs and a running web server's file live. Default `%LOCALAPPDATA%\SeedLab`, or `$SEEDLAB_CACHE_DIR`. A web server started with `--cache-dir <dir>` is found by `vseed serve --status` / `--stop` with the same `--cache-dir <dir>`. |
 | `--ignore-running-game` | do not drop to `background` when Valheim is running. |
 | `--skip-self-test` | do not check this machine against the recorded goldens. `seed`, `at`, `map`, `locations` and `search` then say `warning: the machine self-test was turned off: SeedLab's bit-exactness is UNVERIFIED on this run` (commands that do not build a world stay quiet). |
 | `--accept-unverified-platform` | proceed on an architecture the gates have never run on (see [`docs\limits.md`](docs/limits.md)). |
@@ -420,18 +772,28 @@ Bench  (16 logical cores, .NET 10.0.12)
 
 ---
 
-## The session log, and a file another program holds
+## The session logs, and a file another program holds
 
 Every command that starts SeedLab's runtime — `seed`, `at`, `map`, `locations`, `search`, `explain`,
-`serve`, `selftest`, `bench` and `clean` — keeps a log of what it did:
+`serve`, `selftest`, `bench` and `clean` — keeps a log of what it did, and SeedLab keeps two of them
+(the user's decision of 2026-09-24: *"a current log, and a last session log"*):
 
 ```
-%LOCALAPPDATA%\SeedLab\logs\vseed.log        (with --cache-dir: <that folder>\logs\vseed.log)
+%LOCALAPPDATA%\SeedLab\logs\vseed.log         this session's      (with --cache-dir: <that folder>\logs\)
+%LOCALAPPDATA%\SeedLab\logs\vseed-prev.log    the last session's
 ```
 
-- **It is rewritten every time**, the way the game's BepInEx rewrites `BepInEx\LogOutput.log` each
-  time Valheim starts. So it always describes the **last** command — if you want to keep it or send
-  it to someone, **copy it before you run another `vseed` command.**
+- **At the start of every session `vseed.log` is renamed `vseed-prev.log`**, replacing the one before
+  it, and a new `vseed.log` begins - the way the game's BepInEx rewrites `BepInEx\LogOutput.log` each
+  time Valheim starts, with one session more kept. So the logs always describe the **last two**
+  commands - if you want to keep one or send it to someone, **copy it before you run two more `vseed`
+  commands.** (Before 2026-09-24 there was only `vseed.log`, rewritten every time.) If another
+  program holds `vseed-prev.log` so that it cannot be replaced, it is kept as it is and the new
+  session writes on after the last one's lines in `vseed.log` (unless those are already past 4 MiB),
+  and says so.
+- **Bounded:** past 4 MiB a log keeps only warnings and errors (it says so once, and counts what it
+  left out); past 16 MiB it stops. A normal session is a few kilobytes - only a fault that repeats
+  could get there - so the two logs together can never grow past a few tens of MiB.
 - **It holds your folder paths** — on Windows usually `C:\Users\<your account name>\...` — on almost
   every line, and the command exactly as you typed it. Read it, or replace the name, before you post
   it anywhere public. (It records no computer name, no user name as such and no keys; of the
@@ -444,11 +806,12 @@ Every command that starts SeedLab's runtime — `seed`, `at`, `map`, `locations`
   how many game-data files matched their SHA-256 in `manifest.json`, and whether the data's
   DATA-STAMP matches the installed game), and at the end the exit code and how long it took.
 - **Two at once:** while one `vseed` is still running — a `vseed serve` you left open, a long search —
-  a second one cannot rewrite that log, so it writes `vseed.log.1` instead (then `.2`, up to `.4`; a
-  sixth at once runs without a log and says so). A numbered log nobody is using is deleted by the next
-  command that starts.
+  a second one does not touch its log or `vseed-prev.log`: it writes `vseed.log.1` instead (then
+  `.2`, up to `.4`; a sixth at once runs without a log and says so). A numbered log nobody is using
+  is deleted by the next command that starts. (The first line of every log names the process that
+  writes it, which is how a later command tells a log in use from one another program holds.)
 - `hash`, `invert`, `space`, `presets`, `data`, `worlds` and `world` start no runtime, keep no log,
-  and leave the last one alone; so do `--help` and `--version`.
+  and leave the last ones alone; so do `--help`, `--version` and `vseed serve --status` / `--stop`.
 
 ### When a file is in use, read-only or not allowed
 
@@ -518,9 +881,28 @@ terminal reproduces the run.
 **What it writes** (it used to say "nothing", which stopped being true when every search flag became
 reachable from the page): the results file you name on the Search panel, inside one results
 directory the server owns; the checkpoint and its kept-set snapshot, in the cache root; the tile
-cache's disk tier, also in the cache root; and the session log, `<cache root>\logs\vseed.log`,
-emptied at the next start. Your saves and Steam Cloud folders are still never touched.
-`docs\web.md` has the exact rules.
+cache's disk tier, also in the cache root; the session log, `<cache root>\logs\vseed.log`, which
+becomes `vseed-prev.log` at the next start; and, while it runs, `<cache root>\serve\server-<pid>.json`,
+which says where it is and is deleted when it stops. Your saves and Steam Cloud folders are still
+never touched. `docs\web.md` has the exact rules.
+
+**Starting and stopping it** (decided with the user on 2026-09-24: nothing of SeedLab's may be left
+running without anyone knowing). The server runs in a window of its own, titled **SeedLab web
+server**, that says what it is and how to stop it; it never stops by itself and never starts by
+itself. It stops by **Stop SeedLab** on the page (which warns first, and warns again if a search is
+running), by `vseed serve --stop` or `SeedLab 3 - Stop web page`, by **Ctrl+C twice** within 10
+seconds in its own window (the first press stops nothing and says what is running), or by closing
+its window, and on Windows by signing out or shutting down (a hidden window hears those; a console
+program that has loaded user32.dll is sent no console event for them). Every way stops a running
+search at once with its checkpoint saved - except one still in a funnel's first stage, which has no
+resume point yet and loses that stage's work (the warnings say so) - and prints the command that
+continues it, which names the query file saved beside the checkpoint. After 60 minutes
+with nobody using the page (`--idle-reminder`), the page and the window suggest stopping it, and
+again after every further 60 minutes; they never stop it. `vseed serve --status` says whether it is
+running, where, and whether a search is running in it; a second `vseed serve` opens the running
+one's page. [How to use it](#the-web-page) has the user's view; `docs\web.md` has the design, the
+endpoints and the token that keeps other web pages from pressing Stop (it keeps out web pages, not
+other programs on the same computer).
 
 `vseed serve --selftest` checks the server against the ground truth and prints every result. Run on
 2026-09-23: **all PASS**, exit 0 — tiles against the game's own texture (262,144 of 262,144 pixels
@@ -530,7 +912,10 @@ path-traversal behaviour. (This line used to say 13 checks. The code of the comm
 2026-09-24's file-access work has 12 PASS rows, the tile row counted once per world; what the
 2026-09-23 build printed was not kept.) Re-run on
 2026-09-24 with the cross-site guard, Retry saving and the replay check added: **15 PASS rows and 3
-`MEASURED`**, exit 0. See `docs\web.md`.
+`MEASURED`**, exit 0. Re-run again after the web server's start-and-stop work (2026-09-24/25), with two
+new rows - Stop SeedLab refused without the server's token, and Stop SeedLab with a search running
+(409, then stopped with its checkpoint saved, in 6 ms): **17 PASS rows and 3 `MEASURED`**, exit 0.
+See `docs\web.md`.
 
 ---
 
@@ -895,6 +1280,9 @@ tools\SeedLab.LocationLab   the location gate
 tools\SeedLab.GoldenCheck   the generator's private state against the game's
 tools\check-game-version.ps1  is the installed game the build SeedLab was verified on?
 tools\decompile.ps1           one game type as C#, for checking a spec's citation (needs ILSpy or ilspycmd)
+SeedLab.bat, SeedLab 1..6 - *.bat   the Windows menu and one-click files                  docs\scripts.md
+scripts\windows\seedlab.ps1         the PowerShell script they all run
+seedlab.sh, SeedLab.command         the same for macOS and Linux (not tested there yet)   docs\scripts.md
 tests\SeedLab.Acceptance.Tests   the 32-check gate against the game's own output
 tests\SeedLab.Search.Tests       the query language, the tiers and prefilter parity
 tests\SeedLab.Search.Safety.Tests  the output layer: bounds, rotation, kills and resumes
@@ -908,7 +1296,9 @@ docs\                    one short page per subsystem, plus docs\specs\
 ```
 
 `docs\` in reading order:
+[`scripts.md`](docs/scripts.md) (install, start, stop, remove) ·
 [`finding-a-seed.md`](docs/finding-a-seed.md) (start here) ·
+[`game-data.md`](docs/game-data.md) (the game data, step by step) ·
 [`search.md`](docs/search.md) · [`measurements.md`](docs/measurements.md) (every cost number) ·
 [`limits.md`](docs/limits.md) (what is not true of it) · [`generator.md`](docs/generator.md) ·
 [`locations.md`](docs/locations.md) · [`data.md`](docs/data.md) · [`dumper.md`](docs/dumper.md) ·
