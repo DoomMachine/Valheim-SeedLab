@@ -40,6 +40,15 @@ namespace SeedLab.Search.Execution
         public RunEstimator Estimator = new RunEstimator();
         public string QueryHash = "";
         public string CheckpointPath = "";
+
+        /// <summary>
+        /// The cache root's checkpoints directory this run belongs to: where <see cref="CheckpointPath"/>
+        /// is made when nobody names one, and where <see cref="Start"/> tidies orphaned temp files. A
+        /// front end passes its own (<c>--cache-dir</c> reaches nothing else); a library caller that
+        /// passes none gets <see cref="CheckpointStore.Root"/>.
+        /// </summary>
+        public string CheckpointDirectory = "";
+
         public int Threads;
 
         /// <summary>
@@ -112,6 +121,11 @@ namespace SeedLab.Search.Execution
         /// calls it too, with the pre-raise hash, and is then discarded. An exception counts as null,
         /// and <see cref="Start"/> reports the real problem with the file.
         /// </param>
+        /// <param name="checkpointDirectory">
+        /// The run's cache root's checkpoints directory (<see cref="CheckpointDirectory"/>). Both front
+        /// ends pass their runtime's, which is what makes <c>--cache-dir</c> and
+        /// <c>SEEDLAB_CACHE_DIR</c> reach the checkpoint; null means <see cref="CheckpointStore.Root"/>.
+        /// </param>
         public static SearchSession Create(Query q, ILocationOracle oracle, string engineVersion,
                                            long seedBudget, int threads, string? outPath = null,
                                            bool noPrefilter = false, bool acceptScanOrder = false,
@@ -119,7 +133,8 @@ namespace SeedLab.Search.Execution
                                            BlockSizeDecision? overrideDecision = null,
                                            bool alreadyRaised = false,
                                            Func<double, WorkerPlan>? plannerAtGrid = null,
-                                           Func<string, Checkpoint?>? resumeCheckpoint = null)
+                                           Func<string, Checkpoint?>? resumeCheckpoint = null,
+                                           string? checkpointDirectory = null)
         {
             if (overrideDecision != null && planOverride == null)
             {
@@ -133,6 +148,7 @@ namespace SeedLab.Search.Execution
                 _oracle = oracle,
                 _engine = engineVersion,
                 Threads = threads > 0 ? threads : Math.Max(1, Environment.ProcessorCount),
+                CheckpointDirectory = checkpointDirectory ?? CheckpointStore.Root,
             };
 
             if (plannerAtGrid != null)
@@ -304,7 +320,8 @@ namespace SeedLab.Search.Execution
                 SearchSession raised = Create(q, oracle, engineVersion, seedBudget, threads, outPath,
                                               noPrefilter, acceptScanOrder, allowVacuous,
                                               planOverride: null, overrideDecision: null, alreadyRaised: true,
-                                              plannerAtGrid: plannerAtGrid, resumeCheckpoint: resumeCheckpoint);
+                                              plannerAtGrid: plannerAtGrid, resumeCheckpoint: resumeCheckpoint,
+                                              checkpointDirectory: s.CheckpointDirectory);
                 raised.Grid.RaisedFrom = from;
 
                 // A carried note goes into the PLAN too, directly under the grid line. The raised
@@ -370,8 +387,33 @@ namespace SeedLab.Search.Execution
             int gridLine = s.Preflight.Plan.FindIndex(l => l.StartsWith("grid         ", StringComparison.Ordinal));
             if (gridLine >= 0) s.Preflight.Plan[gridLine] = "grid         " + s.Grid.Describe();
 
-            s.CheckpointPath = CheckpointStore.DefaultPath(s.QueryHash);
+            s.CheckpointPath = CheckpointStore.PathIn(s.CheckpointDirectory, s.QueryHash);
             return s;
+        }
+
+        /// <summary>
+        /// A funnel's second stage: this session's query over the survivor list, sequentially, at the
+        /// block size <paramref name="decision"/> gave the gate - and at THIS session's checkpoint path.
+        ///
+        /// <para><b>The path is the point</b> (2026-09-24). Both front ends used to build stage two with
+        /// a bare <see cref="Create"/>, which named its checkpoint from the default directory: the
+        /// terminal then took that path over the one it had resolved from <c>--checkpoint</c>,
+        /// <c>--cache-dir</c> and <c>SEEDLAB_CACHE_DIR</c>, and the page dropped the one its planner had
+        /// set from the runtime's cache root. So stage two checkpointed in the default cache root
+        /// whatever the run had been told, while stage one's survivor list, named from the run's own
+        /// path, went where it was told. Built here, stage two cannot lose the path: it is the same
+        /// query, so the same hash, so the same file - and a stage-two checkpoint is told apart from
+        /// the main plan's by its identity (sequential, keyed by a hash of the survivor list), not by
+        /// where it lives.</para>
+        /// </summary>
+        public SearchSession ForSurvivors(int[] survivors, BlockSizeDecision decision, long seedBudget,
+                                          string? outPath, bool noPrefilter, bool acceptScanOrder)
+        {
+            SearchSession two = Create(Query, _oracle, _engine, seedBudget, Threads, outPath, noPrefilter,
+                                       acceptScanOrder, false, ScanPlan.OverSeeds(survivors, decision.Size),
+                                       overrideDecision: decision, checkpointDirectory: CheckpointDirectory);
+            two.CheckpointPath = CheckpointPath;
+            return two;
         }
 
         /// <summary>
@@ -431,7 +473,7 @@ namespace SeedLab.Search.Execution
         public IResultSink? Start(bool resume, string? checkpointPath = null)
         {
             if (checkpointPath != null) CheckpointPath = checkpointPath;
-            CleanedOrphans = CheckpointStore.CleanOrphans(CheckpointPath);
+            CleanedOrphans = CheckpointStore.CleanOrphans(CheckpointPath, CheckpointDirectory);
 
             long resumeLength = -1;
             _checkpoint = new Checkpoint

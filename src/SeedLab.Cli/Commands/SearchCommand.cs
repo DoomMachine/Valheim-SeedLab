@@ -92,7 +92,8 @@ output
   --on-limit stop|evict  at the ceiling: stop cleanly (default) or keep going and drop the
                          lowest-scoring records (bounded runs only, and it is confirmed)
   --resume               continue from the checkpoint
-  --checkpoint <file>    checkpoint path (default: one per query hash, in the cache root)
+  --checkpoint <file>    checkpoint path (default: one per query hash, in the cache root).
+                         A funnel's stage 2 checkpoints at this same path
   --checkpoint-every <s> seconds between checkpoints (default 30)
   --progress tty|none    live progress on stderr (default tty when stderr is a console)
 
@@ -295,8 +296,11 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             // in whatever directory the user happened to be standing in (audit defect 5). Two searches
             // running side by side therefore cannot overwrite each other's resume point, and --cache-dir
             // moves all of it together. One expression, used for the resume peek below and for the
-            // path the run opens, so the two cannot name different files.
-            Func<string, string> checkpointFor = hash => ckptPath ?? Path.Combine(rt.Cache.Checkpoints, Short(hash) + ".ckpt");
+            // path the run opens, so the two cannot name different files - and, since 2026-09-24, for a
+            // funnel's stage two as well (SearchSession.ForSurvivors keeps it), which until then
+            // checkpointed in the default cache root whatever --checkpoint, --cache-dir or
+            // SEEDLAB_CACHE_DIR said.
+            Func<string, string> checkpointFor = hash => ckptPath ?? CheckpointStore.PathIn(rt.Cache.Checkpoints, hash);
 
             // On --resume the session reads the checkpoint BEFORE it decides the block size: a resume
             // point is a block number, so a resumed run keeps its checkpoint's size whatever the rule
@@ -321,7 +325,8 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             {
                 session = SearchSession.Create(q, oracle, Verified.EngineVersion, seedBudget, 0,
                                                outPath, noPrefilter, acceptScanOrder,
-                                               plannerAtGrid: planner, resumeCheckpoint: peek);
+                                               plannerAtGrid: planner, resumeCheckpoint: peek,
+                                               checkpointDirectory: rt.Cache.Checkpoints);
             }
             catch (QueryException ex)
             {
@@ -344,20 +349,24 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             ScanPlan plan = session.Plan;
 
             // A funnel resumed over a SAMPLE run's checkpoint of this very plan (the peek above was
-            // skipped for it): said out loud, because the funnel does not continue it. When stage two's
-            // own checkpoint path is that same file - the default layout, with no --cache-dir and no
-            // --checkpoint - stage two would refuse it ("the scan order has changed") only after stage
-            // one had run, so that case is refused below, before anything runs.
+            // skipped for it). The funnel does not continue it, and its stage two checkpoints at this
+            // same path - always, since 2026-09-24: the same query hash names the same file, and stage
+            // two keeps the run's path (SearchSession.ForSurvivors) instead of taking the default one.
+            // So stage two's resume would find the sample's file and refuse it ("the scan order has
+            // changed") - but only after stage one had run. It is refused below, before anything runs.
+            //
+            // Until that day this held only in the default layout, with no --cache-dir and no
+            // --checkpoint, because stage two then used the default path while this file was at the
+            // resolved one; the other layouts got a warning and "that file is left as it is", which the
+            // move made false. Only a sample of THIS plan is caught here. Any other file at this path that
+            // is not this stage two's - a sample with another --seeds or range, or a --checkpoint naming
+            // another query's file - is still refused by stage two itself, after stage one, with the
+            // reason MustMatch gives.
             string? sampleLeftover = null;
-            bool sampleCollides = false;
             if (resume && willFunnel)
             {
                 Checkpoint? left = PeekCheckpoint(checkpointPath);
-                if (left != null && left.MatchesExceptBlockSize(q, plan, session.QueryHash))
-                {
-                    sampleLeftover = checkpointPath;
-                    sampleCollides = SamePath(checkpointPath, CheckpointStore.DefaultPath(session.QueryHash));
-                }
+                if (left != null && left.MatchesExceptBlockSize(q, plan, session.QueryHash)) sampleLeftover = checkpointPath;
             }
 
             // ---- the plan block, before EVERY run (decision 10) -----------------------------------
@@ -380,7 +389,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             // (review of 2026-09-24). A path in the sentence is kept on one line (Wrap's `unbroken`): it
             // can hold a space, and split at it the path could not be copied.
             string? blockRefusal = session.BlockDecision.Refusal;
-            string? collision = sampleCollides
+            string? collision = sampleLeftover != null
                 ? "the checkpoint at " + sampleLeftover + " is a sample run's of this query (--strategy sample), "
                   + "and this run takes the funnel, which does not continue it - and the funnel's stage 2 keeps "
                   + "its own checkpoint at that same path, so it would refuse to start once stage 1 had run. "
@@ -413,13 +422,6 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
 
             // ---- warnings: it runs, but the user has to know ----------------------------------------
             foreach (string w in session.Preflight.Warnings) Out.Warn(Wrap(w, "         "));
-            if (sampleLeftover != null)
-            {
-                Out.Warn(Wrap("the checkpoint at " + sampleLeftover + " is a sample run's of this query (--strategy "
-                              + "sample), and this run takes the funnel, which does not continue it: stage 1 runs from "
-                              + "the beginning, and that file is left as it is. Continue the sample with --strategy "
-                              + "sample --resume", "         ", sampleLeftover));
-            }
 
             // ---- --dry-run: the cost, and what the real run WOULD ask ----------------------------
             //
@@ -574,13 +576,13 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 // Stage two is the SAME session code over a different bijection - the survivor list -
                 // so every guarantee the ordinary path has (checkpoint, resume, bounded sink, torn-tail
                 // repair) applies to it without a second implementation. Its block size is the one the
-                // gate above was given and printed, decided once, never re-read from the query.
+                // gate above was given and printed, decided once, never re-read from the query. Its
+                // checkpoint is checkpointPath, the file the plan block named: ForSurvivors keeps the
+                // session's path. (This used to take the new session's own, which was the default cache
+                // root's whatever --checkpoint, --cache-dir or SEEDLAB_CACHE_DIR said - 2026-09-24.)
                 try
                 {
-                    session = SearchSession.Create(q, oracle, Verified.EngineVersion, seedBudget,
-                                                   session.Threads, outPath, noPrefilter, acceptScanOrder,
-                                                   false, ScanPlan.OverSeeds(survivors, stageTwo.Size),
-                                                   overrideDecision: stageTwo);
+                    session = session.ForSurvivors(survivors, stageTwo, seedBudget, outPath, noPrefilter, acceptScanOrder);
                 }
                 catch (QueryException ex)
                 {
@@ -588,7 +590,6 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 }
 
                 plan = session.Plan;
-                checkpointPath = session.CheckpointPath;
             }
 
             // ---- open the run: orphan cleanup, resume, torn-tail repair, the sink -------------------
@@ -693,20 +694,6 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
         private static bool WillFunnel(SearchStrategy asked, FunnelPlan funnel)
             => asked != SearchStrategy.Sample && funnel.Usable;
 
-        /// <summary>Two spellings of one file, compared the way the file system compares them here.</summary>
-        private static bool SamePath(string a, string b)
-        {
-            try
-            {
-                return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b),
-                                     OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-        }
-
         private static SearchStrategy ParseStrategy(string? v)
         {
             if (string.IsNullOrEmpty(v)) return SearchStrategy.Auto;
@@ -790,7 +777,8 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                     // query object, which q and the stage-one query share by reference.)
                     one = SearchSession.Create(funnel.StageOneQuery!, oracle, Verified.EngineVersion,
                                                seedBudget, full.Threads, null, false, true, true, plan,
-                                               overrideDecision: full.BlockDecision);
+                                               overrideDecision: full.BlockDecision,
+                                               checkpointDirectory: full.CheckpointDirectory);
                 }
                 catch (QueryException ex)
                 {
@@ -880,18 +868,52 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 }
             }
 
+            // ---- a stage two an earlier build checkpointed at the old default path ------------------
+            //
+            // Stage two checkpoints at the run's own path (full.CheckpointPath: --checkpoint, else the
+            // cache root --cache-dir or SEEDLAB_CACHE_DIR chose) since 2026-09-24. Before, it used the
+            // hard-coded %LOCALAPPDATA%\SeedLab\checkpoints whatever those said, so a user with one of
+            // them set has interrupted stage twos THERE, and a resume that looked only at the new path
+            // would place every survivor again. Only on --resume, only when the new path has no
+            // checkpoint of its own and is not that same file, and only a file that is THIS stage two's
+            // - the Load and MustMatch a file at the new path must pass - is moved; anything else is left
+            // untouched and said. Done before the peek below, so a moved file sizes stage two like one
+            // that was always there. The survivor list is what identifies a stage two, which is why this
+            // cannot happen any earlier.
+            if (resume)
+            {
+                LegacyCheckpoint? moved = CheckpointStore.AdoptLegacyStageTwo(CheckpointStore.LegacyPath(qhash),
+                                                                              full.CheckpointPath, q, survivors, qhash);
+                if (moved != null && moved.Adopted)
+                {
+                    Out.Info("moved this run's stage 2 checkpoint from " + moved.LegacyPath + " to " + moved.NewPath
+                             + " (an earlier build kept stage 2 at that fixed location whatever --cache-dir, "
+                             + "SEEDLAB_CACHE_DIR or --checkpoint said)");
+                    foreach (string p in moved.LeftBehind)
+                    {
+                        Out.Warn(Wrap("could not delete " + p + " after the move; nothing reads it again, so it can "
+                                      + "be deleted by hand", "         ", p));
+                    }
+                }
+                else if (moved != null)
+                {
+                    Out.Warn(Wrap("an earlier build's stage 2 checkpoint of this query is at " + moved.LegacyPath
+                                  + " and was left where it is, not used: " + moved.Reason, "         ", moved.LegacyPath));
+                }
+            }
+
             // ---- stage two's block size, decided once for the gate and for its plan --------------
             //
             // Few survivors is exactly where a fixed size left workers idle, so stage two goes through
             // the same rule as the main run, over the survivor count. On --resume it keeps the size of
-            // an interrupted stage two's checkpoint - at the path stage two has always used (its
-            // session's default path, unchanged here: moving it would strand the stage-two checkpoints
-            // that exist) - but only one that is THIS stage two: sequential over this survivor list,
-            // same key (a hash of the list), same range and count.
+            // an interrupted stage two's checkpoint - at the run's own checkpoint path, the one the plan
+            // block printed and stage two opens - but only one that is THIS stage two: sequential over
+            // this survivor list, same key (a hash of the list), same range and count. (Until 2026-09-24
+            // this read the default path, where stage two then checkpointed whatever the overrides said.)
             ResumePoint? stageTwoResume = null;
             if (resume)
             {
-                Checkpoint? c = PeekCheckpoint(CheckpointStore.DefaultPath(full.QueryHash));
+                Checkpoint? c = PeekCheckpoint(full.CheckpointPath);
                 if (c != null && c.MatchesExceptBlockSize(q, ScanPlan.OverSeeds(survivors, 1), full.QueryHash))
                 {
                     stageTwoResume = ResumePoint.From(c);
@@ -1011,8 +1033,6 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
 
             return cq.MaxTier >= Tier.T3 ? WorkTier.HeightsRivers : WorkTier.BiomeGrid;
         }
-
-        private static string Short(string hash) => hash.Length >= 16 ? hash.Substring(0, 16) : hash;
 
         // ApplyGridUpgrade lived here. It was the CLI's local workaround for a grid raise that was
         // announced but never applied, and its own doc comment said "the proper fix belongs in

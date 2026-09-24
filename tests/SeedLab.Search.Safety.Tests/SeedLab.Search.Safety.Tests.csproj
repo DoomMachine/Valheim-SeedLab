@@ -3,10 +3,13 @@
     The search engine's SAFETY suite: what the output layer does to the disk, to memory and to a
     hard kill. It is deliberately a separate project from tests\SeedLab.Search.Tests, which answers
     "is the answer right". That suite's later sections do build sessions and run the preflight, and
-    one runs a scan with no sink, but none of its checks writes a results file, resumes a checkpoint
-    from disk or kills a process, so it would still pass with every fix in this suite reverted.
-    (This comment used to say "every one of its 70 checks constructs SeedEvaluator, CompiledQuery,
-    ScanPlan or Presets directly"; it has grown past 300 since, and the gap it names is still open.)
+    one runs a scan with no sink. Its section 14 (2026-09-24) is the one exception: to prove where a
+    funnel's stage 2 checkpoints, it writes a bounded results file and resumes one stage-2 checkpoint
+    from disk, and it runs vseed itself. None of its checks hard-kills a run or exercises the bounds,
+    rotation, reduction and ceilings below, so it would still pass with nearly every fix in this suite
+    reverted. (This comment used to say "every one of its 70 checks constructs SeedEvaluator,
+    CompiledQuery, ScanPlan or Presets directly"; it has grown past 300 since, and the gap it names is
+    still open.)
     That gap is what decisions item 9 calls a tripwire that is not tested, and this project is it.
 
     It is a console program with subcommands rather than a single run, because two of the things it

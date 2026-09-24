@@ -106,11 +106,18 @@ namespace SeedLab.Web.Search
             Func<double, WorkerPlan> planner = grid => WorkerPlanner.Plan(
                 effective, WorkerFootprints.For(tier, WorkerFootprints.CellsForSpacing(grid)), runtime.Hardware, options);
 
+            // The checkpoint lives in the runtime cache root, never in whatever directory the server
+            // happened to be started from. Defect 5 of the audit, and the reason the directory is passed
+            // rather than left to a default: a default is a thing that can quietly change back. It did:
+            // this used to set the path on the session afterwards, and funnel stage two, built as a new
+            // session, took the default cache root's instead - whatever the runtime's cache root was
+            // (2026-09-24). Passed in, the session carries it, and ForSurvivors carries it into stage two.
             SearchSession session;
             try
             {
                 session = SearchSession.Create(parsed, oracle, engineVersion, parsed.Search.Seeds,
-                                               0, outPath, false, q.AcceptScanOrder, plannerAtGrid: planner);
+                                               0, outPath, false, q.AcceptScanOrder, plannerAtGrid: planner,
+                                               checkpointDirectory: runtime.Cache.Checkpoints);
             }
             catch (QueryException ex)
             {
@@ -119,12 +126,6 @@ namespace SeedLab.Web.Search
 
             WorkerPlan workers = session.WorkerPlan!;
             long gridCells = WorkerFootprints.CellsForSpacing(session.Query.Search.Grid);
-
-            // The checkpoint lives in the runtime cache root, never in whatever directory the server
-            // happened to be started from. Defect 5 of the audit, and the reason it is passed rather
-            // than left to a default: a default is a thing that can quietly change back.
-            session.CheckpointPath = System.IO.Path.Combine(runtime.Cache.Checkpoints,
-                Safe16(session.QueryHash) + ".ckpt");
 
             PreflightReport r = Describe(q, parsed, session, probe, workers, runtime, t, outPath,
                                          asked, effective, throttled, throttledBy, modeError, tier, gridCells);
@@ -184,9 +185,6 @@ namespace SeedLab.Web.Search
                         "strategy '" + v + "' is not one of auto, funnel, sample.");
             }
         }
-
-        private static string Safe16(string hash)
-            => hash.Length >= 16 ? hash.Substring(0, 16) : (hash.Length > 0 ? hash : "query");
 
         // -----------------------------------------------------------------------------------------
         private static PreflightReport Describe(SearchQuery q, Query parsed, SearchSession s, CompiledQuery cq,

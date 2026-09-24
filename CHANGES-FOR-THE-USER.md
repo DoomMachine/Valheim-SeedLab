@@ -222,8 +222,8 @@ threads" was two workers' rate. Measured on `axe-heads`: 64 seeds took 1.6 min a
   size that works and the file to delete — for a funnel's stage 2 at its gate instead, once stage 1
   has run or its survivor list is reused, because stage 2's checkpoint is recognised by that list.
   A funnel resumed over a *sample* run's checkpoint of the same query no longer borrows its block
-  size: it says the funnel does not continue that file, and when stage 2 would have to overwrite it
-  (no `--cache-dir`, no `--checkpoint`) it refuses before anything runs instead of after stage 1.
+  size: it says the funnel does not continue that file, and because stage 2 keeps its checkpoint at
+  that same path it refuses before anything runs instead of after stage 1.
 - **None of this changes a result.** A completed run's results file is the same bytes at every block
   size — jsonl, json and csv, `--keep N` and `--keep all` — and a run stopped on 8 threads and
   finished on 3 at the automatic size ends with the uninterrupted run's SHA-256. `proof blocks`
@@ -256,6 +256,27 @@ threads" was two workers' rate. Measured on `axe-heads`: 64 seeds took 1.6 min a
   placement) and stops stage 2 at its first block boundary, with the survivor list and a checkpoint
   kept, as the page already did. And the page now ends a funnel whose stage 1 kept no seed, and a
   run that fails between stages, instead of waiting on it for good.
+
+## A funnel's stage 2 checkpoints where you told it to, and `vseed serve` uses `--cache-dir` (2026-09-24)
+
+- **Stage 2 used to ignore `--cache-dir`, `$SEEDLAB_CACHE_DIR` and `--checkpoint`**, in the terminal
+  and on the page: its checkpoint always went to `%LOCALAPPDATA%\SeedLab\checkpoints`, while stage 1's
+  survivor list went where you said. Now both go to the path the plan block prints.
+- **A stage 2 you interrupted before this is not lost.** `--resume` finds nothing at the new path, so
+  it looks at the old one; if the file there is this run's stage 2 it is moved over, with its
+  kept-results snapshot, and you are told both paths. A file there that is anything else is left
+  alone, and you are told where it is and why it was not used. With no `--cache-dir`, no
+  `$SEEDLAB_CACHE_DIR` and no `--checkpoint` on Windows, the two paths are the same file and nothing
+  moves.
+- **`vseed serve --cache-dir <dir>` works.** The server used to start a second runtime of its own
+  that had never seen the option, so the tile cache and every search checkpoint from the page went to
+  the default cache root. It now shares the command's runtime: its startup block's `cache` line is your
+  folder, and the process runs one throttle and one self-test instead of two.
+- Proved by `SeedLab.Search.Tests` section 14: a terminal funnel and a page funnel, each stopped by
+  its budget during stage 2 with `--cache-dir`, leave stage 2's checkpoint in that folder and nothing
+  in the cache root `$SEEDLAB_CACHE_DIR` names; the terminal's `--resume` continues from it; and the
+  move adopts a real stopped stage 2 (resuming to the uninterrupted run's bytes) while leaving another
+  survivor list's, a sample run's and an unreadable file exactly as they were.
 
 ## Still not implemented — named so you do not go looking
 

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using SeedLab.Runtime.Storage;
+using SeedLab.Search.Criteria;
 
 namespace SeedLab.Search.Execution
 {
@@ -48,21 +50,60 @@ namespace SeedLab.Search.Execution
         public bool DeleteOnComplete = true;
     }
 
+    /// <summary>
+    /// What became of a funnel stage-two checkpoint an earlier build left at
+    /// <see cref="CheckpointStore.LegacyRoot"/> (<see cref="CheckpointStore.AdoptLegacyStageTwo"/>).
+    /// </summary>
+    public sealed class LegacyCheckpoint
+    {
+        public string LegacyPath = "";
+        public string NewPath = "";
+
+        /// <summary>True when the file was this run's stage two and now lives at <see cref="NewPath"/>.</summary>
+        public bool Adopted;
+
+        /// <summary>Why the file was left where it is, when it was not adopted.</summary>
+        public string? Reason;
+
+        /// <summary>
+        /// Files of the legacy pair that could not be deleted after the move (another program holding
+        /// them open, say). The copy at the new path is complete either way, and nothing reads these
+        /// again, because the new path is now taken.
+        /// </summary>
+        public List<string> LeftBehind = new List<string>();
+    }
+
     /// <summary>Finding, cleaning and retiring checkpoint files.</summary>
     public static class CheckpointStore
     {
         /// <summary>
-        /// <c>%LOCALAPPDATA%\SeedLab\checkpoints</c> (or <c>~/.cache/SeedLab/checkpoints</c>). A
+        /// The checkpoints directory of the cache root this process would use with no
+        /// <c>--cache-dir</c>: <c>SEEDLAB_CACHE_DIR</c>, else the per-OS location - resolved by
+        /// <see cref="CacheRoot"/> itself, so there is one definition of where the tool may write. A
         /// checkpoint is tool state, not the user's data, so it does not belong beside their results.
         ///
-        /// <para><b>Duplication to retire.</b> <c>SeedLab.Runtime.Storage.CacheRoot.Checkpoints</c>
-        /// resolves the same directory, with more: an <c>SEEDLAB_CACHE_DIR</c> override, a
-        /// <c>--cache-dir</c> override and macOS/XDG layouts. The two agree on Windows, which is why
-        /// this one is safe to use today, but <c>SeedLab.Search</c> should take a project reference to
-        /// <c>SeedLab.Runtime</c> (it has no dependencies of its own) and delete this property rather
-        /// than keep two definitions of where the tool is allowed to write.</para>
+        /// <para><b>Only a fallback now</b> (2026-09-24). This was a second, hard-coded definition,
+        /// <c>%LOCALAPPDATA%\SeedLab\checkpoints</c>, that ignored <c>SEEDLAB_CACHE_DIR</c> and
+        /// <c>--cache-dir</c> - and a funnel's stage two took its path from it on both front ends, so
+        /// it checkpointed there whatever cache root the run had been given. <c>--cache-dir</c> is a
+        /// per-process option no static can see, so both front ends hand
+        /// <see cref="SearchSession.Create"/> their own cache root's directory, and this is what a
+        /// library caller that names none gets. The old location is kept, for one purpose only, as
+        /// <see cref="LegacyRoot"/>.</para>
         /// </summary>
-        public static string Root
+        public static string Root => CacheRoot.Open(new CacheRootOptions { Create = false }).Checkpoints;
+
+        /// <summary>
+        /// Where <see cref="Root"/> pointed before 2026-09-24, resolved the way it was then:
+        /// <c>%LOCALAPPDATA%\SeedLab\checkpoints</c> (or <c>~/.cache/SeedLab/checkpoints</c> when
+        /// there is no local application data folder), with NO <c>SEEDLAB_CACHE_DIR</c> and NO
+        /// <c>--cache-dir</c>. Nothing writes through this property. It exists so that a funnel stage two
+        /// an earlier build checkpointed here can be found and moved to the run's own path
+        /// (<see cref="AdoptLegacyStageTwo"/>) instead of being silently started again. On Windows
+        /// with neither override set it is the same directory as <see cref="Root"/>; on Linux it never
+        /// was (<c>~/.local/share</c> against the cache root's <c>~/.cache</c>).
+        /// </summary>
+        public static string LegacyRoot
         {
             get
             {
@@ -78,24 +119,29 @@ namespace SeedLab.Search.Execution
         }
 
         /// <summary>
-        /// The default checkpoint for a query: <c>&lt;cache&gt;\&lt;first 16 of the query hash&gt;.ckpt</c>.
-        /// Keyed by the query so two searches running side by side cannot overwrite each other's
-        /// resume point, which a single <c>vseed-search.ckpt</c> in the CWD could.
+        /// The checkpoint for a query in a checkpoints directory:
+        /// <c>&lt;directory&gt;\&lt;first 16 of the query hash&gt;.ckpt</c>. Keyed by the query so two
+        /// searches running side by side cannot overwrite each other's resume point, which a single
+        /// <c>vseed-search.ckpt</c> in the CWD could.
         /// </summary>
-        public static string DefaultPath(string queryHash)
+        public static string PathIn(string directory, string queryHash)
         {
             string key = queryHash.Length >= 16 ? queryHash.Substring(0, 16) : queryHash;
-            return System.IO.Path.Combine(Root, key + ".ckpt");
+            return System.IO.Path.Combine(directory, key + ".ckpt");
         }
+
+        /// <summary>The checkpoint an earlier build would have used for a query, in <see cref="LegacyRoot"/>.</summary>
+        public static string LegacyPath(string queryHash) => PathIn(LegacyRoot, queryHash);
 
         /// <summary>The kept-set snapshot that travels with a checkpoint.</summary>
         public static string SnapshotPathFor(string checkpointPath) => checkpointPath + ".top";
 
         /// <summary>
-        /// Deletes <c>&lt;ckpt&gt;.tmp</c> orphans left by a kill during a save, here and in the cache
-        /// root. Returns what it removed, so the run can say so rather than tidying up in secret.
+        /// Deletes <c>&lt;ckpt&gt;.tmp</c> orphans left by a kill during a save, beside the checkpoint
+        /// and in the run's checkpoints directory (<see cref="Root"/> when none is given). Returns what
+        /// it removed, so the run can say so rather than tidying up in secret.
         /// </summary>
-        public static List<string> CleanOrphans(string? checkpointPath)
+        public static List<string> CleanOrphans(string? checkpointPath, string? checkpointsDirectory = null)
         {
             List<string> removed = new List<string>();
             List<string> dirs = new List<string>();
@@ -105,7 +151,12 @@ namespace SeedLab.Search.Execution
                 if (!string.IsNullOrEmpty(d)) dirs.Add(d);
             }
 
-            if (Directory.Exists(Root) && !dirs.Contains(Root)) dirs.Add(Root);
+            // The run's own cache root, not the default one: a run given --cache-dir has nothing to
+            // tidy in a cache root it was told not to use.
+            string root = System.IO.Path.GetFullPath(checkpointsDirectory ?? Root);
+            bool listed = false;
+            foreach (string d in dirs) listed |= SamePath(d, root);
+            if (Directory.Exists(root) && !listed) dirs.Add(root);
 
             foreach (string dir in dirs)
             {
@@ -159,6 +210,149 @@ namespace SeedLab.Search.Execution
                 catch (UnauthorizedAccessException)
                 {
                 }
+            }
+        }
+
+        /// <summary>
+        /// Moves a funnel stage-two checkpoint that an earlier build left at <paramref name="legacyPath"/>
+        /// (<see cref="LegacyPath"/>) to <paramref name="newPath"/>, the path this run's stage two
+        /// checkpoints at - but only a file that IS this stage two's. Returns null when there is
+        /// nothing to decide: the two paths are one file, the new path already has a checkpoint (which
+        /// is then the one to resume), or there is no file at the legacy path.
+        ///
+        /// <para><b>Why a move is needed at all</b> (2026-09-24). Until that day stage two checkpointed
+        /// at the hard-coded <c>%LOCALAPPDATA%\SeedLab\checkpoints</c> on both front ends, whatever
+        /// <c>--cache-dir</c>, <c>SEEDLAB_CACHE_DIR</c> or <c>--checkpoint</c> said, while its survivor
+        /// list honoured them. Moving stage two onto the run's own path would otherwise strand every
+        /// interrupted stage two a user with one of those overrides already has: its <c>--resume</c>
+        /// would find nothing at the new path and place every survivor again.</para>
+        ///
+        /// <para><b>What "this stage two's" means</b> is exactly what a file at the new path must pass
+        /// before <see cref="SearchSession.Start"/> resumes it: it loads, and
+        /// <see cref="Checkpoint.MustMatch"/> accepts it against this survivor list at its own block
+        /// size - the query hash, the definitions, the grid, the sequential order, the key (a hash of
+        /// the survivor list), the range and the count, and a block size of at least one. The block
+        /// size is its own because that is the size a resume adopts; a different size asked for is
+        /// then refused at the gate, naming the new path, exactly as for a file that was always there.
+        /// Anything else - a sample run's checkpoint of the same query, another survivor list, a file
+        /// that does not parse - is left exactly as it is, and the reason is returned to be said.</para>
+        ///
+        /// <para><b>Order, for a kill in the middle.</b> The kept-results snapshot is copied first, then
+        /// the checkpoint is written at the new path naming the copy (both temp, flush, rename), and
+        /// only then is the legacy pair deleted. A kill before the checkpoint lands leaves the legacy
+        /// file in charge and the next resume moves it again; a kill after it leaves at worst a legacy
+        /// pair nothing reads, because the new path is then taken.</para>
+        /// </summary>
+        public static LegacyCheckpoint? AdoptLegacyStageTwo(string legacyPath, string newPath, Query q,
+                                                            int[] survivors, string queryHash)
+        {
+            if (SamePath(legacyPath, newPath) || File.Exists(newPath) || !File.Exists(legacyPath)) return null;
+
+            LegacyCheckpoint r = new LegacyCheckpoint { LegacyPath = legacyPath, NewPath = newPath };
+            Checkpoint c;
+            try
+            {
+                c = Checkpoint.Load(legacyPath);
+            }
+            catch (Exception ex)
+            {
+                r.Reason = "it could not be read (" + ex.Message + ")";
+                return r;
+            }
+
+            try
+            {
+                // At least 1, so a hand-edited block_size of 0 gets MustMatch's own sentence rather than
+                // ScanPlan's argument check.
+                c.MustMatch(q, ScanPlan.OverSeeds(survivors, Math.Max(1, c.BlockSize)), queryHash);
+            }
+            catch (InvalidOperationException ex)
+            {
+                r.Reason = "it is not this run's stage 2 (" + ex.Message + ")";
+                return r;
+            }
+
+            string? legacySnapshot = c.KeptSnapshot;
+            string? copied = null;
+            try
+            {
+                string? dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(newPath));
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                if (legacySnapshot != null && File.Exists(legacySnapshot))
+                {
+                    copied = SnapshotPathFor(newPath);
+                    CopyDurably(legacySnapshot, copied);
+                    c.KeptSnapshot = copied;
+                }
+
+                c.Save(newPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // The legacy pair has not been touched; take back what was written so the new path does
+                // not hold a snapshot with no checkpoint.
+                List<string> written = new List<string> { newPath + ".tmp", SnapshotPathFor(newPath) + ".tmp" };
+                if (copied != null) written.Add(copied);
+                foreach (string p in written)
+                {
+                    try
+                    {
+                        if (File.Exists(p)) File.Delete(p);
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+
+                r.Reason = "it could not be moved (" + ex.Message + ")";
+                return r;
+            }
+
+            r.Adopted = true;
+            List<string> leftBehind = new List<string>();
+            List<string> pair = new List<string> { legacyPath };
+            if (legacySnapshot != null && SamePath(legacySnapshot, SnapshotPathFor(legacyPath))) pair.Add(legacySnapshot);
+            foreach (string p in pair)
+            {
+                try
+                {
+                    if (File.Exists(p)) File.Delete(p);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    leftBehind.Add(p);
+                }
+            }
+
+            r.LeftBehind = leftBehind;
+            return r;
+        }
+
+        /// <summary>Copies a file to a temp sibling, flushes it to the device, then renames it into place.</summary>
+        private static void CopyDurably(string from, string to)
+        {
+            string tmp = to + ".tmp";
+            using (FileStream src = new FileStream(from, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (FileStream dst = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                src.CopyTo(dst);
+                dst.Flush(true);
+            }
+
+            File.Move(tmp, to, overwrite: true);
+        }
+
+        /// <summary>Two spellings of one file, compared the way the file system compares them here.</summary>
+        internal static bool SamePath(string a, string b)
+        {
+            try
+            {
+                return string.Equals(System.IO.Path.GetFullPath(a), System.IO.Path.GetFullPath(b),
+                                     OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            }
+            catch (Exception)
+            {
+                return false;
             }
         }
 

@@ -47,8 +47,9 @@ namespace SeedLab.Cli.Commands
 
   Nothing leaves this machine. The page is four files embedded in vseed itself - no CDN,
   no web font, no external request of any kind - and the server refuses any Host header
-  other than 127.0.0.1 / localhost. It writes nothing: no endpoint opens a file for
-  writing, and your saves are never touched.
+  other than 127.0.0.1 / localhost. It writes three things and nothing else: a results
+  file you name on the Search panel (inside .\seedlab-results), and a search's checkpoint
+  and the tile cache, in the cache root (--cache-dir). Your saves are never touched.
 
 Options:
   --port <n>           port to bind (default 8731; 0 lets the OS pick a free one)
@@ -104,6 +105,14 @@ Examples:
                 // SeedLab.Web with no knowledge of the mode, the memory or the game running. It is now
                 // the same plan the terminal uses, so the two front ends cost the same.
                 SearchThreads = searchPlan.Workers,
+                // This command's own runtime, so the process has ONE: one cache root, one throttle, one
+                // reap and one self-test. Left null, the server started a second RuntimeContext with
+                // none of the global options, so '--cache-dir' reached only this command's runtime,
+                // which the page never used - the tile cache and every search checkpoint went to the
+                // default cache root, and the process ran two throttles, two reaps and two self-tests
+                // (2026-09-24). The server does not dispose a runtime it was given; CliRuntime does,
+                // once, when the command returns.
+                Runtime = rt.Context,
                 Log = Console.Out.WriteLine,
             };
 
@@ -885,7 +894,7 @@ Examples:
             }
 
             // ---- 5. the live server: the security properties, and the two new surfaces -------------
-            failures += LiveChecks(rows);
+            failures += LiveChecks(rows, rt);
 
             if (o.Json)
             {
@@ -933,7 +942,7 @@ Examples:
         // is ever sent, that no spelling of a path reaches a file, and that the two new surfaces - the
         // location markers and the search panel - return what the engines return.
         // -------------------------------------------------------------------------------------------
-        private static int LiveChecks(List<string[]> rows)
+        private static int LiveChecks(List<string[]> rows, CliRuntime rt)
         {
             int failures = 0;
             using CancellationTokenSource cts = new CancellationTokenSource();
@@ -955,6 +964,9 @@ Examples:
                 LocationVocabulary = Vocabulary(),
                 SearchLocationOracle = SearchOracle(out _),
                 SearchThreads = SelfTestWorkers,
+                // The same runtime as 'vseed serve' itself, so the checked server is the shipped one:
+                // its search writes its checkpoint under --cache-dir, not the default cache root.
+                Runtime = rt.Context,
                 Log = _ => { },
                 OnStarted = url => ready.TrySetResult(url),
             };

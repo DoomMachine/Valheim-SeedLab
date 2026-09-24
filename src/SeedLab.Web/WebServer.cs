@@ -86,9 +86,11 @@ namespace SeedLab.Web
         /// root, the auto-throttle, the estimator and the self-test.
         ///
         /// <para>Null means "start one for me", which is what keeps this server usable from a host that
-        /// has not been taught about the runtime yet. A caller that owns one - <c>vseed serve</c>, once
-        /// it passes its own - shares it, and then the terminal and the page are literally the same
-        /// probe, the same cache root and the same throttle rather than two that happen to agree.</para>
+        /// has not been taught about the runtime yet. A caller that owns one - <c>vseed serve</c> and its
+        /// <c>--selftest</c> pass theirs since 2026-09-24 - shares it, and then the terminal and the page
+        /// are literally the same probe, the same cache root and the same throttle rather than two that
+        /// happen to agree. Until then serve passed none, and the server's own runtime ignored
+        /// <c>--cache-dir</c>. A runtime that was given is not disposed here: its owner does that.</para>
         /// </summary>
         public RuntimeContext? Runtime { get; set; }
 

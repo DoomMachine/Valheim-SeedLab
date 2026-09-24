@@ -67,11 +67,16 @@ claim that every tile at every zoom was compared.
      opens the console, whatever extension follows it) and any extension but `.jsonl`, `.csv` and
      `.json`, and the server resolves the name inside one results directory it owns — by default
      `<working directory>\seedlab-results`. Probed over HTTP: 11 escape attempts, 0 reachable.
-  2. **the checkpoint** and its kept-set snapshot, in the runtime cache root
-     (`%LOCALAPPDATA%\SeedLab\checkpoints`), never in the working directory. It is retired when a run
-     completes.
-  3. **the tile cache's second tier**, under `%LOCALAPPDATA%\SeedLab\tiles` — a cache of a pure
+  2. **the checkpoint** and its kept-set snapshot, in the runtime cache root's `checkpoints`
+     (`%LOCALAPPDATA%\SeedLab`, or `vseed serve --cache-dir`, or `$SEEDLAB_CACHE_DIR`), never in the
+     working directory — a funnel's stage 2 included. It is retired when a run completes.
+  3. **the tile cache's second tier**, under the same cache root's `tiles` — a cache of a pure
      function of (seed, gen version, style, z, x, y), byte-bounded, deleteable at any moment.
+
+  `vseed serve` hands the server its own runtime since 2026-09-24, so the process has one cache root,
+  one auto-throttle and one self-test, and what the page writes follows `--cache-dir`. Before, the
+  server started a second runtime that had never seen `--cache-dir`, and a funnel's stage 2
+  checkpointed in the default cache root even under `$SEEDLAB_CACHE_DIR`.
 
   Your saves and Steam Cloud folders are still never touched, and nothing is written beside them.
 

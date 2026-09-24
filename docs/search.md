@@ -158,6 +158,15 @@ than used. It is bounded like every other output - at a ceiling of 2 GiB, a stag
 the space is refused with the reason instead of writing 8.6 GB. Because it is on disk, `--resume`
 skips stage 1 entirely and goes straight to the gate.
 
+**Stage 2 checkpoints at the run's own checkpoint path** - the file the plan block names, beside the
+survivor list - so `--checkpoint`, `--cache-dir` and `$SEEDLAB_CACHE_DIR` move both halves together,
+in the terminal and on the page. Until 2026-09-24 stage 2 always used `%LOCALAPPDATA%\SeedLab\checkpoints`,
+whatever those said. So a `--resume` that finds no checkpoint at the run's path also looks at that old
+location: a file there that is this run's stage 2 (it passes the same identity check a resume makes)
+is moved to the run's path with its kept-results snapshot, and the terminal prints both paths; any
+other file there is left exactly as it is, and a warning says where it is and why it was not used.
+(The page never resumes, so it never looks.)
+
 **Soundness.** Stage 1 may only drop a seed stage 2 would also have dropped, so it keeps exactly the
 must-have goals below the location tier and every survivor is re-measured in full. The contract is the
 one that already existed for the tiered evaluator: *a funnel run's result set must equal the same
@@ -292,8 +301,9 @@ fire while their tests passed for the wrong reason.
   hard kills and resumes, and (`proof blocks`) that a completed run's file is the same bytes at
   every block size and that a run resumed on another thread count keeps its checkpoint's size.
   `SeedLab.Search.Tests` does build sessions, run the preflight and the grid policy, and run a scan
-  with no sink, but none of its checks writes a results file, resumes a checkpoint from disk or
-  kills a process, so this is a separate suite on purpose.
+  with no sink; only its section 14 writes a results file and resumes a checkpoint from disk, to
+  prove where a funnel's stage 2 checkpoints. None of its checks hard-kills a run or exercises the
+  bounds, rotation and ceilings, so this is a separate suite on purpose.
 - The metrics it measures are the same `WorldField` / `WorldSummary` code the acceptance suite
   proves against the game's own output, so a passing seed's *numbers* are the verified ones.
 - `vseed serve --selftest` includes `search panel vs the engine`: the page's own query file run

@@ -566,7 +566,8 @@ namespace SeedLab.Web.Search
                     SearchSession one = SearchSession.Create(
                         funnel.StageOneQuery!, _oracle, _planned.EngineVersion,
                         _plan.Limit, _threads, null, false, true, true, _plan,
-                        overrideDecision: _session.BlockDecision);
+                        overrideDecision: _session.BlockDecision,
+                        checkpointDirectory: _session.CheckpointDirectory);
 
                     _hub.Publish(new SearchEvent("stage", new
                     {
@@ -679,12 +680,12 @@ namespace SeedLab.Web.Search
                     return false;
                 }
 
+                // Stage two keeps the planner's checkpoint path - the runtime cache root's, so
+                // 'vseed serve --cache-dir' and SEEDLAB_CACHE_DIR reach it. A bare Create here named the
+                // default cache root's path instead, and Run opened that (2026-09-24).
                 try
                 {
-                    _session = SearchSession.Create(_q, _oracle, _planned.EngineVersion, _plan.Limit,
-                                                    _threads, _planned.OutPath, false, true, false,
-                                                    ScanPlan.OverSeeds(survivors, stageTwo.Size),
-                                                    overrideDecision: stageTwo);
+                    _session = _session.ForSurvivors(survivors, stageTwo, _plan.Limit, _planned.OutPath, false, true);
                 }
                 catch (Exception ex)
                 {

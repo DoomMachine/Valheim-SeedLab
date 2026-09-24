@@ -59,6 +59,9 @@ namespace SeedLab.SearchTests
             Section("13. A stop, a gate and a plan line that say what the run did");
             StopAndGateChecks.Run(Check);
 
+            Section("14. Where funnel stage 2 checkpoints, serve's cache root, and an earlier build's stage 2");
+            CheckpointPlaceChecks.Run(Check);
+
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));
             Console.WriteLine((_fail == 0 ? "PASS" : "FAIL") + "  " + _pass + " checks passed, " + _fail + " failed");
