@@ -834,10 +834,13 @@ of them, this session's and the last one's:
 - **It holds your folder paths** — on Windows usually `C:\Users\<your account name>\...` — on almost
   every line, and the command exactly as you typed it. Read it, or replace the name, before you post
   it anywhere public. (It records no computer name, no user name as such and no keys; of the
-  environment, only the name of the variable the cache folder came from.)
+  environment, only the name of the variable the cache folder came from. It does record the process
+  ID - the PID the system gave that `vseed` run - on its first lines; the number changes every run
+  and identifies no one, but take it out too if you would rather not share it.)
 - **What is in it:** when the session started (your local time and UTC), the vseed version, the
-  command exactly as you typed it, the machine, the cache folder, an access check of every SeedLab
-  folder, the self-test result, the warnings and errors the command printed (a question you answered
+  command exactly as you typed it, the process ID with the operating system and .NET version it ran
+  on, the machine, the cache folder, an access check of every SeedLab folder, the self-test result,
+  the warnings and errors the command printed (a question you answered
   "no" shows only as the exit code), the retries behind a file that was busy, the full detail of an
   unexpected error (the terminal shows that only with `--debug`), an integrity line (the self-test,
   how many game-data files matched their SHA-256 in `manifest.json`, and whether the data's
