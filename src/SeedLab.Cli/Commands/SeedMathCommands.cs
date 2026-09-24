@@ -12,8 +12,9 @@ namespace SeedLab.Cli.Commands
     {
         public const string Help = @"vseed hash <text> [--json]
 
-  The int32 world seed a seed text produces: string.GetStableHashCode, the function
-  World..ctor runs on the text before anything else. The empty text is seed 0, not random.
+  The int32 world seed a seed text produces: string.GetStableHashCode, the function the
+  game's World constructor (World..ctor) runs on the text before anything else. The empty
+  text is seed 0, not random.
 
   The two lane values are shown because the hash is two interleaved djb2-xor lanes
   combined as even + odd * 1566083941, and that structure is what makes the inverse possible.
@@ -69,8 +70,9 @@ Examples:
                 if (text.Length == 0)
                 {
                     o.Note("");
-                    o.Note("World..ctor maps the empty seed box to 0 directly, so an empty box is not 'random':");
-                    o.Note("it is the specific world with seed 0, the same one the main menu background uses.");
+                    o.Note("The game's World constructor (World..ctor) maps the empty seed box to 0 directly, so an");
+                    o.Note("empty box is not 'random': it is the specific world with seed 0, the same one the main");
+                    o.Note("menu background uses.");
                 }
             }
 
@@ -310,7 +312,7 @@ Options:
                 o.Header("Seed space  (" + alphabet.Name + ", texts of 1.." + SeedText.MaxEmittedLength + " characters)");
                 o.Field("seed texts", texts.ToString("N0", CultureInfo.InvariantCulture));
                 o.Field("distinct worlds", SeedSpace.DistinctWorlds.ToString("N0", CultureInfo.InvariantCulture)
-                        + "   = 2^32, because World..ctor keeps only the int");
+                        + "   = 2^32, because the game's World constructor (World..ctor) keeps only the int");
                 o.Field("texts per world", perWorld.ToString("N0", CultureInfo.InvariantCulture)
                         + "   (a mean, not a guarantee)");
                 o.Line();

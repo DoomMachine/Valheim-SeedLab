@@ -79,7 +79,7 @@ namespace SeedLab.Cli.Infra
                 return new SeedRef(asText, token, "seed text",
                     $"'{token}' is outside the int32 range (-2147483648 .. 2147483647), so it was read as a "
                     + $"seed TEXT, giving {asText}. There is no world with that number - the game's seed "
-                    + "field is text, and World..ctor hashes it to an int32.");
+                    + "field is text, and the game hashes it to an int32 in its World constructor (World..ctor).");
             }
 
             return new SeedRef(StableHash.SeedFromText(token), token, "seed text", null);

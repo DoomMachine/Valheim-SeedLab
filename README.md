@@ -214,7 +214,8 @@ Seed
   game-style text       5R3inNYZse  (10 chars, the 59 the game's own generator uses - ONE of the many texts for this seed)
   worldGenVersion       2
 
-  The text is hashed to the int by World..ctor and never looked at again, so the int IS the world.
+  The text is hashed to the int by the game's World constructor (World..ctor) and never
+  looked at again, so the int IS the world.
 
 Measurement
 -----------------------
@@ -246,8 +247,13 @@ Biomes  (share of the sampled in-world area)
   (half a cell diagonal) of the true nearest point.
 ```
 
-It goes on to islands (with a per-seed measurement of how much of the count survives the binary16
-precision the game's own map cache stores), the spawn area, the extremes, and:
+`World..ctor` in that output is not a typo or a cut-off word: it is the real name of the game's
+`World` constructor, the code that runs when the game creates a world. `World` is the class and
+`.ctor` is the name .NET gives every constructor, hence the two dots. It is where the text you type
+in the new-world seed box becomes a 32-bit number, and where an empty box becomes seed 0.
+
+The output goes on to islands (with a per-seed measurement of how much of the count survives the
+binary16 precision the game's own map cache stores), the spawn area, the extremes, and:
 
 ```
 Landmarks  (the game's own location placement, run for this seed)
@@ -585,9 +591,11 @@ More in [`docs\search.md`](docs/search.md); what the numbers do *not* mean is in
 
 ## Seeds: 853 quadrillion texts, 4.29 billion worlds
 
-The game's new-world box takes a **text**. `World..ctor` runs `string.GetStableHashCode` on it and
-keeps only the resulting **int32**; generation never sees the text again. So the int *is* the world,
-and the whole space of worlds is exactly 2³² = **4,294,967,296**.
+The game's new-world box takes a **text**. When the game creates the world, its `World` constructor
+(`World..ctor`, the name explained under [`vseed seed`](#vseed-seed--everything-about-one-world))
+runs `string.GetStableHashCode` on that text and keeps only the resulting **int32**; generation never
+sees the text again. So the int *is* the world, and the whole space of worlds is exactly 2³² =
+**4,294,967,296**.
 
 The seed field allows **10 characters** and validates them as **Alphanumeric** — measured from the
 live UI component (`FejdStartup.m_newWorldSeed`: `characterLimit` 10, `Alphanumeric`), not guessed
@@ -603,7 +611,7 @@ Going the other way is exact, and `vseed space` re-verifies the whole thing befo
 ```
 $ vseed space
   seed texts            853,058,371,866,181,866
-  distinct worlds       4,294,967,296   = 2^32, because World..ctor keeps only the int
+  distinct worlds       4,294,967,296   = 2^32, because the game's World constructor (World..ctor) keeps only the int
   texts per world       198,618,130   (a mean, not a guarantee)
 
   reachable at <= 5     142,962,629   3.33 %
@@ -630,8 +638,9 @@ Re-verified now  (0.23 s)
 remaining 984,542,424 — including seed 0 itself — have no six-character alphanumeric text. Since the
 field allows ten, any world SeedLab finds can always be typed back into the game.
 
-One consequence worth knowing: **an empty seed box is not random.** `World..ctor` maps it straight to
-0, which is one specific world — the same one the main menu background uses.
+One consequence worth knowing: **an empty seed box is not random.** The `World` constructor
+(`World..ctor`) maps it straight to 0, which is one specific world — the same one the main menu
+background uses.
 
 A token on the command line that parses as an int32 is read as the **int**, because that is what a
 script emits; the seed-text reading is always reported as well, and `--text` / `--int` force either

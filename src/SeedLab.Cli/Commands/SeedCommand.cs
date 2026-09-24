@@ -98,7 +98,10 @@ Examples:
                     + "many texts for this seed)");
             o.Field("worldGenVersion", s.Field.WorldGenVersion.ToString(CultureInfo.InvariantCulture));
             o.Note("");
-            o.Note("The text is hashed to the int by World..ctor and never looked at again, so the int IS the world.");
+            // "World..ctor" alone read like a typo or a cut-off word to someone who does not know .NET
+            // names every constructor ".ctor", so the name keeps a plain gloss beside it (2026-09-24).
+            o.Note("The text is hashed to the int by the game's World constructor (World..ctor) and never");
+            o.Note("looked at again, so the int IS the world.");
 
             o.Header("Measurement");
             o.Field("grid", Grids.Describe(g));

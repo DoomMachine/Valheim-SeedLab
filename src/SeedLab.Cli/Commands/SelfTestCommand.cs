@@ -122,7 +122,7 @@ Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not fo
             checks.Add(new Check
             {
                 Id = "V1b",
-                What = "World..ctor's empty-text special case",
+                What = "the game's World constructor (World..ctor) maps the empty text to seed 0",
                 Result = "\"\" -> " + StableHash.SeedFromText("") + " (expected 0)",
                 Pass = StableHash.SeedFromText("") == 0,
             });
