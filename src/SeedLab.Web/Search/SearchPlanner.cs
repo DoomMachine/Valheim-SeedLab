@@ -301,7 +301,13 @@ namespace SeedLab.Web.Search
 
             r.WorstGoalMillisecondsPerSeed = worst;
             r.CostHeadline = Headline(cq, worst, r.Goals);
-            r.GridOptions = Ladder(cq, s, workers.Workers, tier);
+
+            // The ladder's verdicts and its note come from SeedLab.Search, read off the session's own
+            // compiled query (the one the run will use, after any name rewrite or grid raise), so the
+            // page says exactly what the CLI's warnings say about the same goals.
+            GridLadder ladder = GridLadder.For(s.Compiled);
+            r.GridOptions = Ladder(cq, s, workers.Workers, tier, ladder);
+            r.LadderNote = ladder.TableNote;
             return r;
         }
 
@@ -314,22 +320,13 @@ namespace SeedLab.Web.Search
         /// resolution study's finding encoded rather than repeated: a counting metric survives a coarse
         /// grid with a margin, a connectivity or extremum metric does not survive one at all, and past
         /// G96 the margin needed to lose nothing passes 90 % of seeds - at which point the screen has
-        /// stopped filtering.</para>
+        /// stopped filtering. The verdict and its sentence are <see cref="GridLadder.Rung"/>'s: this
+        /// method only prices the rungs.</para>
         /// </summary>
-        private static List<GridOption> Ladder(CompiledQuery cq, SearchSession s, int workers, WorkTier tier)
+        private static List<GridOption> Ladder(CompiledQuery cq, SearchSession s, int workers, WorkTier tier,
+                                               GridLadder ladder)
         {
             double[] rungs = { 384, 256, 192, 96, 48, 24, 12 };
-            bool fineOnly = s.Grid.FineOnlyGoals.Count > 0;
-
-            // Whether the sampling grid decides anything here at all. Location placement runs on the
-            // game's own hard-coded 2048 x 2048 @ 12 m point grid (GridSafety.GridIndependent), so a
-            // query whose must-haves are all location goals is EXACT at every rung and the ladder is
-            // flat - and calling G384 "not safe" for it would be a warning about nothing.
-            bool gridDecides = false;
-            foreach (CompiledGoal g in cq.Goals)
-            {
-                if (g.Goal.Importance == Importance.Must && g.Available && g.Tier <= Tier.T4) gridDecides = true;
-            }
             double region = cq.Plan.Radius;
             double share = region > 0 && region < SeedLab.Search.Metrics.SeedSampler.WaterEdge
                 ? Math.Min(1.0, region * region / (SeedLab.Search.Metrics.SeedSampler.WaterEdge * SeedLab.Search.Metrics.SeedSampler.WaterEdge))
@@ -343,26 +340,9 @@ namespace SeedLab.Web.Search
                 (double seconds, bool extrapolated, string how) = CostModel.SingleThreadSeconds(tier, cells);
                 if (baseline <= 0) baseline = seconds;
 
-                string? why = null;
-                bool safe = true;
-                if (!gridDecides)
-                {
-                    why = "no must-have goal here is measured on the sampling grid: location placement "
-                          + "uses the game's own hard-coded 2048 x 2048 @ 12 m point grid, so this query "
-                          + "is exact at every rung and costs the same at all of them";
-                }
-                else if (fineOnly && g > 12.0)
-                {
-                    safe = false;
-                    why = "a goal in this query is measured by connectivity or an extremum, and a coarse grid "
-                          + "does not approximate those - auto-pick raises the whole query to G12 for it";
-                }
-                else if (g > GridPolicy.CoarsestScreen)
-                {
-                    safe = false;
-                    why = "coarser than G96, where the margin needed to lose no true match passes 90 % of all "
-                          + "seeds: a must-have here is no longer a filter";
-                }
+                GridRungVerdict verdict = ladder.Rung(g);
+                bool safe = verdict.Safe;
+                string? why = verdict.Why;
 
                 list.Add(new GridOption
                 {
@@ -374,7 +354,7 @@ namespace SeedLab.Web.Search
                     RelativeToCoarsest = baseline > 0 ? seconds / baseline : 1,
                     WholeSpaceSeconds = seconds > 0 ? seconds * 4294967296.0 / Math.Max(1, workers) : double.NaN,
                     SafeForMusts = safe,
-                    GridDecides = gridDecides,
+                    GridDecides = ladder.GridDecides,
                     Why = why,
                     Extrapolated = extrapolated,
                     Chosen = Math.Abs(g - s.Grid.VerifyGrid) < 1e-9,
@@ -633,6 +613,12 @@ namespace SeedLab.Web.Search
 
         /// <summary>The sampling ladder, with this query's measured cost at every rung.</summary>
         public List<GridOption> GridOptions { get; set; } = new List<GridOption>();
+
+        /// <summary>
+        /// The note under the ladder table, written by <c>GridLadder</c> in SeedLab.Search rather than
+        /// by the page, so it cannot contradict the plan block and the warnings beside it.
+        /// </summary>
+        public string LadderNote { get; set; } = "";
     }
 
     /// <summary>One rung of the sampling ladder, costed for the query in hand.</summary>

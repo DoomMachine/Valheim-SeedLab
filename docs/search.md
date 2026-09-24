@@ -174,8 +174,16 @@ measured **7.36 TB**. It cannot any more — the same command is now refused bef
 
 ## The grid is part of the answer
 
-`--grid <m>` changes the answer, not just the speed, so the grid is recorded per goal in the results
-file. Under `--screen auto` (the default) the engine:
+`--grid <m>` changes the answer of every goal measured on the sampling grid, not just the speed, so the
+grid is recorded per goal in the results file, and the plan names those goals in a warning. It does not
+change a location or group goal: placement draws from the game's own 2048 × 2048 @ 12 m point grid
+whatever `--grid` says, so those goals give the same numbers at every grid and get no grid warning. A
+query of nothing but location goals gets a plan note instead, because the grid is still part of its
+identity: it moves the run hash, and with it the checkpoint, the survivor list and - for a shuffled
+run with no `search.key` over part of the range, or one a `budget.wall` can stop before it covers the
+range - which seeds are visited.
+
+Under `--screen auto` (the default) the engine:
 
 - **screens coarsely with a measured margin** where the metric allows one, then **re-measures every
   survivor** at the definitional grid before writing it. Every record then carries

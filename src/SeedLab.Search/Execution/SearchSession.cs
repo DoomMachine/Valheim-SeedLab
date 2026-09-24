@@ -207,9 +207,25 @@ namespace SeedLab.Search.Execution
                 SearchSession raised = Create(q, oracle, engineVersion, seedBudget, threads, outPath,
                                               noPrefilter, acceptScanOrder, allowVacuous, null, true);
                 raised.Grid.RaisedFrom = from;
+
+                // A carried note goes into the PLAN too, directly under the grid line. The raised
+                // session's own Check turned its Grid.Notes into plan lines before these were added,
+                // so until 2026-09-24 the note that explains the raise ("grid raised from G96 to the
+                // game's own G12, because ...") reached Grid.Notes and nothing else: neither the CLI's
+                // plan block nor the web page, which both print Preflight.Plan, ever showed it.
+                //
+                // And at the FRONT of Grid.Notes, in the same order: explain prints Grid.Notes as they
+                // stand (and the web's preflight report carries the list), so appending them put "grid
+                // raised from G96 ..." after the raised session's own note in explain and before it in
+                // the plan block.
+                int at = raised.Preflight.Plan.FindIndex(l => l.StartsWith("grid         ", StringComparison.Ordinal));
+                at = at < 0 ? raised.Preflight.Plan.Count : at + 1;
+                int front = 0;
                 foreach (string n in notes)
                 {
-                    if (!raised.Grid.Notes.Contains(n)) raised.Grid.Notes.Add(n);
+                    if (raised.Grid.Notes.Contains(n)) continue;
+                    raised.Grid.Notes.Insert(front++, n);
+                    raised.Preflight.Plan.Insert(at++, "             " + n);
                 }
 
                 foreach (string u in unsafeMusts)

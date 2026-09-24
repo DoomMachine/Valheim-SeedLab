@@ -70,19 +70,16 @@ namespace SeedLab.Cli.Commands
                 throw new CliException(ex.Message, ExitCodes.Usage, ex.Hint);
             }
 
+            // A grid raise is already REAL here: SearchSession.Create recompiles the query at the raised
+            // grid and returns that session, with RaisedFrom set (the fix that retired the CLI's own
+            // ApplyGridUpgrade). This command used to rebuild the session a second time as if it had
+            // not, and the rebuild was worse than redundant: handed a query whose location targets were
+            // already prefabs, it produced no name notes, so "'The Elder' is the display name of
+            // GDKing" vanished from explain on every query that raised its grid. Only the notes that
+            // explain the raise are printed here, as before.
             if (session.Grid.RaisedFrom > 0)
             {
-                // Same defect, same workaround as SearchCommand.ApplyGridUpgrade: the raise is not
-                // applied to the compiled query by the library, so it is applied here or the
-                // explanation would be measured at a grid the search does not use.
-                q.Search.Grid = session.Grid.VerifyGrid;
-                q.CanonicalJson = QueryReader.Canonicalise(q);
-                double raisedFrom = session.Grid.RaisedFrom;
-                List<string> notes = new List<string>(session.Grid.Notes);
-                session = SearchSession.Create(q, oracle, Verified.EngineVersion, 1, 1,
-                                               outPath: null, noPrefilter: true, acceptScanOrder: true);
-                session.Grid.RaisedFrom = raisedFrom;
-                foreach (string n in notes) Out.Warn(n);
+                foreach (string n in session.Grid.Notes) Out.Warn(n);
             }
 
             if (!session.Preflight.Ok)
@@ -100,20 +97,14 @@ namespace SeedLab.Cli.Commands
             }
 
             CompiledQuery cq = session.Compiled;
-            foreach (string w in cq.Warnings) Out.Warn(w);
-            // The preflight's warnings are written for a SCAN. The ones about goals and grids apply
-            // to a single seed just as much; the ones about block size, checkpoints and the size of
-            // the results file do not - this command scans nothing, writes nothing and resumes
-            // nothing, so printing them here would be advice about a run that is not happening.
-            foreach (string w in session.Preflight.Warnings)
-            {
-                if (w.Contains("--block-size", StringComparison.Ordinal)
-                    || w.Contains("--checkpoint-every", StringComparison.Ordinal)
-                    || w.Contains("keep: all", StringComparison.Ordinal))
-                {
-                    continue;
-                }
 
+            // The preflight's warnings are written for a SCAN; SearchPreflight.WarningsForOneSeed
+            // keeps the ones about goals and grids and drops the ones about block size, checkpoints
+            // and the results file. That list already holds every compiled-query warning (the session
+            // copies them in), so it is the ONLY loop: a second one over cq.Warnings used to print each
+            // grid, region and prefix warning twice.
+            foreach (string w in session.Preflight.WarningsForOneSeed())
+            {
                 Out.Warn(SearchCommand.Wrap(w, "         "));
             }
 

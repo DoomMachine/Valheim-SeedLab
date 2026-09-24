@@ -2442,15 +2442,11 @@ function listInto(host, lines) {
 function renderGridTable(r) {
   const tb = $('gridTable').querySelector('tbody');
   tb.textContent = '';
-  const opts = r.gridOptions || [];
-  const flat = opts.length > 0 && !opts[0].gridDecides;
-  $('gridNote').textContent = flat
-    ? 'This query’s cost is the same at every rung, and every rung is exact: location placement runs on '
-      + 'the game’s own hard-coded 2048 × 2048 @ 12 m point grid, so the sampling grid decides nothing '
-      + 'here. Add a biome, height or island goal and this table starts to matter.'
-    : 'Sampling changes time and memory, not disk. The cost column is this query’s own, measured at its '
-      + 'tier and region — not a relative factor from a table. A rung marked “no” is one where the margin '
-      + 'needed to lose no true match passes 90 % of all seeds, so a must-have there stops filtering.';
+  // The note is the server's (GridLadder in SeedLab.Search), like every verdict in the table: the
+  // page used to write its own, and it said "the sampling grid decides nothing here" beside a plan
+  // block that says the grid still changes the run hash, and beside nice goals whose ranking it
+  // does decide.
+  $('gridNote').textContent = r.ladderNote || '';
   for (const o of (r.gridOptions || [])) {
     const tr = el('tr');
     if (o.chosen) tr.classList.add('is-chosen');
@@ -2460,7 +2456,11 @@ function renderGridTable(r) {
     tr.appendChild(el('td', 'num', o.millisecondsPerSeed < 10 ? nf(o.millisecondsPerSeed, 2) : nf(o.millisecondsPerSeed, 0)));
     tr.appendChild(el('td', 'num', nf(o.seedsPerSecond, o.seedsPerSecond < 10 ? 2 : 0)));
     const why = el('td', null, o.safeForMusts ? 'yes' : 'no');
-    why.title = o.why || 'a counting metric survives this grid with a margin, and every survivor is re-measured exactly';
+    // Every rung's reason is the server's (GridLadder.Rung never sends none). The page's own fallback
+    // - "a counting metric survives this grid with a margin, and every survivor is re-measured
+    // exactly" - was false under screen: off, at the rungs auto-pick measures once, and for a
+    // fine-only must-have at G12.
+    why.title = o.why || '';
     tr.appendChild(why);
     tr.addEventListener('click', () => { $('qGrid').value = String(o.grid); schedulePreflight(); });
     tb.appendChild(tr);

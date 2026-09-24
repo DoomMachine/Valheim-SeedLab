@@ -26,7 +26,10 @@
   //
   // The biome area goals below are all nice-to-haves, i.e. ranking, and bulk areas at 192 m are
   // accurate to a median of 0.0015 in share units - fine for ranking. They are measured ON THIS
-  // GRID and are not comparable with a 12 m result; every record says so.
+  // GRID, and the plan's grid warning names them; an area is still comparable across grids, and every
+  // record carries its measured median error against 12 m (1.95 % at G192, the worst biome). The goals
+  // that are NOT comparable - home-island, big-home, swamp-near - get a warning each, and their
+  // records say so.
   //
   // MEASURED PASS RATE at this revision: see the header of 'vseed search balanced --seeds 256'.
   // The filter is now the five altars alone.

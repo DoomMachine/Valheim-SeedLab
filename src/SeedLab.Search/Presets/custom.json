@@ -22,8 +22,10 @@
                                           // output.rotate, because every seed matches a query with no
                                           // must-have goal and a whole-space run of one would be 7.36 TB.
     "grid": 12,                           // metres. 12 is the game's own grid and the default.
-                                          // A coarser grid is a DIFFERENT measurement, not an
-                                          // approximation of this one.
+                                          // For a biome, land, island or height goal a coarser
+                                          // grid is a DIFFERENT measurement, not an approximation
+                                          // of this one. Location and group goals are exact at
+                                          // every grid (placement uses the game's own 12 m grid).
     "screen": "auto",                     // auto (default) | on | off. "auto" puts a cheap coarse pass
                                           // in front of the exact one when the query's must-haves are
                                           // counting metrics: measured zero false negatives on 2,560

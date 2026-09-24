@@ -32,8 +32,8 @@
   // NO "grid" ON PURPOSE. Every goal here is a location goal, and a location run builds its own
   // 2048^2 biome-point grid whatever the query says. The same 256-seed run at G384 took 60.1 s
   // (4.3 seeds/s), and three seeds explained at G384 gave distances bit-identical to the G12 sample.
-  // A coarse grid buys nothing here and prints warnings about grid-measured metrics this preset
-  // does not have.
+  // A coarse grid buys nothing here: it changes no value, only the run hash (and so the checkpoint
+  // and which seeds a shuffled sample visits), and the plan says exactly that.
   "version": 1,
   "defs": 1,
   "name": "axe-heads",

@@ -90,10 +90,15 @@ namespace SeedLab.Search.Evaluation
         public List<string> FineOnlyGoals = new List<string>();
 
         /// <summary>
-        /// Must-have goals that a coarse grid measures wrongly. When auto-pick is on, the grid is
-        /// raised to the game's own 12 m for them and <see cref="RaisedFrom"/> records what it was;
-        /// with <c>screen: off</c> the query's grid is honoured and these become plain warnings.
-        /// These are the defects the resolution study found in the shipped presets.
+        /// Must-have goals that a coarse grid measures wrongly, one sentence each. When auto-pick is
+        /// on, the grid is raised to the game's own 12 m for them and <see cref="RaisedFrom"/> records
+        /// what it was; the raise confirmation counts this list. With <c>screen: off</c> the query's
+        /// grid is honoured, nothing is raised and <see cref="RaisedFrom"/> stays 0:
+        /// <c>SearchPreflightCheck.Check</c> then fills this list itself with sentences that say so
+        /// (<see cref="GridPolicy.UnsafeMustLine"/>), leaving out any goal the compiled query's
+        /// per-goal "NOT comparable" warning already names (<see cref="CompiledQuery.GridWarnedGoals"/>),
+        /// and the session turns them into plain warnings. These are the defects the resolution study
+        /// found in the shipped presets.
         /// </summary>
         public List<string> UnsafeMusts = new List<string>();
 
@@ -220,13 +225,191 @@ namespace SeedLab.Search.Evaluation
         /// <summary>The coarsest grid a bulk must-have may be screened on. Decided, not guessed.</summary>
         public const double CoarsestScreen = 96.0;
 
+        // ---- which goals the sampling grid actually measures ----------------------------------------
+        //
+        // Every grid warning, plan note and ladder verdict asks the same question - "does the query's
+        // sampling grid decide this goal's number?" - and until 2026-09-24 three places answered it
+        // three different ways (NeedsLocations; For(g).Safety != GridIndependent; the web ladder's
+        // Tier <= T4). The result was a G96 warning and a "DEFINED on that grid" warning printed for
+        // boss-rush, dungeon-delver and every other all-location query, whose values the grid cannot
+        // reach at all. The predicates below are the one answer; the CLI, explain and the web page all
+        // read them, so the three front ends cannot drift apart again.
+
+        /// <summary>
+        /// True when the goal's VALUE is read from the query's sampling grid: an available T2 or T3
+        /// goal. Every one of those is read by <see cref="CompiledGoal.Read"/> off a
+        /// <c>WorldMeasurement</c> sized to the query grid (<c>SeedEvaluator</c> builds it from
+        /// <c>q.Grid</c>).
+        ///
+        /// <para><b>Not</b> the location and group metrics (T5): their value comes from the placed
+        /// instance list, and placement builds its own 2048 x 2048 @ 12 m biome-point grid whatever the
+        /// query says (<c>DumpedLocationOracle.Run</c> -> <c>BiomeGrid.Build</c>, whose size and pixel
+        /// size are constants; <c>ILocationOracle.Run</c> takes no grid). Measured 2026-09-24:
+        /// <c>explain --json</c> at G384 and at G12 gave bit-identical values for nearest, nearest from
+        /// spawn, all_candidates and count_within on three seeds. <b>Not</b> the T4 river, lake and
+        /// stream counts either: those are the generator's own lists
+        /// (<c>WorldMeasurement.MeasureStructures</c>), with no grid input. A T4 query still SAMPLES
+        /// heights on the grid (<see cref="SeedLab.Search.Metrics.MeasurementPlan.NeedHeights"/>) for the record's side
+        /// metrics, which is why "samples the grid" and "a goal is measured on it" are kept apart.</para>
+        /// </summary>
+        public static bool SamplesGrid(CompiledGoal g)
+            => g.Available && (g.Def.Tier == Tier.T2 || g.Def.Tier == Tier.T3) && !g.Def.NeedsLocations;
+
+        /// <summary>
+        /// A must-have that the grid measures and that belongs to the bulk counting row of the
+        /// resolution study (<see cref="GridSafety.ScreenWithMargin"/>): the goals the "coarser than
+        /// G96, a must-have is not a filter" argument is about. A fine-only must-have is not one of
+        /// them - it has its own, stronger warning (<see cref="UnsafeMusts"/>, or the compiled query's
+        /// per-goal "NOT comparable" one).
+        /// </summary>
+        public static bool IsBulkGridMust(CompiledGoal g)
+            => g.Goal.Importance == Importance.Must && SamplesGrid(g)
+               && For(g).Safety == GridSafety.ScreenWithMargin;
+
+        /// <summary>
+        /// A must-have that the grid measures and that no coarse grid measures safely
+        /// (<see cref="GridSafety.FineOnly"/>) - what auto-pick raises the grid to 12 m for.
+        /// </summary>
+        public static bool IsFineOnlyGridMust(CompiledGoal g)
+            => g.Goal.Importance == Importance.Must && SamplesGrid(g)
+               && For(g).Safety == GridSafety.FineOnly;
+
+        /// <summary>
+        /// True when EVERY value this query produces comes from location placement: at least one goal
+        /// is available, every available goal is a location or group goal, and the query samples
+        /// neither biomes nor heights on its grid (so the record carries no grid-measured side metric
+        /// either). For such a query the sampling grid changes no number at all - only the query's
+        /// identity (its hash, and so its checkpoint, its survivor list and, for a shuffled partial
+        /// run, its permutation key).
+        ///
+        /// <para>At least one AVAILABLE goal, on purpose: with no dumped location table every location
+        /// goal is unavailable, "every available goal" would then be true of nothing, and a note about
+        /// placement would be printed over a query that is about to be refused for lacking it.</para>
+        /// </summary>
+        public static bool OnlyPlacement(CompiledQuery cq)
+        {
+            if (cq.Plan.NeedBiomes || cq.Plan.NeedHeights) return false;
+            bool any = false;
+            foreach (CompiledGoal g in cq.Goals)
+            {
+                if (!g.Available) continue;
+                if (!g.Def.NeedsLocations) return false;
+                any = true;
+            }
+
+            return any;
+        }
+
+        /// <summary>
+        /// The side metrics the records of this query carry off the sampling grid, in the record's own
+        /// order - what <c>SeedEvaluator</c> fills after the goals: <c>ocean_share</c> when biomes were
+        /// sampled, <c>land_km2</c> and <c>highest_peak_m</c> when heights were, and
+        /// <c>largest_island_km2</c> when heights were and the plan measures islands. None of them is a
+        /// goal, so no goal-naming warning covers them, and none of them carries a grid flag of its
+        /// own: the record's <c>grid</c> field is all that says where they were measured.
+        /// </summary>
+        public static List<string> RecordSideMetrics(SeedLab.Search.Metrics.MeasurementPlan p)
+        {
+            List<string> list = new List<string>();
+            if (p.NeedHeights) list.Add("land_km2");
+            if (p.NeedHeights && p.NeedIslands) list.Add("largest_island_km2");
+            if (p.NeedBiomes) list.Add("ocean_share");
+            if (p.NeedHeights) list.Add("highest_peak_m");
+            return list;
+        }
+
+        /// <summary>
+        /// "the records' side metrics (land_km2, ocean_share, highest_peak_m)" + <paramref name="verb"/>
+        /// + " - and highest_peak_m is not comparable across grids", or null when the query samples no
+        /// heights. The verb lets each variant of the run-level grid warning say it in its own
+        /// sentence ("and so are ...", "... are measured on it too").
+        ///
+        /// <para>Only when heights are sampled, on purpose. That is when a side metric that is NOT
+        /// comparable across grids appears: <c>highest_peak_m</c> is an extremum and
+        /// <c>largest_island_km2</c> a connectivity measure, the same metrics as the
+        /// <c>highest_peak</c> and <c>largest_island_area</c> goals, which the catalogue marks
+        /// <c>gridComparable: false</c>. A query that samples biomes alone carries only
+        /// <c>ocean_share</c>, a biome share the resolution study measured as comparable, and a
+        /// sentence about it would be a warning about nothing - all-traders' records are that case.
+        /// Until 2026-09-24 the run-level warning ("every metric in this run is DEFINED on that grid")
+        /// was the only sentence that covered these, generically; once it started naming goals, this is
+        /// what keeps the side metrics said.</para>
+        /// </summary>
+        public static string? SideMetricsClause(SeedLab.Search.Metrics.MeasurementPlan p, string verb)
+        {
+            if (!p.NeedHeights) return null;
+            List<string> notComparable = new List<string>();
+            if (p.NeedIslands) notComparable.Add("largest_island_km2");
+            notComparable.Add("highest_peak_m");
+            return "the records' side metrics (" + string.Join(", ", RecordSideMetrics(p)) + ")" + verb
+                   + (notComparable.Count == 1
+                       ? " - and highest_peak_m is not comparable across grids"
+                       : " - and " + string.Join(" and ", notComparable) + " are not comparable across grids");
+        }
+
+        /// <summary>
+        /// The must-have goals a coarse grid measures wrongly at this query's grid: available,
+        /// must-have, <see cref="GridSafety.FineOnly"/>, and a grid coarser than 12 m. The FULL set,
+        /// deliberately unfiltered: auto-pick raises the grid on it and the raise confirmation counts
+        /// it. Filtering it by the goals the per-goal "NOT comparable" warning already names - which is
+        /// every fine-only metric except <c>area_above_height</c> - would switch the raise off for
+        /// <c>large-continents</c> and every other island or spawn-island must-have, which is the
+        /// exact defect the raise exists to prevent. Only the <c>screen: off</c> WARNINGS skip those
+        /// goals, and they do it where they are written (<c>SearchPreflightCheck.Check</c>).
+        ///
+        /// <para>Strictly coarser than 12 m, not "not the game's grid": a finer grid is not a coarse
+        /// one, and raising G10 "to 12" would be a raise in name only.</para>
+        /// </summary>
+        public static List<CompiledGoal> UnsafeMusts(CompiledQuery q)
+        {
+            List<CompiledGoal> list = new List<CompiledGoal>();
+            if (!(q.Query.Search.Grid > 12.0)) return list;
+            foreach (CompiledGoal g in q.Goals)
+            {
+                if (!g.Available || g.Goal.Importance != Importance.Must) continue;
+                if (For(g).Safety == GridSafety.FineOnly) list.Add(g);
+            }
+
+            return list;
+        }
+
+        /// <summary>
+        /// The sentence for one of <see cref="UnsafeMusts"/>. <paramref name="raised"/> picks what
+        /// happens next, and the sentence must say which: under <c>screen: auto</c> the grid is raised
+        /// to 12 m for the goal (the plan note and the confirmation say so), and under
+        /// <c>screen: off</c> nothing is raised and the goal is measured at the query's grid anyway -
+        /// which is a filter that can both admit non-matches and reject real matches, and the user
+        /// has to be told that rather than left to infer it from a sentence written for the raise.
+        /// Both variants contain "is a MUST-HAVE on", which is what the tests match.
+        /// </summary>
+        public static string UnsafeMustLine(CompiledGoal g, double grid, bool raised)
+        {
+            string at = grid.ToString("0.###", CultureInfo.InvariantCulture);
+            if (raised)
+            {
+                return g.Goal.Id + " is a MUST-HAVE on " + g.Goal.Metric + " at G" + at + ", and " + For(g).Why;
+            }
+
+            // "Screen is off" starts a sentence of its own: For(g).Why is a full sentence ending in a
+            // measurement ("... needs 0.5-1 %"), and a lower-case continuation after its full stop read
+            // as a typo.
+            return "goal '" + g.Goal.Id + "' is a MUST-HAVE on " + g.Goal.Metric + " at G" + at
+                   + ", and " + For(g).Why
+                   + ". Screen is off, so nothing is raised and it is measured at G" + at + " anyway: as a "
+                   + "must-have it can admit seeds that are not matches and reject ones that are";
+        }
+
         /// <summary>
         /// Chooses the grid plan for a compiled query.
         ///
         /// <para>The rule, straight from the study's section 8.1: if any must-have goal is
         /// connectivity or extremal, measure at G12 and say why; otherwise screen at G24 (1 %) and
-        /// re-measure survivors at G12. A query of nothing but location goals is grid-independent and
-        /// gets the cheapest grid that still answers the side metrics.</para>
+        /// re-measure survivors at G12. A query of nothing but location goals is grid-independent:
+        /// there is nothing to screen or raise, so the plan keeps the query's own grid and measures
+        /// once. What the grid still changes for such a query - its identity, never a value - is said
+        /// by <c>SearchPreflightCheck.Check</c> rather than here, because only the preflight sees the
+        /// scan plan that decides whether a different grid also means different seeds, and because
+        /// auto-pick never runs under <c>screen: off</c>, where the same note is just as true.</para>
         /// </summary>
         public static GridPlan AutoPick(CompiledQuery q, double screenGrid = 24.0)
         {
@@ -238,31 +421,30 @@ namespace SeedLab.Search.Evaluation
             // coarse grid measures safely, which is a change to the answer and is therefore printed,
             // turned into a confirmation by the caller, and overridable with "screen": "off".
             GridPlan plan = new GridPlan { VerifyGrid = q.Query.Search.Grid };
-            bool anyFine = false, anyBulk = false, anyGridded = false;
+            bool anyFine = false, anyBulk = false;
+            List<string> fineIds = new List<string>();
 
             foreach (CompiledGoal g in q.Goals)
             {
                 if (!g.Available) continue;
                 GoalGridPolicy p = For(g);
                 if (p.Safety == GridSafety.GridIndependent) continue;
-                anyGridded = true;
 
                 if (p.Safety == GridSafety.FineOnly)
                 {
                     anyFine = true;
+                    fineIds.Add(g.Goal.Id);
                     plan.FineOnlyGoals.Add(g.Goal.Id + " (" + g.Goal.Metric + "): " + p.Why);
-                    if (g.Goal.Importance == Importance.Must && q.Query.Search.Grid > 12.0)
-                    {
-                        plan.UnsafeMusts.Add(g.Goal.Id + " is a MUST-HAVE on " + g.Goal.Metric
-                                             + " at G"
-                                             + q.Query.Search.Grid.ToString("0.###", CultureInfo.InvariantCulture)
-                                             + ", and " + p.Why);
-                    }
                 }
                 else
                 {
                     anyBulk = true;
                 }
+            }
+
+            foreach (CompiledGoal g in UnsafeMusts(q))
+            {
+                plan.UnsafeMusts.Add(UnsafeMustLine(g, q.Query.Search.Grid, raised: true));
             }
 
             // Decision 6: auto-pick goes FINER automatically for island and small-feature goals.
@@ -285,13 +467,14 @@ namespace SeedLab.Search.Evaluation
                                + " and accept the measured loss");
             }
 
-            if (!anyGridded)
-            {
-                plan.Notes.Add("every goal in this query is answered by location placement, which uses the "
-                               + "game's own 2048 x 2048 @ 12 m point grid: the sampling grid changes nothing "
-                               + "here except the side metrics on the record");
-                return plan;
-            }
+            // A query with no grid-measured goal used to get a note here ("every goal in this query is
+            // answered by location placement ... except the side metrics on the record"). It moved to
+            // SearchPreflightCheck.Check on 2026-09-24: its side-metrics clause was false (a
+            // location-only record has none), it said nothing of what the grid DOES change (the run
+            // hash, so the checkpoint, the survivor list and the seeds a shuffled sample visits), it
+            // was missing under screen: off, and it fired for river/lake/stream queries, which are not
+            // placement at all. With no gridded goal both flags below stay false and nothing further
+            // down fires, so the plan is "measure once at the query's grid", as before.
 
             // A fine-only goal does not stop the SCREEN: it stops the screen from TESTING that goal.
             // The screen tests the query's counting must-haves, which is often the cheap half of the
@@ -301,13 +484,20 @@ namespace SeedLab.Search.Evaluation
             // unused on exactly the queries that need it most.
             if (anyFine && !anyBulk)
             {
+                // The coarse branch NAMES its goals. It used to say "the number it reports is that
+                // grid's number", and in all-traders - three exact trader goals and one nice
+                // Black Forest distance - that read as if it covered every number in the run.
                 plan.Notes.Add(plan.VerifyGrid <= 12.0
                     ? "measuring at the game's own 12 m grid because this query has a goal that a coarse grid "
                       + "gets wrong, and for a height query that costs 6.8x rather than 1,162x - the river "
                       + "pre-generation dominates either way"
-                    : "this query has a goal that no coarse grid measures safely, and it asked for G"
+                    : (fineIds.Count == 1 ? "goal '" : "goals '") + string.Join("', '", fineIds)
+                      + (fineIds.Count == 1 ? "' is one" : "' are ones")
+                      + " no coarse grid measures safely, and this query asked for G"
                       + plan.VerifyGrid.ToString("0.###", CultureInfo.InvariantCulture)
-                      + ": the number it reports is that grid's number, not the game's");
+                      + (fineIds.Count == 1
+                          ? ": its number is that grid's number, not the game's"
+                          : ": their numbers are that grid's numbers, not the game's"));
                 return plan;
             }
 

@@ -47,6 +47,9 @@ namespace SeedLab.SearchTests
             Section("9. Names in, prefabs out: the target rewrite, the run hash and the contents caveat");
             QueryNameChecks.Run(Check);
 
+            Section("10. The plan: grid warnings only for goals the grid measures, each said once");
+            PlanChecks.Run(Check);
+
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));
             Console.WriteLine((_fail == 0 ? "PASS" : "FAIL") + "  " + _pass + " checks passed, " + _fail + " failed");

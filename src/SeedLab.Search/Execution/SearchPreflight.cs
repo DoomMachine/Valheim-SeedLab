@@ -57,6 +57,39 @@ namespace SeedLab.Search.Execution
         /// which <see cref="SearchPreflightCheck.Check"/> takes as <c>allowVacuous</c>.
         /// </summary>
         public bool BlockedByVacuity;
+
+        /// <summary>
+        /// The warnings that still mean something when ONE named seed is measured rather than a range
+        /// scanned - what <c>vseed explain</c> prints, each exactly once.
+        ///
+        /// <para>The preflight's warnings are written for a SCAN. The ones about goals and grids apply
+        /// to a single seed just as much; the ones about block size, checkpoints and the size of the
+        /// results file do not - explain scans nothing, writes nothing and resumes nothing, so printing
+        /// them would be advice about a run that is not happening. They are recognised by the flag or
+        /// the setting each one names (<c>--block-size</c>, <c>--checkpoint-every</c>,
+        /// <c>keep: all</c>), so a new scan-only warning has to name its knob to be left out here.</para>
+        ///
+        /// <para>Lifted out of <c>ExplainCommand</c> on 2026-09-24 so it can be tested. The same change
+        /// removed explain's second loop over the compiled query's warnings, which printed every one of
+        /// them twice: <see cref="Warnings"/> already holds each of them (the session copies them in).</para>
+        /// </summary>
+        public List<string> WarningsForOneSeed()
+        {
+            List<string> list = new List<string>();
+            foreach (string w in Warnings)
+            {
+                if (w.Contains("--block-size", StringComparison.Ordinal)
+                    || w.Contains("--checkpoint-every", StringComparison.Ordinal)
+                    || w.Contains("keep: all", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                list.Add(w);
+            }
+
+            return list;
+        }
     }
 
     /// <summary>
@@ -199,7 +232,26 @@ namespace SeedLab.Search.Execution
                 ? new GridPlan { VerifyGrid = q.Search.Grid }
                 : GridPolicy.AutoPick(cq, q.Search.ScreenGrid > 0 ? q.Search.ScreenGrid : 24.0);
 
-            if (q.Search.Screen == ScreenMode.Off) pf.Grid.Notes.Add("screening is off: measured once at this grid");
+            if (q.Search.Screen == ScreenMode.Off)
+            {
+                pf.Grid.Notes.Add("screening is off: measured once at this grid");
+
+                // Nothing is raised under screen: off, but a must-have no coarse grid measures safely
+                // is still measured wrongly at a coarse grid, and the user has to hear it. This used to
+                // be promised by GridPlan.UnsafeMusts' own doc comment and never done: the bare plan
+                // above has an empty list, so area_above_height at G384 got only the generic G96
+                // warning, and once that one stopped counting fine-only goals it would have got
+                // nothing. A goal the compiled query's per-goal "NOT comparable" warning already
+                // names is left out here - that warning already says it will reject real matches - so
+                // in practice this is area_above_height, the one fine-only metric that is comparable
+                // across grids. The session copies this list into the warnings, as it does the raise's.
+                foreach (CompiledGoal g in GridPolicy.UnsafeMusts(cq))
+                {
+                    if (cq.GridWarnedGoals.Contains(g.Goal.Id)) continue;
+                    pf.Grid.UnsafeMusts.Add(GridPolicy.UnsafeMustLine(g, q.Search.Grid, raised: false));
+                }
+            }
+
             pf.Plan.Add("grid         " + pf.Grid.Describe());
             if (pf.Grid.RaisedFrom > 0)
             {
@@ -214,14 +266,41 @@ namespace SeedLab.Search.Execution
             foreach (string n in pf.Grid.Notes) pf.Plan.Add("             " + n);
             foreach (string g in pf.Grid.FineOnlyGoals) pf.Plan.Add("             " + g);
 
-            if (!pf.Grid.ScreenThenVerify && q.Search.Grid > GridPolicy.CoarsestScreen
-                && pf.Grid.FineOnlyGoals.Count == 0 && musts > 0)
+            string? placementNote = PlacementGridNote(q, cq, plan);
+            if (placementNote != null) pf.Plan.Add("             " + placementNote);
+
+            // "Coarser than G96, a must-have is not a filter" is the bulk-margin argument, so it counts
+            // only the must-haves it is about: grid-measured goals in the counting row of the
+            // resolution study (GridPolicy.IsBulkGridMust). It used to count EVERY must-have - so
+            // boss-rush, dungeon-delver and a river-count query were told their exact must-haves were
+            // not filters - and it was silenced whenever ANY fine-only goal existed, nice ones
+            // included, which lost the true warning for a bulk must-have beside a nice nearest-biome
+            // goal. `musts` above keeps its old meaning for its three other readers (the no-must-have
+            // warning, the scan-order refusal and the keep-all disk refusal), which are about
+            // filtering at all, not about the grid.
+            //
+            // Keyed on the VERIFY grid, not on "no screen": a screen_grid coarser than the grid
+            // clamps to a G96 screen and then re-measures every survivor at the query's grid, so the
+            // verdicts are still that grid's, and the warning must still be printed.
+            List<string> bulkMusts = new List<string>();
+            foreach (CompiledGoal g in cq.Goals)
             {
-                pf.Warnings.Add("grid = " + q.Search.Grid.ToString("0.###", CultureInfo.InvariantCulture)
+                if (GridPolicy.IsBulkGridMust(g)) bulkMusts.Add(g.Goal.Id);
+            }
+
+            if (pf.Grid.VerifyGrid > GridPolicy.CoarsestScreen && bulkMusts.Count > 0)
+            {
+                // Its old last clause - "its reported number is a different measurement, not an
+                // approximation of the game's own grid" - is gone: every bulk metric is comparable
+                // across grids, and the run's own records carry a measured median relative error
+                // against G12 for them, i.e. they ARE treated as approximations with a known error.
+                pf.Warnings.Add("grid = " + pf.Grid.VerifyGrid.ToString("0.###", CultureInfo.InvariantCulture)
                                 + " m is coarser than G96, where the measured margin needed to lose no true "
-                                + "match passes 90 % of all seeds: a must-have at this grid is not a filter, "
-                                + "and its reported number is a different measurement, not an approximation "
-                                + "of the game's own grid");
+                                + "match passes 90 % of all seeds: must-have "
+                                + (bulkMusts.Count == 1 ? "goal '" : "goals '") + string.Join("', '", bulkMusts)
+                                + (bulkMusts.Count == 1
+                                    ? "' is not a filter at this grid: its number is that grid's number"
+                                    : "' are not filters at this grid: their numbers are that grid's numbers"));
             }
 
             // ---- 5. the region, the biggest free lever ---------------------------------------------
@@ -332,6 +411,63 @@ namespace SeedLab.Search.Execution
             }
 
             return pf;
+        }
+
+        /// <summary>
+        /// The plan note for a query whose every value comes from location placement
+        /// (<see cref="GridPolicy.OnlyPlacement"/>), or null for any other query.
+        ///
+        /// <para>It used to be written by <c>GridPolicy.AutoPick</c> as "the sampling grid changes
+        /// nothing here except the side metrics on the record", which was wrong three ways: a
+        /// location-only record HAS no side metrics (the evaluator fills them only when biomes or
+        /// heights were sampled); the grid does change something - it is in the canonical JSON, so it
+        /// moves the run hash, and with it the checkpoint, the funnel's survivor list and, for a
+        /// shuffled partial run with no <c>search.key</c>, the permutation key and so the seeds
+        /// visited; and auto-pick never runs under <c>screen: off</c>, so the note vanished exactly
+        /// where the grid warnings for such a query went quiet. It lives here because only the
+        /// preflight sees the scan plan that decides the seed clause, and it is printed in every
+        /// screen mode.</para>
+        ///
+        /// <para>The seed clause is conditional on purpose. With <c>order: sequential</c> the key is
+        /// ignored (<see cref="ScanPlan.SeedAt"/>), an explicit <c>search.key</c> does not come from
+        /// the hash ("same key + same range = the same seed sequence"), a run that COMPLETES the whole
+        /// range visits every seed whatever the order, and a funnel's second stage walks an explicit
+        /// list - in each of those two grids visit the same seeds, and saying otherwise would be the
+        /// same kind of false sentence this note replaced. A shuffled whole-range run with a
+        /// <c>budget.wall</c> is the exception to the third: the budget can stop it part-way through a
+        /// permutation whose key comes from the hash, so it gets a "can visit different seeds" clause
+        /// (review of 2026-09-24). The CLI's <c>--budget</c> flag does not reach
+        /// <c>q.Search.Wall</c> in this build - only <c>budget.wall</c> in the query file does - so a
+        /// run limited by that flag alone is not covered yet.</para>
+        /// </summary>
+        private static string? PlacementGridNote(Query q, CompiledQuery cq, ScanPlan plan)
+        {
+            if (!GridPolicy.OnlyPlacement(cq)) return null;
+
+            bool keyFromHash = !plan.IsExplicit && plan.Order == ScanOrder.Shuffled && q.Search.Key == null;
+            bool partOfRange = (ulong)plan.Limit < plan.Count;
+            bool wallCanStop = q.Search.Wall > TimeSpan.Zero;
+
+            string seeds = "";
+            if (keyFromHash && partOfRange)
+            {
+                seeds = " - and, because this run is a shuffled sample of part of the range with no "
+                        + "search.key, its permutation key comes from that hash too, so another grid "
+                        + "visits different seeds";
+            }
+            else if (keyFromHash && wallCanStop)
+            {
+                seeds = " - and, because this run is shuffled with no search.key and its time budget can "
+                        + "stop it before it covers the range, its permutation key comes from that hash "
+                        + "too, so another grid can visit different seeds";
+            }
+
+            return "every goal in this query is answered by location placement, which uses the game's own "
+                   + "2048 x 2048 @ 12 m point grid, so the sampling grid (G"
+                   + q.Search.Grid.ToString("0.###", CultureInfo.InvariantCulture)
+                   + ") changes no value here. It is still part of the query's identity: another grid is "
+                   + "another run hash, and the hash names the checkpoint and the funnel's survivor list"
+                   + seeds;
         }
 
         /// <summary>

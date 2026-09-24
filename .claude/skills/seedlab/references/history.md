@@ -4,7 +4,80 @@ Newest first. Each entry says what changed, why, and how it was verified. Game f
 discovered are recorded in the valheim-worldgen / valheim-modding references and only pointed at from
 here.
 
-## 2026-09-24 (latest) - republished clean, with credits, standalone tools and these skills
+## 2026-09-24 (latest) - grid warnings only for goals the grid measures
+
+**The defect (reported by the user).** A query whose goals were all location or group goals was told
+two false things at a coarse grid, by `vseed search`, `vseed explain` and the web page alike: "grid =
+384 m is coarser than G96 ... a must-have at this grid is not a filter" (the check counted EVERY
+must-have) and "every metric in this run is DEFINED on that grid and is not comparable with a G12
+result" (written before any goal was looked at). Placement never reads the query's grid: it builds its
+own 2048 x 2048 @ 12 m biome-point grid, and `explain` at G384 and at G12 gave bit-identical values.
+boss-rush and dungeon-delver (both G384) got both warnings; all-traders (three exact trader goals and
+one nice Black Forest distance, G384) got the second, which read as covering its trader goals.
+
+What changed (`GridPolicy`, `CompiledQuery`, `SearchPreflight`, `SearchSession`, the new
+`GridLadder`, `ExplainCommand`, the web planner and page):
+- **One predicate** for "the grid measures this goal": `GridPolicy.SamplesGrid` (available, T2/T3, not
+  a location goal), with `IsBulkGridMust`, `IsFineOnlyGridMust` and `OnlyPlacement` built on it. The
+  CLI, explain and the web ladder all read these.
+- **The G96 warning** counts only grid-measured must-haves in the counting row, is keyed on the verify
+  grid (a `screen_grid` coarser than the grid no longer hides it), names its goals, and drops the false
+  "not an approximation" clause. It is no longer silenced by a NICE fine-only goal - that had hidden a
+  true warning.
+- **The run-level grid warning** names only the grid-measured goals the per-goal "NOT comparable"
+  warning does not already name, and when heights are sampled adds the records' side metrics
+  (`land_km2`, `ocean_share`, `highest_peak_m`, plus `largest_island_km2` when islands are measured),
+  of which the peak and the island are not comparable. With no goal left to name, the side metrics get
+  their own line (a river-count query; a lone spawn-island must-have under `screen: off`). Nothing is
+  printed for a placement-only query, or for one that samples biomes alone and whose grid goals already
+  have their own warning - all-traders' only grid warning is now the per-goal one about
+  `blackforest-near`.
+- **The per-goal "NOT comparable" warning** fires on any grid that is not the game's own, so G10 is
+  covered.
+- **Under `screen: off`** a fine-only must-have that no per-goal warning covers (`area_above_height`) is
+  warned about with wording that says nothing is raised. The raise itself still uses the full set, so
+  large-continents, island and spawn-island must-haves are still raised to G12.
+- **The placement plan note** moved from auto-pick into the preflight (every screen mode, only for a
+  placement-only query). It says the grid changes no value but is part of the run hash (checkpoint,
+  survivor list), and adds "another grid visits different seeds" only when that is true: a shuffled
+  run with no `search.key` that covers part of the range or has a `budget.wall`. The false "except the
+  side metrics" clause is gone. The coarse-grid plan note names its goals.
+- **explain** printed every compiled warning twice and, after a grid raise, rebuilt the session and
+  lost the name notes; both are fixed (`SearchPreflight.WarningsForOneSeed`). A raise's notes now reach
+  the plan block, and they lead `Grid.Notes` in the same order.
+- **The web ladder** comes from the shared `GridLadder`: river/lake/stream must-haves are not called
+  "no longer a filter", the flat table only for placement-only queries, a variant for nice goals
+  whose ranking depends on the grid, a reason for every rung sent by the server (the page's own
+  fallback was false under `screen: off`), no "raises" under `screen: off`, and "each seed gets the
+  same must-have verdict" rather than "the same seeds".
+- Docs: `07-features.md` sections 2.1 and the parser rules, `schema.md`'s `grid` row, `docs\search.md`,
+  and the comments in the balanced, axe-heads and custom presets (outside the canonical hash).
+
+Verified: `SeedLab.Search.Tests` **244/244** (168 before; section 10 is new, 76 checks through
+`SearchSession.Create` with the real location table). Against the library before the change, 40 of the
+59 section-10 checks that compile failed and the other 19 are guards plus the data check. An adversarial
+review of the first cut found a lost true warning (the side metrics when every grid goal already had its
+own warning) and six wording and doc defects. Eleven checks were added for them, and ten failed against
+that cut; the eleventh is a guard. CLI and web build with 0 warnings; `vseed serve --selftest` passes;
+`proof policy` output is identical to the previous build. `proof refuse` exits 1, with output identical
+to the previous build (see the follow-ups). 41 `search --dry-run` / `explain` probes were compared before
+and after. 20 live web preflights were read, and for the cases that also have a CLI probe the page's
+warnings match the CLI's word for word.
+
+Follow-ups, not in this change:
+- A river, lake or stream must-have at G12 under `screen: auto` still gets a pointless G24 screen pass.
+  `GridPolicy.For`'s default branch treats T4 as a counting metric, so the plan says "screen at G24 ...
+  every must-have here is a counting metric" while the ladder says no must-have is measured on the grid.
+- `proof refuse`: the "with --accept-scan-order" case uses an `area_within >= 1,000 m²` goal that the
+  vacuity check refuses first.
+- large-continents: the plan's "measure once at G12" sits beside a "counting metric" note.
+- Screening notes still hard-code "12 m" after the grid is dropped.
+- Grids are printed with "0.###", so `grid: 12.0004` reads as G12.
+- After a raise, the per-goal unsafe-must-have sentences are only counted in the confirmation; they
+  never reach the warnings.
+- The CLI's `--budget` does not set `search.budget.wall`, so it does not trigger the seed clause.
+
+## 2026-09-24 - republished clean, with credits, standalone tools and these skills
 
 **The first publication was withdrawn the same day.** A spec quoted a save's player-history entry with
 the author's full SteamID64, three Steam Cloud paths carried the Steam account ID, and agent-session

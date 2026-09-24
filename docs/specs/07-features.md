@@ -425,7 +425,12 @@ out-of-radius rule `x²+z² > 110250000 → Ocean / −1000`).
 
 Default `r = 12` (**G12**) for everything definitional. Coarser grids exist only as *cost knobs*, and
 using one changes the definition, so it is recorded in every result record. **A result produced on
-G96 is not "approximately" a G12 result; it is a different, equally well-defined measurement.**
+G96 is not "approximately" a G12 result; it is a different, equally well-defined measurement.** That
+applies to the metrics measured on the sampling grid (the biome metrics, and the land, island and
+height world metrics). The location and group metrics are not among them: they are read off location
+placement, which draws from the game's own hard-coded 2048 × 2048 @ 12 m point grid whatever `r` is,
+so they are the same at every `r` (checked 2026-09-24: `vseed explain` at G384 and at G12 gave
+bit-identical distances and counts).
 
 ### 2.2 Land, islands, area
 
@@ -1161,8 +1166,13 @@ Rules the parser enforces:
 - unknown keys are errors, not warnings (a typo must not silently drop a `must` goal);
 - every goal's required tier is computed and printed;
 - unsatisfiable goals (T0, §3.2.1) abort with the geometric reason;
-- `grid` != 12 prints a warning that the metrics are defined on that grid and are not comparable with
-  G12 results;
+- a `grid` other than the game's own prints a warning that names the goals measured on that grid and
+  says their numbers are that grid's numbers; a location or group goal is never named (placement uses
+  the game's own 12 m grid, §2.1), and a metric that is not comparable across grids gets its own
+  per-goal warning instead. When heights are sampled on that grid, the warning also names the records'
+  side metrics (`land_km2`, `ocean_share`, `highest_peak_m`, and `largest_island_km2` when islands are
+  measured), which are that grid's numbers and of which the peak and the island are not comparable
+  across grids - on its own line when no goal is left for it to name;
 - `approx: true` prints a red banner and stamps `"approx": true` on every record.
 
 **Preset queries** (shipped in `presets/`, each a plain query file the user can copy and edit),

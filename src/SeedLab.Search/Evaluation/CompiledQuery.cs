@@ -299,6 +299,17 @@ namespace SeedLab.Search.Evaluation
         public List<CompiledGoal> Goals = new List<CompiledGoal>();
         public List<string> Warnings = new List<string>();
 
+        /// <summary>
+        /// Ids of the goals the per-goal "NOT comparable across grids" warning named. Recorded where
+        /// that warning is written, so the run-level grid warning (which names only the grid-measured
+        /// goals NOT in this set) and the <c>screen: off</c> unsafe-must-have warnings
+        /// (<c>SearchPreflightCheck.Check</c>) read the decision that was actually made instead of
+        /// re-deriving its condition - which is easy to get subtly wrong: the warning tests the
+        /// compiled <see cref="FieldGrid"/>, whose spacing is a float, while the query's grid is a
+        /// double.
+        /// </summary>
+        public HashSet<string> GridWarnedGoals = new HashSet<string>(StringComparer.Ordinal);
+
         /// <summary>Goals T0 proved no seed can satisfy. A <c>must</c> goal here means the run is pointless.</summary>
         public List<CompiledGoal> Unsatisfiable = new List<CompiledGoal>();
 
@@ -339,11 +350,11 @@ namespace SeedLab.Search.Evaluation
                 Grid = SearchGrids.ForSpacing(q.Search.Grid),
             };
 
-            if (q.Search.Grid != 12.0)
-            {
-                c.Warnings.Add("grid = " + q.Search.Grid + " m: every metric in this run is DEFINED on that grid and is "
-                               + "not comparable with a G12 result (07-features.md section 2.1)");
-            }
+            // The run-level grid warning ("grid = 384 m: goals ... are measured on that grid") used to
+            // be written HERE, before any goal was resolved, so it could only say "every metric in this
+            // run" - and printed that for boss-rush and every other all-location query, whose values
+            // the grid cannot reach. It is now written after the goal loop, where it can name the
+            // goals it is about (see GridWarning below).
 
             if (q.Search.Approx)
             {
@@ -452,8 +463,16 @@ namespace SeedLab.Search.Evaluation
                 // says so once per query, in the same sentence the record and the report use. The
                 // failure this prevents is not a wrong verdict - it is somebody comparing a G96
                 // island count with a G12 one in a month and believing the difference.
-                if (!def.GridComparable && c.Grid.Spacing > 12.0)
+                //
+                // On any grid that is not the game's own - FINER ones included. It used to test
+                // Spacing > 12, so a G10 island count got no per-goal warning at all, only the
+                // run-level one; and once that run-level one stopped claiming "not comparable" for
+                // every goal (it names grid-measured goals now, and says their numbers are that grid's
+                // numbers), a G10 island count would have lost the only sentence saying it cannot be
+                // compared with G12. Every record of such a run already says grid_comparable: false.
+                if (!def.GridComparable && !c.Grid.IsGameGrid)
                 {
+                    c.GridWarnedGoals.Add(g.Id);
                     c.Warnings.Add("goal '" + g.Id + "' uses " + def.Name + ", which is NOT comparable "
                                    + "across grids: " + def.GridNote + ". This run measures it at G"
                                    + c.Grid.Spacing.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
@@ -546,6 +565,9 @@ namespace SeedLab.Search.Evaluation
                 c.Goals.Add(cg);
             }
 
+            string? gridWarning = GridWarning(c);
+            if (gridWarning != null) c.Warnings.Add(gridWarning);
+
             c.Plan.Radius = region <= 0 ? SeedSampler.WaterEdge : region;
 
             // ---- search.region: exact, free, and the biggest lever in the tool ----------------------
@@ -611,6 +633,93 @@ namespace SeedLab.Search.Evaluation
 
             BuildLocationPlan(c, oracle);
             return c;
+        }
+
+        /// <summary>
+        /// The run-level grid warning, or null when there is nothing true to say.
+        ///
+        /// <para><b>What it used to be</b>: "grid = 384 m: every metric in this run is DEFINED on that
+        /// grid and is not comparable with a G12 result", printed whenever the grid was not 12 and
+        /// before any goal had been looked at. Both halves were false for a location or group goal,
+        /// whose value comes from placement on the game's own 2048 x 2048 @ 12 m grid whatever the
+        /// query says - so boss-rush, dungeon-delver and three of all-traders' four goals were told
+        /// their numbers were grid numbers, on the CLI, in <c>vseed explain</c> and on the web page.
+        /// And the "not comparable" half overstated even a biome area, which the resolution study
+        /// measured as comparable (<c>MetricDef.GridComparable</c>); the per-goal warning above is the
+        /// one place that claim is made, for the metrics it was measured for.</para>
+        ///
+        /// <para><b>What it is now</b>, on any grid that is not the game's own:</para>
+        /// <list type="bullet">
+        /// <item>it names the goals the grid really measures (<see cref="GridPolicy.SamplesGrid"/>),
+        /// must-have and nice alike, leaving out the ones the per-goal "NOT comparable" warning already
+        /// named (<see cref="GridWarnedGoals"/>) - that warning says the same thing about them, more
+        /// strongly, in the same sentence the record carries - and, when heights are sampled, adds the
+        /// records' side metrics (<see cref="GridPolicy.SideMetricsClause"/>);</item>
+        /// <item>when there is no goal left to name but heights are still sampled on the grid - a
+        /// river, lake or stream count needs heights, and a spawn-island or island goal already named
+        /// by the per-goal warning samples them too - it says what else IS measured there: the
+        /// records' side metrics, of which highest_peak_m (and largest_island_km2, when islands are
+        /// measured) are not comparable across grids;</item>
+        /// <item>when every value comes from placement (<see cref="GridPolicy.OnlyPlacement"/>) it says
+        /// nothing, because nothing in the run is a grid number. What the grid still changes for such
+        /// a query - its identity - is a plan note written by <c>SearchPreflightCheck.Check</c>.</item>
+        /// </list>
+        /// <para>A query that samples biomes alone and whose only grid-measured goals are all named by
+        /// the per-goal warning (all-traders) gets no run-level warning: every such goal already has
+        /// its sentence, and its records' one side metric, ocean_share, is comparable.</para>
+        /// </summary>
+        private static string? GridWarning(CompiledQuery c)
+        {
+            if (c.Grid.IsGameGrid || GridPolicy.OnlyPlacement(c)) return null;
+
+            string grid = c.Query.Search.Grid.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            List<string> measured = new List<string>();
+            int sampling = 0;
+            foreach (CompiledGoal cg in c.Goals)
+            {
+                if (!GridPolicy.SamplesGrid(cg)) continue;
+                sampling++;
+                if (!c.GridWarnedGoals.Contains(cg.Goal.Id)) measured.Add(cg.Goal.Id);
+            }
+
+            if (measured.Count > 0)
+            {
+                string? alsoSide = GridPolicy.SideMetricsClause(c.Plan, "");
+                return "grid = " + grid + " m: "
+                       + (measured.Count == 1 ? "goal '" : "goals '") + string.Join("', '", measured)
+                       + (measured.Count == 1 ? "' is" : "' are")
+                       + " measured on that grid (07-features.md section 2.1): "
+                       + (measured.Count == 1 ? "its number is that grid's number" : "their numbers are that grid's numbers")
+                       + (alsoSide != null ? ", and so are " + alsoSide : "");
+            }
+
+            // No goal left to name, yet heights are sampled on this grid, so the records carry side
+            // metrics measured on it - two of which are not comparable across grids. Two ways to get
+            // here, and neither may lose the sentence:
+            //  - no goal samples the grid at all: a river/lake/stream goal turns heights on (T4 is a
+            //    height tier here). Checked on a river-count query at G384: every record carried
+            //    land_km2, ocean_share and highest_peak_m measured at G384, with no grid flag of their
+            //    own;
+            //  - every grid-measured goal already has the per-goal "NOT comparable" warning (a lone
+            //    spawn_island_area must-have under screen: off, or a river must-have beside a nice
+            //    nearest-biome goal). The first cut of this warning stayed silent here, and the records'
+            //    highest_peak_m and largest_island_km2 at G384 went unmentioned - HEAD's generic
+            //    sentence had covered them (review of 2026-09-24).
+            // A query that samples biomes alone (all-traders, compact-progression) gets nothing: its
+            // only side metric is ocean_share, which is comparable (GridPolicy.SideMetricsClause).
+            if (sampling == 0)
+            {
+                string? side = GridPolicy.SideMetricsClause(c.Plan, " are");
+                return side == null ? null : "grid = " + grid + " m: no goal is measured on it, but " + side;
+            }
+
+            string? covered = GridPolicy.SideMetricsClause(c.Plan, " are measured on it too");
+            return covered == null
+                ? null
+                : "grid = " + grid + " m: "
+                  + (sampling == 1 ? "the goal measured on it has its own warning, but "
+                                   : "each goal measured on it has its own warning, but ")
+                  + covered;
         }
 
         /// <summary>
