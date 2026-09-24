@@ -10,6 +10,9 @@
     <ProjectReference Include="..\..\src\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
     <ProjectReference Include="..\..\src\SeedLab.Seeds\SeedLab.Seeds.csproj" />
     <ProjectReference Include="..\..\src\SeedLab.Saves\SeedLab.Saves.csproj" />
+    <!-- For the profile tripwire only: it reads the IL of WorldGen, Locations, LocationOracle and the
+         search evaluator, so those assemblies must sit beside the test. Nothing here calls them. -->
+    <ProjectReference Include="..\..\src\SeedLab.LocationOracle\SeedLab.LocationOracle.csproj" />
   </ItemGroup>
   <PropertyGroup>
     <OutputType>Exe</OutputType>

@@ -42,6 +42,9 @@ namespace SeedLab.RuntimeTests
             Section("7. The session log, access checks, and a busy file waited out or named");
             SessionLogChecks.Run(Check);
 
+            Section("8. The quiet-machine probe: what else ran, named, never pretended away");
+            QuietProbeChecks.Run(Check);
+
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));
             Console.WriteLine((_fail == 0 ? "PASS" : "FAIL") + "  " + _pass + " checks passed, " + _fail + " failed");

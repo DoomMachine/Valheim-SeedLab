@@ -134,23 +134,26 @@ namespace SeedLab.WorldGen.Diagnostics
         /// </summary>
         public const int Capacity = 64;
 
+        // In the order a seed runs them: construction, the biome pass, pre-generation (which the first
+        // height or river read triggers), the structure counts, the height pass, then the location build.
         private static readonly Phase[] s_all =
         {
-            Phase.Construct, Phase.Pregen,
+            Phase.Construct,
+            Phase.T2G12, Phase.T2G24, Phase.T2G96, Phase.T2G192, Phase.T2G384,
+            Phase.Patch,
+            Phase.Pregen,
             Phase.PregenLakesScan, Phase.PregenLakesMerge,
             Phase.PregenRiversSearch, Phase.PregenRiversRender,
             Phase.PregenStreams1Search, Phase.PregenStreams1Render,
             Phase.PregenStreams2Search, Phase.PregenStreams2Render,
             Phase.PregenViews,
-            Phase.T2G12, Phase.T2G24, Phase.T2G96, Phase.T2G192, Phase.T2G384,
-            Phase.Patch,
-            Phase.T3G12, Phase.T3G24, Phase.T3G96, Phase.T3G192, Phase.T3G384,
             Phase.T4Measure,
+            Phase.T3G12, Phase.T3G24, Phase.T3G96, Phase.T3G192, Phase.T3G384,
             Phase.T5Construct, Phase.T5Grid, Phase.T5Field, Phase.T5Alt, Phase.T5Place, Phase.T5Harvest,
             Phase.Collect, Phase.SeedText, Phase.AtlasBin, Phase.AtlasRow,
         };
 
-        /// <summary>Every defined phase, in the order a report prints them.</summary>
+        /// <summary>Every defined phase, in the order a seed runs them and a report prints them.</summary>
         public static IReadOnlyList<Phase> All => s_all;
 
         /// <summary>True for an id the map defines (not <see cref="Phase.None"/>, not the reserved 7).</summary>

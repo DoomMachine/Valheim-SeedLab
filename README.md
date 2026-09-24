@@ -418,12 +418,33 @@ Bench  (16 logical cores, .NET 10.0.12)
   shortest-text inverse              2,000 in 1.612 s               1241 seeds/s, 1 thread
 ```
 
+### `vseed profile`
+
+Where one seed's time goes, phase by phase: the generator's constructor, the lake/river/stream
+pre-generation and its nine steps, the biome and height passes per sampling grid, the structure
+counts, and the location world build (the 2048^2 point grid, the sectors, the alt biomes, the
+placement). With no options it runs a fixed battery; `--tier`, `--grid`, `--prefix`, `--seeds` and
+`--threads 1,8,16` narrow or widen it, `--counters` also counts per-point events (base heights, world
+angles, river lookups), and `--out profile.json` keeps the result (`seedlab-profile/1`, with
+`--per-seed` a CSV beside it). `vseed profile --help` has the rest.
+
+- **It changes no answer.** Timestamps are taken only at phase boundaries, generator code can write
+  the profiler but never read it (an IL check in the tests enforces that), and the world fingerprints
+  of 64 seeds - every biome, height, river point and placed location - are bit-identical with the
+  profiler off, on, and on with counters.
+- **It says when its numbers are not measurements.** It watches the machine for 30 s first and the
+  whole time it runs; another `vseed`, a running Valheim, a busy build or a heavy background load
+  marks the run **TAINTED**, naming what it saw. A tainted profile is a smoke test, not a figure to
+  quote - `docs\measurements.md` stays the only source of throughput numbers.
+- `--overhead` measures what the profiler itself costs (and, with `--baseline <another vseed.exe>`,
+  what this build costs with the profiler off against another build).
+
 ---
 
 ## The session log, and a file another program holds
 
 Every command that starts SeedLab's runtime — `seed`, `at`, `map`, `locations`, `search`, `explain`,
-`serve`, `selftest`, `bench` and `clean` — keeps a log of what it did:
+`serve`, `selftest`, `bench`, `profile` and `clean` — keeps a log of what it did:
 
 ```
 %LOCALAPPDATA%\SeedLab\logs\vseed.log        (with --cache-dir: <that folder>\logs\vseed.log)

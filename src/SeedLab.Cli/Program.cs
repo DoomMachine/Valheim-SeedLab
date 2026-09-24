@@ -44,6 +44,7 @@ usage: vseed <command> [options]
   world <name>              one save: seed, world-gen version, modifiers, contents
   selftest                  re-check this build against the bundled ground truth
   bench                     measured throughput of each stage on this machine
+  profile                   where one seed's time goes, phase by phase, on this machine now
 
 global options (accepted before or after the command name):
   --json                    machine-readable output on stdout (warnings go to stderr)
@@ -81,6 +82,11 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
 
         public static int Main(string[] rawArgs)
         {
+            // FIRST, before anything can touch a generator type: 'vseed profile --counters' switches the
+            // per-point counters on through an environment variable that is read exactly once, in a type
+            // initialiser. Nothing else in this method may run before it.
+            ProfileCommand.ApplyCountersSwitch(rawArgs);
+
             CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
             CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
 
@@ -158,6 +164,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
             }
 
             List<string> rest = argv.GetRange(1, argv.Count - 1);
+            if (cmd == "profile") rest = ProfileCommand.RenameThreadsOption(rest);
             if (rest.Contains("--help") || rest.Contains("-h"))
             {
                 Console.Out.WriteLine(help);
@@ -188,13 +195,15 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 // answer attached. They still accept and VALIDATE every global option, which is what
                 // ConsumeGlobals is for.
                 bool needsRuntime = cmd is "seed" or "map" or "at" or "locations" or "search"
-                                        or "explain" or "serve" or "selftest" or "bench" or "clean";
+                                        or "explain" or "serve" or "selftest" or "bench" or "clean"
+                                        or "profile";
                 rt = needsRuntime ? CliRuntime.Start(a, cmd, AsTyped(rawArgs)) : null;
                 if (rt == null) a.ConsumeGlobals();
 
                 // Fail closed before anything a user would act on. 'selftest' is exempt because it IS
                 // the diagnostic - refusing to run the thing that explains the refusal helps nobody -
-                // and so are 'bench' (it times, it does not answer) and 'clean' (it moves no numbers).
+                // and so are 'bench' and 'profile' (they time, they do not answer) and 'clean' (it
+                // moves no numbers). 'profile' prints the self-test's status in its machine block.
                 if (rt != null && cmd is "seed" or "map" or "at" or "locations" or "search"
                                      or "explain" or "serve")
                 {
@@ -220,6 +229,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                     "serve" => ServeCommand.Run(a, o, rt!),
                     "selftest" => SelfTestCommand.Run(a, o, rt!),
                     "bench" => BenchCommand.Run(a, o, rt!),
+                    "profile" => ProfileCommand.Run(a, o, rt!),
                     "clean" => CleanCommand.Run(a, o, rt!),
                     _ => throw new CliException("unknown command '" + cmd + "'."),
                 };
@@ -383,6 +393,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
             "serve" => ServeCommand.Help,
             "selftest" => SelfTestCommand.Help,
             "bench" => BenchCommand.Help,
+            "profile" => ProfileCommand.Help,
             "clean" => CleanCommand.Help,
             _ => null,
         };

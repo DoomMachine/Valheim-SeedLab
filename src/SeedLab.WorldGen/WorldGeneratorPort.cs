@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using SeedLab.WorldGen.Diagnostics;
 using SeedLab.WorldGen.Noise;
 using SeedLab.WorldGen.Unity;
 
@@ -234,6 +235,11 @@ namespace SeedLab.WorldGen
         public WorldGeneratorPort(int seed, int worldGenVersion = 2, bool menu = false,
                                   bool deferPregeneration = false)
         {
+            // Profiling: one null test when nothing records (PhaseSink.Current is null on every thread a
+            // profiler has not set up). Write-only - no value below depends on it.
+            PhaseSink? sink = PhaseSink.Current;
+            sink?.Begin(Phase.Construct);
+
             m_seed = seed;
             m_version = worldGenVersion;
             m_menu = menu;
@@ -267,31 +273,40 @@ namespace SeedLab.WorldGen
             m_riverSeed = rnd.Range(int.MinValue, int.MaxValue);
             m_streamSeed = rnd.Range(int.MinValue, int.MaxValue);
             m_offset4 = (float)rnd.Range(-10000, 10000);
+            sink?.End(Phase.Construct);
 
-            if (!m_menu)
+            if (!m_menu && !deferPregeneration)
             {
-                if (deferPregeneration)
+                // Builds the views itself, once the three collections have their final contents.
+                Pregenerate(rnd);
+            }
+            else
+            {
+                if (!m_menu)
                 {
                     // The state pregeneration would have started from, kept verbatim.
                     m_pregenPending = true;
                     m_pregenRandomState = rnd.GetState();
                 }
-                else
-                {
-                    Pregenerate(rnd);
-                }
-            }
 
-            // Built after pregeneration, when the three collections have their final contents. A
-            // deferred handle builds them over the empty collections here and rebuilds them in
-            // Pregenerate; no accessor can observe the empty pair, because every one of them ensures
-            // pregeneration first.
-            BuildViews();
+                // A menu world has nothing to pregenerate; a deferred handle builds its views over the
+                // empty collections here and Pregenerate rebuilds them. No accessor can observe the empty
+                // pair, because every one of them ensures pregeneration first.
+                BuildViews();
+            }
         }
 
-        /// <summary>WorldGenerator.Pregenerate() (decomp 259-265), in its own method so it can be deferred.</summary>
+        /// <summary>
+        /// WorldGenerator.Pregenerate() (decomp 259-265), in its own method so it can be deferred, followed
+        /// by the read-only views over what it built. Eager and deferred handles both come through here
+        /// exactly once, so the profiler's <see cref="Phase.Pregen"/> counts one entry per generator that
+        /// paid for pre-generation.
+        /// </summary>
+        [MemberNotNull(nameof(m_riversView), nameof(m_streamsView), nameof(m_riverPointsView))]
         private void Pregenerate(UnityRandom rnd)
         {
+            PhaseSink? sink = PhaseSink.Current;
+            sink?.Begin(Phase.Pregen);
             FindLakes();
             m_rivers = PlaceRivers(rnd);
             m_streams = PlaceStreams(rnd, isDN: false);
@@ -309,6 +324,11 @@ namespace SeedLab.WorldGen
             // at 11 divergences inside 7,600 m over 30 seeds, as far in as 2,715 m, with weights of
             // 0.89 against 0 rather than last-bit noise. No radius bound can cover that, because the
             // cell is wherever a random draw put it.
+
+            sink?.Begin(Phase.PregenViews);
+            BuildViews();
+            sink?.End(Phase.PregenViews);
+            sink?.End(Phase.Pregen);
         }
 
         /// <summary>
@@ -321,8 +341,7 @@ namespace SeedLab.WorldGen
             m_pregenPending = false;
             UnityRandom rnd = new UnityRandom();
             rnd.SetState(m_pregenRandomState);
-            Pregenerate(rnd);
-            BuildViews();
+            Pregenerate(rnd);   // rebuilds the views over the finished collections
         }
 
         [MemberNotNull(nameof(m_riversView), nameof(m_streamsView), nameof(m_riverPointsView))]
@@ -354,8 +373,12 @@ namespace SeedLab.WorldGen
         /// <para>Read-only, and it never triggers pre-generation: on a handle whose pre-generation is
         /// still pending the cache is in its initial state and this is false. It is meaningful straight
         /// after pre-generation, before the first height query - which is when a caller that wants to
-        /// know whether a fresh handle's first river read could differ from a warm one's should ask. On
-        /// about 1e-5 of worlds it is true (01-worldgen-core.md 4.7).</para>
+        /// know whether a fresh handle's first river read could differ from a warm one's should ask.</para>
+        ///
+        /// <para><b>It is not rare.</b> Measured 2026-09-24: true on 2 of the 64 worlds the recorded
+        /// fingerprint reference covers - the last stream probe's cell often gains points in the final
+        /// render (or had none, and gains some). The ~1e-5 in <see cref="Fork"/>'s remarks describes the
+        /// effect a stale cache has on heights (one 64 m cell), not how often the state occurs.</para>
         /// </summary>
         public bool RiverCacheIsStale
         {
@@ -557,6 +580,8 @@ namespace SeedLab.WorldGen
             // Presized: the loops test exactly 157 x 157 = 24,649 candidates and roughly a third pass,
             // so the default List growth would reallocate and copy a dozen times for nothing. Capacity
             // is not observable - it changes no value and no order.
+            PhaseSink? sink = PhaseSink.Current;
+            sink?.Begin(Phase.PregenLakesScan);
             List<Vec2> list = new List<Vec2>(1 << 13);
             for (float z = -10000f; z <= 10000f; z = (float)((double)z + 128.0))
             {
@@ -568,7 +593,10 @@ namespace SeedLab.WorldGen
                     }
                 }
             }
+            sink?.End(Phase.PregenLakesScan);
+            sink?.Begin(Phase.PregenLakesMerge);
             m_lakes = MergePoints(list, 800f);
+            sink?.End(Phase.PregenLakesMerge);
         }
 
         /// <summary>
@@ -773,6 +801,8 @@ namespace SeedLab.WorldGen
         /// </summary>
         private List<River> PlaceRivers(UnityRandom rnd)
         {
+            PhaseSink? sink = PhaseSink.Current;
+            sink?.Begin(Phase.PregenRiversSearch);
             (int, int, int, int) saved = rnd.GetState();
             rnd.InitState(m_riverSeed);
             List<River> list = new List<River>();
@@ -804,7 +834,10 @@ namespace SeedLab.WorldGen
                     work.RemoveAt(0);
                 }
             }
+            sink?.End(Phase.PregenRiversSearch);
+            sink?.Begin(Phase.PregenRiversRender);
             RenderRivers(rnd, list);
+            sink?.End(Phase.PregenRiversRender);
             rnd.SetState(saved);
             return list;
         }
@@ -819,6 +852,7 @@ namespace SeedLab.WorldGen
             List<int> list = new List<int>();
             for (int i = 0; i < points.Count; i++)
             {
+                PhaseClock.Count(Counter.RiverEndScans);
                 if (!(points[i] == p) && Vec2.Distance(p, points[i]) < maxDistance
                     && !HaveRiver(rivers, p, points[i]) && IsRiverAllowed(p, points[i], checkStep, heightLimit))
                 {
@@ -863,6 +897,7 @@ namespace SeedLab.WorldGen
             bool allWater = true;
             for (float s = step; s <= (float)((double)len - (double)step); s = (float)((double)s + (double)step))
             {
+                PhaseClock.Count(Counter.RiverAllowedSamples);
                 Vec2 q = p0 + dir * s;
                 float b = GetBaseHeight(q.x, q.y, menuTerrain: false);
                 if (b > heightLimit) return false;
@@ -883,6 +918,10 @@ namespace SeedLab.WorldGen
         /// </summary>
         private List<River> PlaceStreams(UnityRandom rnd, bool isDN)
         {
+            PhaseSink? sink = PhaseSink.Current;
+            Phase search = isDN ? Phase.PregenStreams2Search : Phase.PregenStreams1Search;
+            Phase render = isDN ? Phase.PregenStreams2Render : Phase.PregenStreams1Render;
+            sink?.Begin(search);
             (int, int, int, int) saved = rnd.GetState();
             rnd.InitState(m_streamSeed);
             List<River> list = new List<River>();
@@ -908,7 +947,10 @@ namespace SeedLab.WorldGen
                     }
                 }
             }
+            sink?.End(search);
+            sink?.Begin(render);
             RenderRivers(rnd, list, isDN ? RiverAdd.OnlyDeepNorth : RiverAdd.SkipDeepNorth);
+            sink?.End(render);
             rnd.SetState(saved);
             return list;
         }
@@ -922,6 +964,7 @@ namespace SeedLab.WorldGen
         {
             for (int i = 0; i < iterations; i++)
             {
+                PhaseClock.Count(Counter.StreamStartTries);
                 float x = rnd.Range(-10000f, 10000f);
                 float y = rnd.Range(-10000f, 10000f);
                 float h = GetPregenerationHeight(x, y, riverPreGen);
@@ -949,6 +992,7 @@ namespace SeedLab.WorldGen
             float cur = maxLength;
             for (int i = 0; i < iterations; i++)
             {
+                PhaseClock.Count(Counter.StreamEndTries);
                 cur = (float)((double)cur - (double)stepLen);
                 float ang = rnd.Range(0f, 6.2831854820251465f);
                 Vec2 q = start + new Vec2(UMathf.Sin(ang), UMathf.Cos(ang)) * cur;
@@ -999,6 +1043,7 @@ namespace SeedLab.WorldGen
                 float len = Vec2.Distance(river.p0, river.p1);
                 for (float s = 0f; s <= len; s = (float)((double)s + (double)step))
                 {
+                    PhaseClock.Count(Counter.RenderSteps);
                     float t = (float)((double)s / (double)river.curveWavelength);
                     // Three DOUBLE sines multiplied together, one conv.r4 at the end.
                     float off = (float)(Math.Sin(t) * Math.Sin((double)t * 0.634119987487793)
@@ -1041,6 +1086,7 @@ namespace SeedLab.WorldGen
         {
             Vec2i g = GetRiverGrid(p.x, p.y);
             int n = UMathf.CeilToInt((float)((double)r / 64.0));
+            PhaseClock.Add(Counter.RenderCellTests, (long)(2 * n + 1) * (2 * n + 1));
             for (int y = g.y - n; y <= g.y + n; y++)
             {
                 for (int x = g.x - n; x <= g.x + n; x++)
@@ -1096,9 +1142,11 @@ namespace SeedLab.WorldGen
             // The one place a height query reads pregenerated data. A deferred handle pays for
             // pregeneration here, the first time a height (not a BASE height) is asked for.
             if (m_pregenPending) EnsurePregenerated();
+            PhaseClock.Count(Counter.RiverWeight);
             Vec2i g = GetRiverGrid(wx, wy);
             if (g == m_cachedRiverGrid)
             {
+                PhaseClock.Count(Counter.RiverCacheHit);
                 if (m_cachedRiverPoints != null)
                 {
                     GetWeight(m_cachedRiverPoints, wx, wy, out weight, out width);
@@ -1112,12 +1160,14 @@ namespace SeedLab.WorldGen
             }
             if (m_riverPoints.TryGetValue(g, out RiverPoint[]? pts))
             {
+                PhaseClock.Count(Counter.RiverDictHit);
                 GetWeight(pts, wx, wy, out weight, out width);
                 m_cachedRiverGrid = g;
                 m_cachedRiverPoints = pts;
             }
             else
             {
+                PhaseClock.Count(Counter.RiverDictMiss);
                 m_cachedRiverGrid = g;
                 m_cachedRiverPoints = null;
                 weight = 0f;
@@ -1139,6 +1189,7 @@ namespace SeedLab.WorldGen
         /// </summary>
         private static void GetWeight(RiverPoint[] points, float wx, float wy, out float weight, out float width)
         {
+            PhaseClock.Add(Counter.RiverPointsScanned, points.Length);
             Vec2 q = new Vec2(wx, wy);
             weight = 0f;
             width = 0f;
@@ -1208,6 +1259,7 @@ namespace SeedLab.WorldGen
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static float WorldAngle(float wx, float wy)
         {
+            PhaseClock.Count(Counter.WorldAngle);
             return (float)Math.Sin((double)(float)((double)(float)Math.Atan2((double)wx, (double)wy) * 20.0));
         }
 
@@ -1268,6 +1320,7 @@ namespace SeedLab.WorldGen
         /// </summary>
         public static double CreateAshlandsGap(float wx, float wy)
         {
+            PhaseClock.Count(Counter.GapCalls);
             double a = (double)WorldAngle(wx, wy) * 100.0;
             double v = (double)DUtils.Length(wx, wy + AshlandsYOffset) - ((double)AshlandsMinDistance + a);
             v = DUtils.Clamp01(Math.Abs(v) / 400.0);
@@ -1280,6 +1333,7 @@ namespace SeedLab.WorldGen
         /// </summary>
         public static double CreateDeepNorthGap(float wx, float wy)
         {
+            PhaseClock.Count(Counter.GapCalls);
             double a = (double)WorldAngle(wx, wy) * 100.0;
             double v = (double)DUtils.Length(wx, wy + 4000f) - (12000.0 + a);
             v = DUtils.Clamp01(Math.Abs(v) / 400.0);
@@ -1329,6 +1383,7 @@ namespace SeedLab.WorldGen
         private float GetBaseHeight(float wx, float wy, bool menuTerrain)
         {
             if (menuTerrain) return GetBaseHeightCore(wx, wy, menuTerrain: true);
+            PhaseClock.Count(Counter.BaseHeight);
 
             // O2. The one-entry memo. The key is the exact BIT PATTERN of both coordinates, not a float
             // comparison, so a hit can only happen for arguments identical in every bit - and
@@ -1340,7 +1395,11 @@ namespace SeedLab.WorldGen
             // on can change.
             int kx = BitConverter.SingleToInt32Bits(wx);
             int ky = BitConverter.SingleToInt32Bits(wy);
-            if (m_bhValid && m_bhKeyX == kx && m_bhKeyY == ky) return m_bhValue;
+            if (m_bhValid && m_bhKeyX == kx && m_bhKeyY == ky)
+            {
+                PhaseClock.Count(Counter.BaseHeightMemoHit);
+                return m_bhValue;
+            }
 
             float r = PerlinFast.Use8Wide ? GetBaseHeightSimd(wx, wy) : GetBaseHeightCore(wx, wy, menuTerrain: false);
             m_bhKeyX = kx; m_bhKeyY = ky; m_bhValue = r; m_bhValid = true;
@@ -1382,6 +1441,7 @@ namespace SeedLab.WorldGen
             // so |wx|, |wy| < 1e6 is a sufficient, and very slack, precondition; NaN fails the test and
             // takes the scalar path, which is the reference.
             if (!(UMathf.Abs(wx) < 1e6f && UMathf.Abs(wy) < 1e6f)) return GetBaseHeightCore(wx, wy, menuTerrain: false);
+            PhaseClock.Count(Counter.BaseHeightSimd);
 
             float add = 0f;
             float mul = 1f;
@@ -1566,6 +1626,7 @@ namespace SeedLab.WorldGen
                 if (GetBaseHeight(wx, wy, menuTerrain: true) >= 0.4f) return Biome.Mountain;
                 return Biome.BlackForest;
             }
+            PhaseClock.Count(Counter.GetBiome);
             float dist = DUtils.Length(wx, wy);
             float baseHeight = GetBaseHeight(wx, wy, menuTerrain: false);
             // O1. The game evaluates WorldAngle(wx, wy) here, then again inside IsAshlands and again
@@ -1717,6 +1778,7 @@ namespace SeedLab.WorldGen
         public float GetBiomeHeight(Biome biome, float wx, float wy, out ColorRGBA mask,
                                     bool preGeneration = false, bool riverPreDN = true)
         {
+            PhaseClock.Count(preGeneration ? Counter.HeightPregen : Counter.HeightFinal);
             float add = 0f;
             float mult = (!preGeneration)
                 ? (float)((double)GetHeightMultiplier() * CreateAshlandsGap(wx, wy) * CreateDeepNorthGap(wx, wy))

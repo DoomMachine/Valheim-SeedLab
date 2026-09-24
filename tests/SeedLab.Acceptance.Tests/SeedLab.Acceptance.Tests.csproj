@@ -10,6 +10,14 @@
     <ProjectReference Include="..\..\src\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
     <ProjectReference Include="..\..\src\SeedLab.Seeds\SeedLab.Seeds.csproj" />
     <ProjectReference Include="..\..\src\SeedLab.Saves\SeedLab.Saves.csproj" />
+    <!-- The world fingerprint (five SHA-256 layers per seed, placements included) and the location
+         oracle it drives, for the profile-neutrality check. It brings Search, Locations, Data and
+         Contracts with it; the terrain suite itself still uses none of them. -->
+    <ProjectReference Include="..\..\src\SeedLab.LocationOracle\SeedLab.LocationOracle.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The fingerprints of the 64 reference seeds, recorded once with nothing wired to the profiler. -->
+    <None Include="WorldFingerprintReference.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('WorldFingerprintReference.json')" />
   </ItemGroup>
   <PropertyGroup>
     <OutputType>Exe</OutputType>

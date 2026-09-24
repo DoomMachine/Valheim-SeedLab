@@ -6,6 +6,7 @@ using SeedLab.Data;
 using SeedLab.Locations;
 using SeedLab.Search.Locations;
 using SeedLab.WorldGen;
+using SeedLab.WorldGen.Diagnostics;
 
 namespace SeedLab.LocationOracle
 {
@@ -635,10 +636,23 @@ namespace SeedLab.LocationOracle
 
                 // Nothing here is cached across seeds: the generator, the grid contents, the sectors
                 // and the alt-biome assignment are all functions of THIS seed and are all rebuilt.
+                //
+                // The t5.* phase boundaries record into this thread's profiler when one is set and are
+                // one null test each when not. Write-only: nothing below reads them. The grid is built
+                // on this thread (one worker), so its generator calls land in this thread's counters.
+                PhaseSink? sink = PhaseSink.Current;
+                sink?.Begin(Phase.T5Construct);
                 WorldGeneratorPort gen = new WorldGeneratorPort(seed, worldGenVersion, menu: false);
+                sink?.End(Phase.T5Construct);
+                sink?.Begin(Phase.T5Grid);
                 BiomeGrid grid = BiomeGrid.Build(gen, 1, _biomes, _heights);
+                sink?.End(Phase.T5Grid);
+                sink?.Begin(Phase.T5Field);
                 BiomeField field = BiomeField.Build(grid);
+                sink?.End(Phase.T5Field);
+                sink?.Begin(Phase.T5Alt);
                 AltBiomeAssignment.Generate(field, _alts, seed);
+                sink?.End(Phase.T5Alt);
 
                 _hits.Clear();
                 List<LocationHit> hits = _hits;
@@ -659,13 +673,18 @@ namespace SeedLab.LocationOracle
                     };
                 }
 
+                // A gate's own harvests happen inside the placement and count as t5.place; t5.harvest is
+                // the final harvest and the copy handed back.
+                sink?.Begin(Phase.T5Place);
                 PlacementResult res = LocationPlacementEngine.Run(gen, field, _table, new PlacementOptions
                 {
                     StopAfterOrderedIndex = plan.PrefixLength - 1,
                     AltBiomesComputed = true,
                     ContinueAfterType = hook,
                 });
+                sink?.End(Phase.T5Place);
 
+                sink?.Begin(Phase.T5Harvest);
                 stoppedAfter = res.StoppedEarly;
                 Harvest(res.Instances, ref copied, hits, wanted);
 
@@ -684,9 +703,11 @@ namespace SeedLab.LocationOracle
                 }
 
                 // A copy, because the worker's list is about to be reused for the next seed.
-                return new LocationWorld(hits.ToArray(), hasSpawn, sx, sz,
-                                         stoppedAfter != null, stoppedAfter?.PrefabName,
-                                         res.LastOrderedIndexRun);
+                LocationWorld world = new LocationWorld(hits.ToArray(), hasSpawn, sx, sz,
+                                                        stoppedAfter != null, stoppedAfter?.PrefabName,
+                                                        res.LastOrderedIndexRun);
+                sink?.End(Phase.T5Harvest);
+                return world;
             }
 
             /// <summary>

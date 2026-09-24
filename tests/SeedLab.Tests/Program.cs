@@ -38,6 +38,10 @@ namespace SeedLabTests
             // separate, sub-second suite: dotnet run --project tests\SeedLab.Tests -- natives [--verbose]
             if (args.Length > 0 && args[0] == "natives") return NativesGoldens.Run(args);
 
+            // PT1: generator code writes the profiler and never reads it - an IL-level check, seconds:
+            // dotnet run --project tests\SeedLab.Tests -c Release -- profile-tripwire
+            if (args.Length > 0 && args[0] == "profile-tripwire") return ProfileTripwire.Run(args);
+
             string world = (args.Length > 0 && !args[0].StartsWith("-")) ? args[0] : "asdasdasd";
             int seed = world switch
             {
