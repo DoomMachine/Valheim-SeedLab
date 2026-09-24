@@ -20,7 +20,8 @@ or unclear matters should be asked as opposed to assuming"*.
 
 Contents: 0. The measured facts · 1. Result bounding · 2. At the ceiling · 3. Location searches ·
 4. Slices · 5. Segmented output · 6. Sampling · 7. Resource modes · 8. GPU · 9. Goal model ·
-10. Cost transparency · 11. Must-fix defects · 12. GUI parity
+10. Cost transparency · 11. Must-fix defects · 12. GUI parity · 13. Server lifecycle ·
+14. Two session logs · 15. Performance direction · 16. Future work
 
 ---
 
@@ -208,3 +209,78 @@ explicit flag to accept first-N-in-scan-order.
 operations."* Every flag, mode, sampling option, strategy, bound, rotation setting, estimate, warning
 and confirmation above must be reachable and legible in the web UI, mapping onto the **same query JSON**
 as the CLI, so the two are the same thing.
+
+## 13. The web server's lifecycle (decided 2026-09-24)
+
+The user: *"I don't find it prudent to have something permanently running"*, then, after the exact meaning
+of Ctrl+C was explained to them, **"On the server-stop design - confirming the proposal"**:
+- `vseed serve` runs in its own visible console window titled "SeedLab web server" (never hidden, never a
+  service, never started at login), which prints what it is and how to stop it. The Windows one-click file
+  opens it in a new window of its own, so Ctrl+C and closing reach vseed alone.
+- **Stop SeedLab on the page**: a first dialog says what stopping does; if a search is running, a SECOND
+  warning names it and says what stopping costs (the finished part is saved; the resume command is shown).
+- **Idle reminder, never an automatic stop**: after 60 minutes with no user activity (the page's own polling
+  does not count; a running search does) the page, and the server window, suggest stopping it, with the
+  option to do so; ignored or "Keep running" starts another 60 minutes, and so on.
+- **Scripts and commands**: `vseed serve --stop` (asks when a search is running; `--yes`; `--force` after an
+  unanswered request) and `vseed serve --status`, behind the Windows and macOS/Linux scripts.
+- **Ctrl+C only counts in the server's own console window**, and only twice within 10 seconds; the first
+  press stops nothing and says what is running. Closing the window (which cannot be refused) saves a running
+  search's checkpoint before the process ends.
+- A second `vseed serve` opens the browser at the running one instead of failing.
+
+## 14. The session log: exactly two files (decided 2026-09-24)
+
+*"This should have a total of two logs - a current log, and a last session log. That way, we can retain
+information, but not a lot of information, and there can be redundancy in case of issues."* At the start of
+every session that starts a runtime, `vseed.log` becomes `vseed-prev.log` (replacing the older one) and a
+fresh `vseed.log` is written, BepInEx-style (the user's model: `BepInEx\LogOutput.log`, rewritten each game
+start). A vseed started while another runs writes `vseed.log.1` (to `.4`), removed at a later start.
+
+## 15. Performance direction (discussed 2026-09-24)
+
+Measured, not assumed (`docs\measurements.md`): the wall-clock limit is the per-seed work the game's own
+algorithms demand x 4.29 billion seeds, under bit-exactness; hardware sets the multiplier (16 threads = ~10.8x
+one thread on the 9800X3D). **The language stays C#**: the hot code is scalar IEEE double arithmetic that
+must round exactly as the game does, so .NET emits what C++/Rust would; C# SIMD already gave 6.03x bit-exactly.
+Agreed next steps, in order: (1) profile the fixed per-seed costs (river pre-generation ~150-180 ms; the
+location world build ~1.1 s, nearly independent of how many types are placed); (2) SIMD where the profile says
+it matters, AVX-512 first, each path proven bit-exact; (3) a **seed atlas** - precompute cheap per-seed features
+once, store them losslessly (grid measurements are integers; the seed is the row), columnar, chunked and
+compressed with built-in .NET codecs, with per-chunk min/max so a query skips chunks, and query it on demand;
+(4) a **20,000-seed pilot** first, to check atlas answers against live search, measure bytes per seed and the
+compression ratio, and profile. GPU stays an approximate screening idea only (section 8).
+
+**The pilot, decided by the user (2026-09-24)** from the merged design (section 16 of the author's working
+notes, which are not in this repository): atlases live in **a folder the user names** - never the cache root, which `vseed clean` may empty -
+and the pilot's in a staging folder on the author's machine; the pilot stores **all 183** location types (not the 67 the
+presets use); it builds in **`--mode full`**; and it runs the **required tier and the overnight tier** (~8-10 h
+plus ~12 h of atlas-vs-live comparison over all 20,000 seeds), on a quiet machine, on a night the user chooses.
+The design's recommendations stand for the rest: `--atlas` never changes which seeds a command visits (explicit
+key/seeds), atlas builds are CLI-only in v1, screen false negatives are kept and named, no provenance field on
+records, non-FMA3 CPUs stay fail-closed, and the profile decides whether scalar speed-ups or AVX-512 come first.
+
+## 16. Future work the user has asked to be planned (2026-09-24)
+
+- **Seed pickers, GUI and CLI**: a *truly random* picker when a range is chosen (toggleable), and a
+  *sequential from 0* picker (toggleable); **the default stays the current keyed shuffle** (a 4-round Feistel
+  permutation keyed from the query's hash - reproducible, no repeats, `--seeds 1000` extends `--seeds 500`).
+  Open, for the user: the query's `name` is part of that hash, so renaming a query changes its sample.
+- **CPU compatibility**: Intel and AMD x64 consumer and workstation CPUs released **2015-2026+**. Every SIMD
+  path dispatches at run time (AVX-512 where the runtime accelerates it, else AVX2, else scalar - CPUs of that
+  era without AVX2 exist, such as low-end Pentium/Celeron/Atom parts) and is proven bit-exact on each level on
+  this machine by switching the upper levels off (`DOTNET_EnableAVX512=0`, `DOTNET_EnableAVX2=0`; corrected
+  2026-09-24: `DOTNET_EnableAVX512F` does not exist in the installed .NET 10.0.12 runtime - a test must assert a
+  switch's EFFECT, e.g. `Avx512F.IsSupported == false` in the child, never trust its name). Not
+  testable here: whether the C runtime's `sin/cos/pow` pick CPU-specific code on other processors (the
+  per-machine self-test fails closed if they do), hybrid P/E-core Intel parts (12th gen+) where equal-size
+  blocks meet unequal cores, and arm64. Evidence from other real CPUs is still needed.
+- **Intel SDE (Software Development Emulator) - APPROVED by the user, deferred** (*"Log the SDE for Intel as a
+  future task - it is approved, just not now"*, 2026-09-24): run SeedLab's self-test and fingerprints on this
+  machine as if on older/newer Intel CPUs (Haswell, Skylake, Ice Lake, Sapphire Rapids, ...) to exercise the
+  instruction-set dispatch and any CPU-specific C-runtime math paths. The download is approved; timings under
+  emulation mean nothing.
+- **A machine report for testers without Valheim** (asked 2026-09-24): a downloadable, self-contained package
+  another person can run on an Intel Windows PC with no game and no .NET installed: CPU facts .NET sees, the
+  machine self-test, world fingerprints at each instruction-set level compared with this PC's, a short timing
+  run - hardware and OS version only, nothing personal - and no game data in it (Iron Gate's content).

@@ -11,6 +11,30 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
 
 ## 1. Process
 
+- **A session's scratchpad lives in `%LOCALAPPDATA%\Temp`, and the user clears Temp** (2026-09-24, before
+  closing Claude Code). Two long sessions had left 50 critical items only there, 184 more entries were cited as
+  evidence, and about 15 durable citations already pointed at files that had been overwritten or deleted.
+  - **The critical items:** design documents, decisions, the only copies of the mutation drivers and the
+    release scanners.
+  - **A dead citation:** `wg.txt:924` was overwritten with a different dump three days later.
+  - **A deleted folder:** a live session removed a folder while it was being triaged.
+
+  The rescue is in `_ModSource\_retired\scratchpad-rescue-20260924\` (README, a re-runnable `rescue-copy.py`, a SHA-256 manifest).
+  **Instead:**
+  - put a tool that a checklist relies on into a skill's `scripts\` folder when it is written;
+  - put a design document or a decision into the repository's docs or the KB before the session ends;
+  - write every fact itself into the KB, citing a scratchpad file only as supporting evidence;
+  - never overwrite a scratch file that something cites, and write new output to a new name.
+- **What is installed, released or armed changes while you work - check the disk, not the knowledge
+  base.** Two sessions share this game folder (SeedLab's and TomTom's). On 2026-09-24 the knowledge base
+  said the SeedLab dumper was uninstalled; the other session had reinstalled and armed it hours earlier, and
+  an agent's "live install not updated" was stale an hour after it was written because the build was then
+  deployed. Before stating what is in `BepInEx\plugins`, what is live or what a release holds, look (plugins
+  folder, `LogOutput.log`, GitHub), and date what you record.
+- **A rule the user chose must be tested against its own wording, not against the code that claims to
+  implement it.** Delete precedence (a), "a marker of ours within reach always wins", passed a 73-agent
+  review because the verifiers tested the patch's default logic; one layout (a saved pin, a followed pin and
+  a mod marker at increasing distances) showed a player's pin being deleted. Build the concrete scenario.
 - **Verify game facts against the shipped DLLs, never from memory.** Training data about Valheim is
   years stale for this build (Unity 6, new Input System, `AddPin` gained a `PlatformUserID` argument).
   `scripts/decompile.ps1` settles most questions in seconds.
@@ -47,7 +71,31 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   readout that defeated Wayfinder). Review compiled output, not just source.
 - **Test the tripwire, not just the code.** A safety check that has never failed is unproven: break the
   build on purpose (without deploying) and confirm the check fires. Same for detectors like
-  `check-game-version.ps1`.
+  `check-game-version.ps1`, and for unit tests (next entry).
+- **A test can pass for the wrong reason - plant defects to find out which.** TomTom 1.1.1's "refuses
+  while the only copy is locked" still passed with the rename-back fix removed, because Windows refuses
+  every write to an exclusively held file anyway (2026-09-24 re-check). The proof added then was not enough
+  either: **a held handle cannot tell "renamed back" from "deleted".** On this Windows 10 NTFS, `File.Delete`
+  of a file held open with `FileShare.Delete` frees the name at once and the handle keeps reading the old
+  bytes, so "the held handle still reads the original" also passed with the survivor deleted; it proves only
+  that the file was never opened for writing. **Mutation testing** found this and more: 45 mutants of
+  `SafeFile.cs`, planted one at a time and run on .NET and on Mono (identical kill matrix), left **14
+  surviving a suite that looked complete**, nine of them real regressions (the TomTom project's own history,
+  `2a63e30` entry). What made the checks discriminate:
+  - **Prove an ordering by making the next step fail deterministically**, then assert the earlier state is
+    intact. A *directory* squatting on the target name does it: `File.Exists` is false for it, and a
+    `FileStream` or `File.Move` onto it throws on .NET and on Mono.
+  - **Prove "renamed, not rewritten"** by setting `File.SetLastWriteTimeUtc` to an old stamp first: a rename
+    keeps it, a rewrite does not.
+  - **An exception can escape the check it was meant to fail.** Against a writer that opens with
+    `FileShare.None`, the planted "no rename-back" defect showed only as an `IOException` caught by the test
+    method and reported as `FAIL SafeFile tests`, not as the check's own FAIL. Catch inside the check and
+    report the exception under the check's name, or read the last `ok` line before the failure.
+  - Keep the kill matrix (mutant x runtime x the check that killed it) and give every survivor a reason:
+    after the fix 39 of 45 fail a named check; the six left are flush durability, equivalent mutants and a
+    race, none visible to a unit test.
+  (Correction, 2026-09-24: this entry advised a `FileShare.ReadWrite | FileShare.Delete` lock plus "assert
+  that the held handle still reads the original" as the proof; it is not one.)
 - **A Mono.Cecil safety scan that walks `ModuleDefinition.Types` is blind to most of the code.**
   That property lists only TOP-LEVEL types; every iterator body (`<Run>d__0`) and every capturing
   lambda (`<>c__DisplayClass7_0`) is a NESTED type. In the SeedLab dumper this hid 33 of the shipped build's 59 types (26 top-level, 33 nested; 34 of 61 after the 2026-09-23 fixes - the count moves with every build, so the preflight prints it rather than asserting it) -
@@ -133,6 +181,14 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   `MinimapAccess.GetClosestOwnedWaypointPin` checked first). When the user picks a rule, verify the code
   against that exact wording on a concrete multi-pin layout (own marker, followed pin and saved pin at
   different distances from the pointer), not against the patch's description of itself.
+- **Killing the process does not tear a single large write, so a crash-safety test must build the
+  power-loss states itself.** In TomTom 1.1.1's re-check (2026-09-24), 16 of 16 kills during one 7.8 MB
+  `FileStream.Write` left a complete file. That was observed, not guaranteed. Partial files come from power
+  loss, so write those states to disk directly (a truncated `.new`; the main file missing with only `.new` or
+  `.old` left) and test recovery from each. To land kills *inside* a rename sequence, use small files and a
+  `Stopwatch` spin-wait spread across the sequence's measured duration; `Thread.Sleep`'s granularity steps
+  right over it. The re-check's 200 spin-timed kills per runtime reached every intermediate state
+  (the TomTom project's own history, v1.1.1 entry).
 
 ## 2. Shell and file tooling
 
@@ -187,6 +243,9 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   **Not only heredocs** (2026-09-24): a `sed -i` replacement string and a `python -c "..."` argument lose
   the same level (`\r`, `\n`, `\\p` ...). The scan above works only because it contains no backslash. Any
   script or replacement that contains a backslash goes into a file written with the Write tool first.
+  **And do not work around it with a printable placeholder** (2026-09-24): a script that wrote `~` for a
+  backslash and ran `.replace("~", "\\")` also rewrote a `~` meaning "about" in the prose, publishing
+  `\15 lines` in two knowledge-base files. Build backslashes with `chr(92)` in a script written to a file.
 - **PowerShell variable names are case-INSENSITIVE, so `$P` and `$p` are one variable.** This broke a
   measurement harness three separate times on 2026-09-23: `$Bin = <dir>` then `foreach ($f in $bin)`
   wiped the directory path; `$P = <out dir>` then `foreach ($p in $list)` did the same; and a helper
@@ -217,6 +276,28 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   but the counter gave no way to see that, and the disagreement wasted time. **Sum per-process
   `TotalProcessorTime` deltas over a fixed interval, excluding the `Idle` process** (include it and
   you "discover" ~16 cores of load). That is also what identifies *which* process to go and stop.
+- **Temp-then-rename onto a file another process has open fails - whatever share mode the reader
+  used - with a message that names no file** (measured 2026-09-24, .NET 10, Windows 10 NTFS, SeedLab's
+  "Access to the path is denied" checkpoint failure). `File.Move(tmp, dest, overwrite: true)` threw
+  `UnauthorizedAccessException` 0x80070005 "Access to the path is denied." against a separate process
+  holding `dest` with every share mode tried, **including `ReadWrite | Delete`** - so asking readers to
+  open "politely" does not help. A read-only attribute and an ACL denial throw the identical type,
+  HResult and path-less message. `File.Replace` does tell them apart (sharing -> `IOException`
+  0x80070020; read-only -> 0x80070005) and succeeds against `Delete`-sharing holders, but not against
+  `File.ReadAllText`-style readers. Against a separate process polling the file every 50 ms, 0.3-0.4 %
+  of saves failed, and **every one recovered by retrying only the move after 10 ms** (the `.tmp` is
+  intact). So: retry the rename with short back-off, and only after the retries run out, diagnose
+  (read-only attribute? open for write -> sharing violation? -> permission) and say the file's name
+  yourself. A check at start-up cannot predict a reader that appears later. Also:
+  `File.Delete` of a held file throws `IOException` 0x80070020 unless the holder shares `Delete`, and
+  a `Delete`-then-`Move` "replace" can lose the file when the move then fails.
+- **`git commit -m` with a multi-line message containing double quotes, from Windows PowerShell 5.1,
+  splits into pathspecs** ("error: pathspec 'writes' did not match any file(s)"): 5.1 does not escape
+  embedded quotes for native programs. Write the message to a file and use `git commit -F <file>`.
+- **WebFetch gets HTTP 402 from valheim.fandom.com** (2026-09-24, SeedLab run-6 name cross-check). The
+  MediaWiki API answers a plain `curl`:
+  `https://valheim.fandom.com/api.php?action=parse&page=<Title>&prop=wikitext&format=json` returns the
+  page source, whose `{{Infobox_location}}` carries the `id=` a prefab can be matched on.
 
 ## 3. Build
 
@@ -290,6 +371,9 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   a 3-parameter `AccessTools.Method` sits 21 instructions after its `ldstr` (19 under Roslyn). TomTom's
   preflight used a 20-instruction window and would have missed it; it uses 40. Test a Cecil scan against
   the output of **every** compiler that can build the plugin (`MinimapAccess.Init`, 2026-09-24).
+- **A comment-only edit still changes a DLL's SHA-256** - the portable PDB's ID is embedded in the
+  assembly. To prove "comments only", build before and after with `-p:DebugType=none` and compare those
+  hashes (SeedLab dumper and contracts, 2026-09-24: byte-identical that way).
 
 ## 4. Game code and Harmony
 
@@ -487,8 +571,15 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   but flush a dirty queue to its own world, ignoring the back-off, before loading or clearing for the next
   world. For crash safety copy the game's own pattern, `FileHelpers.ReplaceOldFile` (assembly_utils, used
   by `PlayerProfile.SavePlayerToDisk`): write `<file>.new` (`FileWriter.Finish` flushes it to disk), delete
-  `.old` if present, move the file to `.old`, move `.new` into place. TomTom 1.1.0 does all of this except the
-  crash-safe replace, which stays report-only (the TomTom project's own history, 2026-09-24).
+  `.old` if present, move the file to `.old`, move `.new` into place. TomTom 1.1.0 did all of this except the
+  crash-safe replace; **1.1.1 added it** (`SafeFile`; the TomTom project's own history, 2026-09-24). The replace
+  has data-loss paths of its own, and 1.1.1's first draft had two of them. **Recover an interrupted save by
+  renaming the surviving `.new`/`.old` back, never by marking the data dirty and rewriting it:** a survivor
+  that could not be read (held open by a backup tool) was rewritten as an empty file and both copies were
+  deleted. **Never open `.new` for writing while the main file is missing:** the survivor may be that very
+  `.new`, and `FileMode.Create` truncates the only complete copy. Rename the survivor back first, and retry
+  later if that fails. (Correction, 2026-09-24: this entry said TomTom's crash-safe replace "stays
+  report-only".)
 
 ## 9. Reading decompiled game code and game data
 
@@ -726,6 +817,11 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   reads exactly like a count with one. Treat a byte-pattern census as evidence that *at least* N
   exist, mark it **Unverified:** for the total, and settle it at runtime. (Corrected 2026-09-22 when
   the dumper's `altbiomes.json` landed.)
+- **A component a prefab carries is not a component the player can use: check it is active.** Run 6 of
+  the SeedLab dumper found `DN_Bossroom` carrying a `Teleport` whose caption `$location_dnbossroomnew`
+  ("The Prison") would have renamed the place - but the door is inactive in the prefab, and nothing in the
+  dump says what enables it. A naming rule counts only a door that is active in the hierarchy, has a
+  `m_targetPoint` and a non-empty caption (2026-09-24).
 
 ## 10. Offline tools, CLIs and the local web UI
 
@@ -970,13 +1066,14 @@ overloads** where the `GameObject` one is a single forwarding call to the `strin
 preflight now probes a non-existent overload and requires the check to fail rather than fall back to
 one that exists.
 
-## A dump's own timestamp is UTC, so its files can carry a different date than its stamp (2026-09-23, SeedLab)
+## A dump's own timestamp is UTC, so its files can look a day newer than its stamp (2026-09-23, SeedLab)
 
 `SeedLab.Dumper`'s `GameInfo.Stamp` writes `dumped={DateTime.UtcNow:yyyy-MM-dd}` into the DATA-STAMP
-of every file it produces. A run near local midnight falls on different calendar days in UTC and in
-local time, so a stamp's `dumped=` date and the local mtimes of the files it stamps need not agree -
-and reading the two as one clock produces conflicting histories of "when the dumper ran", even the
-conclusion that there were two runs.
+of every file it produces. On this machine (UTC+3) a run at **01:48 local on 2026-09-23** is
+**22:48 UTC on 2026-09-22**, so the shipped `data\1.0.15-59f53fb5\` says `dumped=2026-09-22` while
+every file in it carries a local mtime of 2026-09-23 01:49. Two agents then wrote two different
+histories of "when the dumper ran" from the same evidence, and a third concluded there had been two
+runs.
 
 **A date in a stamp and a date in a file listing are in different clocks; say which.** The identity
 of a dump is its two SHA-256s (`assembly_valheim.dll` and the file's own), never its date - and

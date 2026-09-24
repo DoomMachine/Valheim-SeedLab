@@ -4,7 +4,52 @@ Newest first. Each entry says what changed, why, and how it was verified. Game f
 discovered are recorded in the valheim-worldgen / valheim-modding references and only pointed at from
 here.
 
-## 2026-09-24 (latest) - a block for every worker, and what a budget really bounds
+## 2026-09-24 (latest) - funnel stage 2 checkpoints where it was told, and `World..ctor` explained
+
+**The defect (a follow-up of the block-size change, the user asked for it fixed).** Both front ends
+built funnel stage 2 with a bare `SearchSession.Create`, which named its checkpoint from
+`CheckpointStore.Root` - a second, hard-coded `%LOCALAPPDATA%\SeedLab\checkpoints` that ignored
+`--cache-dir`, `SEEDLAB_CACHE_DIR` and (in the CLI) `--checkpoint`, while stage 1's survivor list,
+named from the run's own path, honoured them. `vseed serve` never passed its runtime to the server, so
+the server started a second `RuntimeContext` with none of the global options: `--cache-dir` reached
+neither the tile cache nor any web checkpoint, and the process ran two throttles, two reaps and two
+self-tests.
+
+What changed:
+- `SearchSession.Create` takes `checkpointDirectory` (both front ends pass their runtime cache root's),
+  carried through the grid-raise recursion; `SearchSession.ForSurvivors` builds stage 2 and KEEPS the
+  session's checkpoint path, so it cannot be lost again on either front end. `CheckpointStore.Root`
+  resolves through `CacheRoot` (`Create = false`) and is only a library fallback; `DefaultPath` is gone
+  (`PathIn(dir, hash)`); `CleanOrphans` tidies the run's own directory.
+- `vseed serve` passes `Runtime = rt.Context` (also for `--selftest`'s live server): one runtime per
+  process, disposed once by `CliRuntime`. Its help no longer says "It writes nothing".
+- **Migration** (`CheckpointStore.AdoptLegacyStageTwo`): on a funnel `--resume`, when the run's own path
+  has no checkpoint and differs from the old fixed one, a file at the old location that passes the same
+  `Load` + `MustMatch` a file at the new path must pass is moved (snapshot copied, checkpoint written at
+  the new path naming the copy, then the legacy pair deleted) with a notice; anything else is left
+  untouched and said. The legacy path is a parameter, so the tests never touch the real
+  `%LOCALAPPDATA%`.
+- The sample-vs-funnel rule: stage 2 now always checkpoints at the run's path, so a SAMPLE run's
+  checkpoint of the same plan there is always refused before anything runs (it used to be a warning and
+  "left as it is" outside the default layout).
+- **`World..ctor`, explained for non-programmers (the user's request).** The README explains it where a
+  reader first meets it (after the `vseed seed` sample): the real name of the game's `World` constructor
+  - `.ctor` is .NET's name for every constructor, hence the two dots - not a typo or a truncation. Every
+  `vseed` message that shows the name now reads "the game's World constructor (World..ctor)"
+  (`vseed seed`, `vseed hash`, `vseed space`, the int32 warning, the selftest row V1b). Developer text
+  (code comments, `docs\specs`) keeps the bare name.
+
+Verified: `SeedLab.Search.Tests` **354/354** (section 14, 33 new checks: a real CLI funnel stopped in
+stage 2 under `--cache-dir` and resumed from there, a web funnel through `vseed serve --cache-dir`,
+serve's cache line, and the move - adopted and resumed byte-identical to an uninterrupted run; another
+survivor list's file, a sample's file and an unreadable file left byte-identical), `SeedLab.Runtime.Tests`
+**125/125**, Acceptance **32/32**, `vseed selftest` 13 ok; proofs refuse/policy/blocks exit 0;
+`vseed serve --selftest --cache-dir <scratch>` all PASS. Every run used scratch cache roots.
+
+Committed as `f48e682` (stage 2 / serve) and `83d2f16` (`World..ctor`); pushed on 2026-09-25 with the rest of that
+day's work.
+
+## 2026-09-24 - a block for every worker, and what a budget really bounds
 
 **The defect (reported by the user).** `vseed search <query> --seeds N` with N below workers x block
 size left workers idle: one worker computes a whole block and the size was a fixed 256, so `--seeds
@@ -86,15 +131,22 @@ fresh `--block-size 7` funnel. `proof estimate` reports 1 estimator violation, a
 change does.
 
 Follow-ups, not in this change:
-- Funnel stage 2 still checkpoints in the default cache root whatever `--cache-dir` or
-  `SEEDLAB_CACHE_DIR` says (CLI and web), and `vseed serve` ignores `--cache-dir`; moving the path needs
-  a migration for the stage-2 checkpoints that exist.
+- **Fixed the same day** (entry above): funnel stage 2 checkpointed in the default cache root whatever
+  `--cache-dir` or `SEEDLAB_CACHE_DIR` said, and `vseed serve` ignored `--cache-dir`; stage 2 now keeps the
+  run's path, serve shares the command's runtime, and old stage-2 files are moved on `--resume`.
 - A resumed leg's report puts cumulative "seeds evaluated" beside this leg's rate; the web planner
   ignores the `SearchThreads` ceiling; the page keeps stage 2's placement rate as the machine's.
 - The example in `schema.md` is refused by `vseed explain` (it sets `reduce` with no segments).
 - Observed while testing, present before this change: a checkpoint save fails with "Access to the path
   is denied" while another process holds the checkpoint file open (a harness polling it every 50 ms
   triggered it); a virus scanner or file viewer could do the same to a real run.
+- **Done (2026-09-25): the published knowledge-base copies were behind (2026-09-24).** `valheim-modding\references\pitfalls.md`
+  has changed since the repo copy was last committed (`8eee037`, 1371 lines vs 1385 at 16:10 and 1424 after
+  the `2a63e30` lessons). Today's publishing lessons came first, then TomTom 1.1.1's in sections 1 and 8, then TomTom
+  `2a63e30`'s test lessons in section 1 (a new entry, "A test can pass for the wrong reason", which corrects
+  the held-handle advice). Refresh the repo's
+  `.claude\` copies and re-run the scrub checks before the next push ("republished clean" entry below). Refreshed and
+  re-scrubbed before the 2026-09-25 push; the rule stands for every later push.
 
 ## 2026-09-24 - grid warnings only for goals the grid measures
 
@@ -169,35 +221,41 @@ Follow-ups, not in this change:
   never reach the warnings.
 - The CLI's `--budget` does not set `search.budget.wall`, so it does not trigger the seed clause.
 
-## 2026-09-24 - republished clean, with credits, standalone tools and these skills
+Published as commit `c53c58b` on github.com/DoomMachine/Valheim-SeedLab.
 
-**The first publication was withdrawn the same day.** A spec quoted a save's player-history entry with
-the author's full SteamID64, three Steam Cloud paths carried the Steam account ID, and agent-session
-scratch paths had been published. The user deleted and recreated the repository, and the scrubbed
-project was pushed as one commit on the user's new "Initial commit" - no history containing the IDs
-exists on GitHub (the old commit answers "No commit found").
+## 2026-09-24 - republished clean: the first push leaked a Steam ID
 
-What the publication pass did, to the user's own standard (keys and IDs removed completely; machine
-details other than hardware and the OS version scrubbed; time zones are not sensitive):
-- **Credits** at the end of the root README (conceived, directed and tested by DoomMachine; code, tests
-  and docs written by Claude in Claude Code; commits authored by DoomMachine alone), a credit line in
-  every other README, and `THIRD-PARTY-NOTICES.md` (FastNoise, MIT; Valheim non-affiliation).
-- **Standalone tools**, so no instruction points outside the repo: `tools\check-game-version.ps1`
-  (exit 0 match, 1 nothing to compare/error, 2 the game changed, 3 game not found) and
-  `tools\decompile.ps1` with `tools\decompiler\` (the installed ILSpy's engine, or ilspycmd; its output
-  for `Teleport` is identical to the knowledge base's decompile).
-- **These skills and the research agent** published under `.claude\` (seedlab, valheim-worldgen, the
-  core of valheim-modding, valheim-api-investigator), scrubbed; left out: the history archive, the
-  author's installed-mods list, the knowledge-base changelog, the curator and reviewer agents, the
-  TomTom skill and the workspace's own instructions file. **They are a snapshot of the author's working
-  knowledge base** and must be refreshed (and re-scrubbed) when that changes.
-- `testworldclaude` keeps its name (stored inside the game's own save; the gates look it up by name);
-  the README's hold-out claim now says exactly what was and was not tuned against it.
-- Verified: an independent scan of all 386 published files found 0 IDs, 0 occurrences of the author's
-  name and 0 session paths; the CLI and web build; `SeedLab.Search.Tests` 168/168;
-  `tools\check-game-version.ps1` exit 0. Deferred until the dumper is retired: comments inside
-  `tools\SeedLab.Dumper\src` and `src\SeedLab.Contracts` that name the knowledge base's scripts (every
-  such reference resolves inside this repo).
+**What went wrong with the first push (entry below).** Its scan looked for the user's name, email and
+secret patterns, not for game and platform IDs: `docs\specs\05-validation.md` quoted a save's
+player-history entry with the user's full SteamID64 and PlayFab id, three spec paths carried the Steam
+account ID inside `...\steam\userdata\<id>\...`, and 1,193 agent-session scratch paths (with the session
+UUID) were in `docs\measurements.json`. A publication audit (4 auditors + critic) found them. The user
+chose to delete and recreate the repository rather than add a fix commit; GitHub then answered "No
+commit found" / HTTP 422 for the old commit. The recreated repo's own "Initial commit" (`3ce22f6`, LICENSE
+only) was kept, and the scrubbed project pushed on it as `3c4b214` (fast-forward, no force). Contributors:
+DoomMachine only.
+
+**The user's standard:** credit Claude properly in the
+READMEs (never as a co-author); no instruction may point outside the repo (scripts ship standalone, no
+reference to Claude); keys and IDs removed completely; machine details other than hardware and the OS
+version scrubbed; time zones are NOT sensitive; "IP" means IP address (decompiled excerpts may stay).
+
+**What the pass shipped:** Credits section + a credit line in every README; `THIRD-PARTY-NOTICES.md`
+(FastNoise MIT, text fetched from github.com/Auburn/FastNoise_CSharp; Valheim non-affiliation);
+`tools\check-game-version.ps1` (exit 0/1/2/3) and `tools\decompile.ps1` + `tools\decompiler\` (the
+installed ILSpy's engine first, ilspycmd second; `Teleport` output identical to this skill set's own
+decompile); scrubbed copies of the seedlab, valheim-worldgen and core valheim-modding skills and the
+api-investigator agent under the repo's `.claude\`. **Those copies are a snapshot of this knowledge
+base**: when these files change, refresh the repo copies and re-run the scrub checks (the standard
+above) before the next push. Hold-out claim corrected in README/docs/tests; the
+publication agents also fixed stale scratchpad citations to the published `docs\studies\` copies,
+`gen_schema.py`'s hard-coded root, `preflight.ps1`'s hard-coded game path, and "this 8-core machine"
+in a runtime string. Deferred until the dumper is retired: comments in `tools\SeedLab.Dumper\src` and
+`src\SeedLab.Contracts` naming knowledge-base scripts (all resolve inside the repo now).
+
+**A trap worth remembering:** the first review agents were derailed by a user message that arrived
+mid-workflow (the `World..ctor` question): five of six declined their task as "not the user's
+request". Workflow prompts now open with an explicit MANDATE paragraph quoting the user's request.
 
 ## 2026-09-24 - SeedLab is a git repository, public on GitHub
 
@@ -1029,8 +1087,7 @@ mismatches on both, and heights bit-identical as binary16 on all but 5 and 9 pix
 the process, including the claim that Unity's managed `Vector2` members compute in single precision.
 
 The BepInEx dumper (`tools\SeedLab.Dumper`) was written, reviewed twice and run in the live game on
-2026-09-22 - and again for the natives and world-generator dumps (its DATA-STAMP date is UTC, so it
-need not match its files' local dates; see "The dumper's real state" below).
+2026-09-22 - and again on 2026-09-23 (01:47-01:50, the natives and world-generator dumps).
 **Correction, 2026-09-23:** it was **not** removed afterwards, as the project README says; it is still
 installed in `BepInEx\plugins\DoomMachine-SeedLabDumper` and still armed by a `dumper.enable` file
 (SKILL.md, "The dumper, and its current state"). It is main-menu-only, refuses to run with peers connected, restores every
@@ -1724,8 +1781,8 @@ a command, and rewrote the docs against what it saw.
 
 ### The measurement pass (all of it in the project's `docs\measurements.md`)
 
-Machine idle (CPU 1.0-3.7 %, Valheim not running, ten idle `dotnet` build servers resident),
-each row one real run's own `measured rate`, at the shipped default `--mode balanced`
+Machine idle (CPU 1.0-3.7 %, Valheim not running, ten idle `dotnet` build servers resident), binary
+built 10:52, each row one real run's own `measured rate`, at the shipped default `--mode balanced`
 (8 of 16 logical cores): one biome goal in a 1 km disc **2,046 seeds/s** (whole space 24.3 d);
 `mountain-home` **1,736** (28.6 d); `balanced-biomes` **38.7** (3.5 y); `coastal-builder` **19.5**
 (7.0 y); `gentle-start` **7.3** (18.6 y); `all-traders` **5.7** (23.9 y); `archipelago` **5.6**
@@ -1784,12 +1841,12 @@ since this pass owned only the documentation.
 ### The dumper's real state, with its evidence
 
 The README said the dumper was "run once on 2026-09-22 and then removed". Half of that is wrong and
-the other half is a matter of clocks: `BepInEx\plugins\DoomMachine-SeedLabDumper\` still holds both DLLs and a
+the other half is a timezone: `BepInEx\plugins\DoomMachine-SeedLabDumper\` still holds both DLLs and a
 `dumper.enable` containing `all`, and `BepInEx\LogOutput.log` records the session
 (`SeedLab.Dumper 1.0.0 is ARMED in mode 'all'` -> two `DONE` lines). The shipped files in
-`data\1.0.15-59f53fb5\` carry local mtimes, while their DATA-STAMP's `dumped=2026-09-22` is a UTC
-date (`GameInfo.Stamp` writes `DateTime.UtcNow`), so the two need not agree. Both dates describe one
-run. The two SHA-256s, not the date, are what identify the build.
+`data\1.0.15-59f53fb5\` carry local mtimes of **2026-09-23 01:48-01:50** while their DATA-STAMP says
+`dumped=2026-09-22`, because `GameInfo.Stamp` writes `DateTime.UtcNow` and this machine is UTC+3. Both
+dates describe one run. The two SHA-256s, not the date, are what identify the build.
 
 ### What was written
 

@@ -64,7 +64,14 @@ with the game), `UnityEngine.JSONSerializeModule.dll` (JsonUtility).
      incompatibility exactly one of the pair loads (decompiled `BepInEx.Bootstrap.Chainloader.Start`).
    - A plugin that throws in `Awake` is dropped entirely.
 4. Log: `BepInEx\LogOutput.log` — overwritten each launch; includes Unity's own log lines
-   (`[Info : Unity Log]`), so it is the best record of what happened in a session.
+   (`[Info : Unity Log]`), so it is the best record of what happened in a session. How it is opened
+   (BepInEx 5.4.23.3 `DiskLogListener` + `Utility.TryOpenFileStream`, decompiled 2026-09-24):
+   `FileMode.Create` (truncated every start unless `[Logging.Disk] AppendLog = true`; this install has
+   `false`), `FileAccess.Write`, `FileShare.Read` - so a reader must open it with `FileShare.ReadWrite`
+   while the game runs. On an `IOException` (in use - a second game instance) it tries
+   `LogOutput.log.1` .. `.4`, then runs with **no** disk log; an `UnauthorizedAccessException`
+   (read-only file) is not caught. Stale `.N` files are never deleted. Lines are flushed by a 2 s
+   timer, so a hard kill can lose the last ~2 s. SeedLab's session log copies this model.
 5. Config: `BepInEx\config\<GUID>.cfg`, created on first run. ConfigurationManager (F1) edits them in-game.
 
 ## Local data (verified: GameCamera.ScreenShot uses Utils.GetSaveDataPath(FileHelpers.FileSource.Local))

@@ -439,7 +439,7 @@ output, and the two earlier oracles (minimap colours, binary16 heights) could no
 |---|---|---|---|---|---|---|---|---|
 | −1 772 362 158 `MWd8eV6svz` | menu | 111 | 140 | 2 135 | 23 380 | 675 579 | 2 702 316 | **0** |
 | 319 486 907 `hnBd9gJf2G` | menu | 119 | 161 | 2 059 | 23 262 | 677 094 | 2 708 376 | **0** |
-| 75 539 276 (fresh world) | in-world | 126 | 183 | 2 162 | 26 079 | 764 577 | 3 058 308 | **0** |
+| 75 539 276 `ClaudeTest` | in-world | 126 | 183 | 2 162 | 26 079 | 764 577 | 3 058 308 | **0** |
 
 - The five offsets, both RNG seeds and the three `VersionSetup` constants are bit-identical on all
   three seeds, and the dumper's independent 7-draw replay on a scratch `Random` stream matches the
@@ -464,7 +464,7 @@ output, and the two earlier oracles (minimap colours, binary16 heights) could no
 - **Still not tested by this:** `GetBiome` / `GetHeight` grids. This dump carries no
   `worldgrid-*.bin` (the dumper was run without `grid=`), so the base-height grid that would settle
   the last `Mathf.PerlinNoise` bits still does not exist.
-- **Third seed.** 75 539 276 (the fresh world) had never been used;
+- **Third seed.** 75 539 276 (seed text `ClaudeTest`, world `ClaudeTestWold2`) had never been used;
   the port had only ever been checked on the two ground-truth worlds. Its 12 228 fresh location
   instances are also a float32 `GetHeight` oracle — **12 228 / 12 228 bit-exact**, including all 1 629
   that sit in a river or stream. A fresh world is the better oracle: nothing has been pruned by

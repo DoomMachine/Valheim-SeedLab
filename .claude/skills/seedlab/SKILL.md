@@ -23,7 +23,7 @@ never do, and how to bring it forward after a game update.
 | Needs | .NET 10 SDK; ASP.NET Core 10 shared runtime for `vseed serve`. **No NuGet packages** - it builds offline |
 | Game data | `data\1.0.15-59f53fb5\` - read out of the running game, stamped with the build's `assembly_valheim.dll` SHA-256 |
 | Ground truth | `groundtruth\` - two worlds the game generated (saves + map caches), its own logs, the native corpora |
-| In the game | only `tools\SeedLab.Dumper`, a BepInEx plugin. **It is INSTALLED and armed (`assets`) for run 6** since 2026-09-24, awaiting the user's F4, and is retired again once that data is verified (earlier copies are in `_ModSource\_retired\`) - see "the dumper" below. Nothing else in SeedLab runs inside Valheim |
+| In the game | only `tools\SeedLab.Dumper`, a BepInEx plugin. **It is NOT installed**: run 6 (dungeon names) ran on 2026-09-24 16:15-16:16 and the plugin was retired the same day to `_ModSource\_retired\DoomMachine-SeedLabDumper-20260924-run6` (earlier copies beside it) - see "the dumper" below. Nothing else in SeedLab runs inside Valheim |
 
 ## The invariants - never break these
 
@@ -81,8 +81,11 @@ never do, and how to bring it forward after a game update.
 Detail, exact counts and how to read a failure: `references/proofs-and-gates.md`.
 
 (The five gates below answer "is the answer right". What the output layer does to the disk, to
-memory and to a hard kill is a separate suite, `tests\SeedLab.Search.Safety.Tests` - none of the
-70 checks in `tests\SeedLab.Search.Tests` reaches a sink, a checkpoint or the grid policy.)
+memory and to a hard kill is mostly a separate suite, `tests\SeedLab.Search.Safety.Tests`.
+`tests\SeedLab.Search.Tests` reaches the grid policy (sections 10-13) and, since 2026-09-24,
+checkpoints and the built `vseed.exe` end to end: section 14 runs a CLI funnel and a `vseed serve`
+search under `--cache-dir` and needs a Release CLI built from the same source plus the dumped
+location table.)
 
 | Gate | Command | Result at 2026-09-23 |
 | --- | --- | --- |
@@ -167,12 +170,14 @@ generator and native modes), refuses to write anywhere near the game install or 
 goes to `%USERPROFILE%\AppData\valheim-dumper`), and restores every game static it borrows in a
 `finally`.
 
-**State as of 2026-09-24, later** (checked on disk): **installed and armed for run 6** - dungeon
-names (`Teleport.m_enterText`) and Vegvisir pins, see history.md "the `axe-heads` preset, and dumper
-run 6 prepared". `BepInEx\plugins\DoomMachine-SeedLabDumper\` holds `SeedLab.Dumper.dll` sha256
-`85F54A85...6103C7A`, `SeedLab.Contracts.dll` `81056CC6...DD34A42` and `dumper.enable` = `assets`,
-hashes equal to the build output. Retire it (move, don't delete) as soon as the run's data is
-imported and verified. Before that install, it was not installed; the last copy to run - armed in mode `all`, in the 2026-09-23 22:31 session
+**State as of 2026-09-24, evening** (checked on disk): **not installed.** Run 6 - dungeon names
+(`Teleport.m_enterText`) and Vegvisir pins, see history.md "the `axe-heads` preset, and dumper run 6
+prepared" - ran on 2026-09-24 (`LogOutput.log`: `asset dump DONE` at 16:16, `Random.state` identical at
+start and end) into `%USERPROFILE%\AppData\valheim-dumper\1.0.15-59f53fb5` (assets only: no
+`seed-input.json`, no natives or worldgen manifests - never copy it over the snapshot whole). The plugin
+(`SeedLab.Dumper.dll` `85F54A85...6103C7A`, `SeedLab.Contracts.dll` `81056CC6...DD34A42`,
+`dumper.enable` = `assets`, hashes checked) was moved the same evening to
+`_ModSource\_retired\DoomMachine-SeedLabDumper-20260924-run6`; F4 is free again. Before that install, it was not installed; the last copy to run - armed in mode `all`, in the 2026-09-23 22:31 session
 according to `BepInEx\LogOutput.log` - is in `_ModSource\_retired\DoomMachine-SeedLabDumper-20260923-run5`,
 with the earlier runs beside it. history.md records why it was retired (it zeroed `UnityEngine.Random`)
 and the fixed build. Its config, `BepInEx\config\DoomMachine.SeedLabDumper.cfg`, was left behind and still

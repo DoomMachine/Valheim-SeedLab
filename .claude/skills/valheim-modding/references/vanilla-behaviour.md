@@ -297,8 +297,30 @@ use-key. **No code assigns `m_targetPoint`** - `find-usages` shows only `Telepor
 so the door-to-door link is authored in the prefab. `m_enterText` has one code reference besides
 `Interact`: the constructor's `""`. The `$location_*` tokens a player sees (`location_forestcrypt` =
 "Burial Chambers", `location_sunkencrypt` = "Sunken Crypts", `location_mountaincave` = "Frost Caves",
-16 `location_*` keys in the English table) therefore live only on prefabs inside the SoftRef bundles;
-which prefab carries which token is **Unverified:** until a dump reads it (SeedLab dumper run 6).
+16 `location_*` keys in the English table) therefore live only on prefabs inside the SoftRef bundles.
+
+**Which prefab carries which token - read from the prefabs by SeedLab dumper run 6 (2026-09-24,
+Valheim 1.0.15).** 38 `Teleport`s sit in 19 location prefabs and none in any of the 358 dungeon rooms.
+Each prefab has one entrance (hover `$location_enter`, a caption) and one exit (`$location_exit`, empty
+caption), each targeting the other inside the same prefab. The captions: Crypt2/3/4
+`$location_forestcrypt` "Burial Chambers" (all three - the name is shared); TrollCave02
+`$location_forestcave` "Troll Cave"; SunkenCrypt4 `$location_sunkencrypt` "Sunken Crypts"; MountainCave02
+`$location_mountaincave` "Frost Caves"; Mistlands_DvergrTownEntrance1/2 `$location_dvergrtown` "Infested
+Mine" (shared); Mistlands_DvergrBossEntrance1 `$location_dvergrboss` "Infested Citadel" (the Queen's
+arena); MorgenHole1/2/3 `$location_morgenhole` "Putrid Hole" (shared); PlaceofMystery3
+`$location_mausoleum` "Tomb of Lord Reto"; TheHole01 `$location_thehole` "Winding tunnels"; MorkBorg
+`$location_morkhalla` "Mörkhalla"; BearCave `$location_bearcave` "Bear Cave"; Hildir_cave `$hud_pin_hildir2`
+"Howling Cavern" and Hildir_crypt `$hud_pin_hildir1` "Smouldering Tomb" (Hildir's doors use her map-pin
+tokens, not `location_*`). DN_Bossroom's door `$location_dnbossroomnew` ("The Prison") is **inactive** in
+the prefab - what enables it is not in the dump. `$location_dnbossroom` ("The First Prison") and
+`$location_darkesthole` ("The Hole") are on no door. The Valheim wiki contradicts none of these; it has no
+page for Bear Cave, Winding tunnels or Mörkhalla ("Gates of Mörkhalla" in its future-content page).
+
+**Vegvisirs in the prefabs (same run):** 25 in location prefabs and 20 in rooms. All pin boss places,
+DN_Bossroom ("Aesir Passage") or PlaceofMystery1/2/3; the chain MorgenHole1/2/3 -> PlaceofMystery1 -> 2 -> 3
+is pinned "Mysterious Location" with pin type Hildir1. `hildir_maptable` is a Vegvisir with 3 entries,
+`m_discoverAll` true, setting the player key `HildirMap`, pin types 14/15/16 - and it pins Hildir's two
+dungeons with the same tokens her doors carry.
 
 **`Vegvisir`** fields: `m_name` (`"$piece_vegvisir"`), `m_useText` (`"$piece_register_location"`),
 `m_hoverName` (`"Pin"`), `m_hoverOffset`, `m_setsGlobalKey`, `m_setsPlayerKey`, and

@@ -4,7 +4,8 @@ Credits: see the root README - created and tested by DoomMachine; code, tests an
 
 This folder holds the [Claude Code](https://claude.com/claude-code) skills and the research agent that
 SeedLab was built with. They are a **snapshot of the author's working knowledge base**, taken on
-2026-09-24 and scrubbed for publication. Everything in them was verified against one game build:
+2026-09-24, refreshed on 2026-09-25, and scrubbed for publication. Everything in them was
+verified against one game build:
 
 ```
 Valheim 1.0.15, network version 40, Steam build 25390630,
@@ -56,11 +57,11 @@ If you only want to use SeedLab, you do not need any of this: the repository's o
   `<Steam>` the Steam install, `<accountId>` a Steam account folder, `<character>` a character file.
   Paths such as `<Valheim>\_ModSource\...` describe the author's layout, where this repository lives
   inside the game folder; a clone can live anywhere.
-- **Test worlds.** `asdasdasd`, `testworldclaude` and `test1` are the author's throwaway test
-  worlds. Their names are stored inside the game's own save files, and SeedLab's
-  gates key on the first two, so they are kept as they are.
-- Some SeedLab state recorded here (the dumper being installed, its hashes) describes the author's
-  install on the day of the snapshot, not yours.
+- **Test worlds.** `asdasdasd`, `testworldclaude`, `ClaudeTestWold2` (seed text `ClaudeTest`),
+  `throwaway` and `test1` are the author's throwaway test worlds. Their names are stored inside the
+  game's own save files, and SeedLab's gates key on the first two, so they are kept as they are.
+- Some SeedLab state recorded here (whether the dumper is installed, its hashes) describes the
+  author's install on the day of the snapshot, not yours.
 
 ## What was left out, and why
 
@@ -69,12 +70,13 @@ If you only want to use SeedLab, you do not need any of this: the repository's o
 | the `tomtom-wayfinder` skill | it belongs to the TomTom and Wayfinder mods (https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder), not to SeedLab |
 | `valheim-modding/references/installed-mods.md` | a snapshot of the author's personal mod install. Scan your own with `scan-mod-patches.ps1` and `find-key-usage.ps1 -Plugins` |
 | `valheim-modding/references/kb-changelog.md` | a session-by-session log of edits to the knowledge base; the verified facts it indexes are in the reference files |
+| `valheim-modding/references/publishing.md` | the author's own procedure for publishing to their GitHub account: credential handling, release bookkeeping for their repositories, and pointers to local working files |
 | `valheim-modding/references/archive/` | raw review outputs from the TomTom work: session logs that quote decompiled game code at length |
-| the `valheim-knowledge-curator` and `valheim-mod-reviewer` agents | tied to the author's workspace (its private notes and standing instructions) and to the TomTom mods |
+| the `valheim-knowledge-curator`, `valheim-mod-reviewer` and `valheim-release-auditor` agents | tied to the author's workspace (its private notes and standing instructions), to the TomTom mods and to their releases |
 | the workspace `CLAUDE.md` | the author's standing instructions for their own game folder |
 | the Python bytecode cache (`.pyc`) | build output |
 
 In the copies, personal install details were replaced by the placeholders above or removed: the Steam
-account folder and install location, character names, world UIDs, the time zone, the names of other
-running programs, and the author's local paths. Hardware and the OS version are kept where they label
+account folder and install location, character names, world UIDs, the names of other running
+programs, and the author's local paths. Hardware and the OS version are kept where they label
 a measurement.

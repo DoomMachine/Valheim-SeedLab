@@ -50,7 +50,7 @@ dotnet run --project tests\SeedLab.Acceptance.Tests -c Release
 dotnet run -c Release --project tools\SeedLab.LocationLab -- gate
 ```
 
-- The fresh world (seed 75539276, dumped straight after genloc, nothing explored):
+- Fresh world `ClaudeTestWold2` (seed 75539276, dumped straight after genloc, nothing explored):
   **12,228 / 12,228** instances with zone, prefab and x/y/z bit-identical; 0 missing, 0 extra;
   178/178 prefabs; every type's `placed` counter equal. A fresh world is the better oracle - nothing
   has been pruned by exploration, so the unplaced candidates are there too.
@@ -148,7 +148,7 @@ This is the part that is easy to lose. A gate that passes says what it can see, 
 
 **The single source for every throughput number is the project's `docs\measurements.md`**, with its
 machine-readable sibling `docs\measurements.json` (schema `seedlab-measurements/1`). Every figure in
-it comes from **one** measurement pass on the shipped CLI, 2026-09-23 11:26 UTC, on a machine with
+it comes from **one** measurement pass on the shipped CLI, 2026-09-23 14:26, on a machine with
 `vseed.exe` `AD5139B5F093E2C5...`; the pass also carries the per-run audit trail (410 invocations)
 under `runs_raw`. Quote that file. The lines below are only enough to know whether you need it, and
 if one of them ever disagrees with it, **it is wrong and the file is right**.

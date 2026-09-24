@@ -38,7 +38,13 @@ several past "obvious" readings were wrong (OnMapLeftClick does not place pins; 
 save:false pins; "no local player" also happens on every death).
 
 Game code: `valheim_Data\Managed\assembly_valheim.dll` (most code), `assembly_utils.dll` (ZInput,
-ZCursor, Utils), `assembly_guiutils.dll` (Localization, GuiScaler). `Assembly-CSharp.dll` is a stub.
+ZCursor, Utils, FileHelpers), `assembly_guiutils.dll` (Localization, GuiScaler). `Assembly-CSharp.dll` is a stub.
+
+Other mods change what vanilla does: run `find-usages.ps1 -Needle "Type::Member" -Plugins` and
+`scan-mod-patches.ps1` before concluding how a method behaves in this install (Server Devcommands, for one,
+replaces vanilla's console key bindings and patches map clicks). HarmonyX runs **every** prefix and ANDs their
+results; postfixes run by priority, then registration order. The game's own settings (Unity PlayerPrefs, e.g.
+`ConsoleBindings`) are in the registry under `HKCU\Software\IronGate\Valheim` as `<name>_h<hash>` values.
 
 ## Report
 
