@@ -135,7 +135,7 @@ documentation and public instruction tables and were not verified on these CPUs 
 | Intel Atom-class: Cherry Trail, Apollo Lake, Gemini Lake, Jasper/Elkhart Lake (Celeron N/J, Pentium N/Silver; 2015-2021) | no / no | no | scalar | no FMA3: fails closed today |
 | Intel Alder Lake-N and Twin Lake (N100, N200, N305, N150, N250; 2023-2025) | yes / yes | no | avx2 | 256-bit operations on 128-bit units; gather speed unknown |
 | Intel Ice Lake, Tiger Lake, Rocket Lake (2019-2021); Xeon E-2300, W-1300 | yes / yes | yes, with VBMI | avx2 (a future AVX-512 kernel would take its VBMI variant) | GDS microcode on gathers |
-| Intel Alder Lake, Raptor Lake and its refresh (12th-14th gen, 2021-2023), Core 3/5/7 re-brands | yes / yes | fused off | avx2 | **hybrid P/E cores**: work is claimed block by block, so a slower core claims fewer blocks; 13th/14th-gen Vmin degradation can cause silent wrong results, which only the self-test and the fingerprints can catch - re-run `vseed selftest --report` after a BIOS or microcode update |
+| Intel Alder Lake, Raptor Lake and its refresh (12th-14th gen, 2021-2023), Core 3/5/7 re-brands - **verified 2026-09-25 on an i7-12700K** (see "Machine reports received") | yes / yes | fused off | avx2 | **hybrid P/E cores**: work is claimed block by block, so a slower core claims fewer blocks; 13th/14th-gen Vmin degradation can cause silent wrong results, which only the self-test and the fingerprints can catch - re-run `vseed selftest --report` after a BIOS or microcode update |
 | Intel Meteor Lake, Lunar Lake, Arrow Lake, Panther Lake (2023-2026) | yes / yes | no | avx2 | hybrid; Lunar and Arrow Lake have no SMT, so "half the logical cores" is half the physical cores there |
 | Intel Nova Lake (announced for 2026) | yes / yes | reportedly AVX10.2 including 512-bit | avx2 until an AVX-512 kernel exists | the dispatch accepts AVX10.1 at 512 bits as AVX-512-capable; the JIT may compile ordinary code with AVX10.2's instructions (its saturating float-to-integer conversions among them), which is **not tested** - the report and the stamp name AVX10.2 when the runtime reports it, so such a machine's report shows it |
 | Intel Skylake-X/SP, Cascade Lake, Cooper Lake (Core X 7xxx-10xxx except the Kaby Lake-X i5-7640X and i7-7740X, which have no AVX-512 and belong to the Kaby Lake row; Xeon W-21xx/22xx/32xx; 2017-2020) | yes / yes | F/BW/CD/DQ/VL, **no VBMI** | avx2 (a future AVX-512 kernel would take its two-gathers variant) | AVX-512 licence down-clocking; .NET is reported to leave `Vector512` unaccelerated there, which K5 reproduces; GDS on gathers |
@@ -184,7 +184,10 @@ only safeguard; see [limits](limits.md)).
 - **The C runtime can change under SeedLab.** A Windows update can replace `ucrtbase.dll`, and Windows
   11 ships a newer one than the reference machine's. Its version is in the stamp, so the self-test
   re-runs, and `libm-dense` sweeps the generator's argument ranges densely, so a library that differs
-  anywhere a world would feel it fails closed (**Unverified:** whether Windows 11's differs at all).
+  anywhere a world would feel it fails closed. **Partly verified 2026-09-25:** Windows 11 25H2's `ucrtbase.dll`
+  10.0.26100.9444, on an Intel i7-12700K, reproduced the 93 recorded maths values, the 49 `WorldAngle` samples and
+  all seven world fingerprints - millions of the generator's own `Sin`/`Cos`/`Atan2` calls - bit for bit. That
+  package was built before `libm-dense` existed, so the dense sweep itself has not yet run on Windows 11.
 - **Flush-to-zero** set in a thread by native code loaded into the process: the `denormals` suite
   checks the calling thread and a new one. The per-worker check exists
   (`DenormalProbe.CheckCurrentThread`) but is not yet called by the search workers.
@@ -205,10 +208,34 @@ only safeguard; see [limits](limits.md)).
 | JIT code generation on AVX10.2 CPUs (Nova Lake, Diamond Rapids) | **no** | a machine report from such a CPU, or Intel SDE with a Diamond Rapids model |
 | APX | **no** | .NET 10.0.12 has an `EnableAPX` switch but no public class to ask whether APX is on, so the report cannot show it |
 | a CPU without FMA3, whose C runtime computes differently | **no** | needs such a machine; a test-only study through the C runtime's own FMA3 switch is designed, not built |
-| real gather costs, licence clocks, Zen 4's 2 x 256 execution, hybrid scheduling | no | machine reports from those CPUs |
-| Windows 11's `ucrtbase.dll` | no | `libm-dense` in a machine report from Windows 11 |
+| real gather costs, licence clocks, Zen 4's 2 x 256 execution | no | machine reports from those CPUs |
+| hybrid P/E scheduling | **partly** (i7-12700K, 8P+4E: the biome grid scaled 8.8x at 10 threads and 13.5x at 20) | a profile per core type |
+| an Intel CPU of another vendor's family than the reference | **yes** (i7-12700K Alder Lake: all 93 checks at four levels) | machine report |
+| Windows 11's `ucrtbase.dll` | **partly** (25H2, 10.0.26100.9444: 93 libm values, 49 `WorldAngle` samples, 7 world fingerprints equal) | `libm-dense` in a machine report built from this branch |
 | Linux, macOS, arm64 | no | see [limits](limits.md) |
 | any CPU under Intel SDE's emulation | no | approved, not yet run |
+
+## Machine reports received
+
+Hardware and Windows version only, as the report records them.
+
+| date | CPU | Windows, C runtime | package | result |
+|---|---|---|---|---|
+| 2026-09-25 | Intel Core i7-12700K (Alder Lake, family 6 model 151 stepping 2; 8 performance cores with SMT + 4 efficiency cores, 20 logical; AVX2 and FMA, AVX-512 fused off) | Windows 11 Pro 25H2 build 26200.9457, `ucrtbase.dll` 10.0.26100.9444 | machine report 1.0.0 (SeedLab `11aeb8f`), bundled .NET 10.0.12 | **93 of 93 checks PASS** at as-found (avx2), AVX-512 off, AVX2 off (avx) and scalar: numerics 271/271, natives 263,778/263,778, the 11 natives checks, 7 fingerprints equal to the reference made on the Ryzen 7 9800X3D |
+
+What it settles: SeedLab's answers are bit-identical on an Intel hybrid CPU and an AMD Zen 5 CPU, and on
+Windows 11's C runtime as well as Windows 10's, for every value the report compares. Both CPUs have FMA3,
+so a CPU without FMA3 is still untested.
+
+Its timings (a desktop on mains power, 15.4 % background load; medians of three 10 s runs): the biome grid
+(256 x 256 points, 80 m apart) 106.8 seeds/s on 1 thread, 938.7 on 10 (8.8x), 1,439.4 on 20 (13.5x);
+pre-generation 4.9 seeds/s on 1 thread and **21.3 on 20 (4.3x)**. The reference machine's pre-generation also
+stops near **21-22 seeds/s** from 8 threads up (6.8 on 1 thread, 21.6 on 8, 21.5 on 16; 2026-09-23, with other builds running, so
+indicative only). Two different CPUs
+reaching the same ceiling points at a limit in the code - allocation, garbage collection or a shared
+resource - rather than at the processor, which is what the quiet-machine profile's scaling step (P2:
+CPU time per seed at 1, 8 and 16 workers, garbage-collection share, allocation per phase) is for. Lifting it
+would speed every height, river and location query on any CPU with more than a few cores.
 
 ## For testers on other CPUs
 
