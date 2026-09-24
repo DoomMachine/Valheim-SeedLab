@@ -71,6 +71,13 @@ namespace SeedLab.Search.Execution
         public long ProbeAccepts;
         public long EarlyExits;
 
+        /// <summary>
+        /// The file <see cref="Load"/> read this from, or null for one built in memory. Not written:
+        /// it is where the checkpoint IS, not part of it, and a sentence that tells the user which file
+        /// to delete needs it (<see cref="BlockSizing.Decide"/>'s resume refusal).
+        /// </summary>
+        public string? LoadedFrom;
+
         public void Save(string path)
         {
             StringBuilder sb = new StringBuilder(1024);
@@ -134,6 +141,7 @@ namespace SeedLab.Search.Execution
                 SeedsPassed = r.GetProperty("seeds_passed").GetInt64(),
                 ElapsedSeconds = r.GetProperty("elapsed_seconds").GetDouble(),
                 ResultsLength = r.GetProperty("results_length").GetInt64(),
+                LoadedFrom = path,
             };
 
             if (r.TryGetProperty("probe_accepts", out JsonElement pa)) c.ProbeAccepts = pa.GetInt64();
@@ -161,18 +169,59 @@ namespace SeedLab.Search.Execution
         /// <summary>
         /// Refuses to resume a run that is not the same run. Silently continuing a different query into
         /// the same results file is the one failure that would be invisible in the output.
+        ///
+        /// <para><b>The seed budget is checked before the block size</b> (2026-09-24). A resumed run now
+        /// takes its block size from this checkpoint (<see cref="MatchesExceptBlockSize"/>), but only
+        /// from one that is the same run on everything else, the budget included - so a changed
+        /// <c>--seeds</c> is not adopted, gets the automatic size, and with the old order was told to
+        /// pass <c>--block-size</c> for what is really a <c>--seeds</c> problem.</para>
         /// </summary>
         public void MustMatch(Query q, ScanPlan plan, string queryHash)
         {
             Check(QueryHash == queryHash, "the query file has changed since the checkpoint was written");
             Check(Defs == q.Defs, "the metric definitions version has changed");
-            Check(Grid == q.Search.Grid, "the grid has changed (" + Grid + " m -> " + q.Search.Grid + " m)");
+            Check(Grid == q.Search.Grid, "the grid has changed (" + G(Grid) + " m -> " + G(q.Search.Grid) + " m)");
             Check(Order == plan.Order.ToString().ToLowerInvariant(), "the scan order has changed");
             Check(Key == plan.Key, "the Feistel key has changed, so the seed order is different");
             Check(From == plan.From && To == plan.To, "the seed range has changed");
-            Check(BlockSize == plan.BlockSize, "the block size has changed, so the block boundaries have moved");
             Check(Limit == plan.Limit, "the seed budget has changed (" + Limit + " -> " + plan.Limit + ")");
+
+            // A hand edit, never a run: a block holds at least one seed. Not adopted either
+            // (BlockSizing.Decide ignores it), so this is the sentence the user gets.
+            Check(BlockSize >= 1, "the checkpoint is not valid: its block_size is "
+                                  + BlockSize.ToString(CultureInfo.InvariantCulture)
+                                  + ", and a block holds at least one seed");
+            Check(BlockSize == plan.BlockSize,
+                  "the block size has changed (" + BlockSize.ToString(CultureInfo.InvariantCulture)
+                  + " in the checkpoint, " + plan.BlockSize.ToString(CultureInfo.InvariantCulture)
+                  + " now), so the block boundaries have moved - a resume point is a block number. Pass --block-size "
+                  + BlockSize.ToString(CultureInfo.InvariantCulture)
+                  + ", or leave the block size out, to resume it");
         }
+
+        /// <summary>
+        /// True when this checkpoint is the run <paramref name="plan"/> describes on every field
+        /// <see cref="MustMatch"/> checks except the block size - the query hash, the definitions, the
+        /// grid, the order, the key, the range and the seed budget - so its block size can be adopted.
+        ///
+        /// <para><b>Why every one of them.</b> One query hash names one checkpoint file, but not one
+        /// run: a funnel's second stage checkpoints under the same hash (a sequential walk of the
+        /// survivor list, keyed by a hash of that list, with the survivor count as its limit), and a
+        /// sample run with a different <c>--seeds</c> leaves its own file. Adopting from either would
+        /// print "from the checkpoint being resumed" for a plan nothing resumes, and a real stage-two
+        /// file left by a QA run (sequential, blocks of 4, limit 2,308) would have cut a 6,000-seed
+        /// stage one into 1,500 blocks of 4 (design review of 2026-09-24).</para>
+        /// </summary>
+        public bool MatchesExceptBlockSize(Query q, ScanPlan plan, string queryHash)
+            => QueryHash == queryHash
+               && Defs == q.Defs
+               && Grid == q.Search.Grid
+               && Order == plan.Order.ToString().ToLowerInvariant()
+               && Key == plan.Key
+               && From == plan.From && To == plan.To
+               && Limit == plan.Limit;
+
+        private static string G(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
 
         private static void Check(bool ok, string why)
         {

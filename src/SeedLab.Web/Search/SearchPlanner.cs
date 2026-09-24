@@ -93,22 +93,32 @@ namespace SeedLab.Web.Search
                 throw new ArgumentException(ex.Message + (string.IsNullOrEmpty(ex.Hint) ? "" : " - " + ex.Hint));
             }
 
-            long gridCells = WorkerFootprints.CellsForSpacing(parsed.Search.Grid);
+            // The workers are planned BY THE SESSION, through this planner, at the grid the run will
+            // really use: the session may raise the grid (a 12 m worker holds far more than a 384 m
+            // one), and it decides the block size for the worker count - the automatic size, and the
+            // idle-worker warning for a size in the Block size box. Planning once here, at the grid
+            // the query asked for, used to give the page three worker counts for one run after a
+            // raise: the plan block's "threads" line and the block-size decision at one grid, the
+            // "workers" row, the estimate and the ladder at the other (design review, 2026-09-24).
+            // Everything below reads the session's own plan (session.WorkerPlan).
             WorkTier tier = TierOf(probe, oracle);
-            WorkerPlan workers = WorkerPlanner.Plan(effective, WorkerFootprints.For(tier, gridCells),
-                runtime.Hardware,
-                new WorkerPlanOptions { RequestedWorkers = q.Threads > 0 ? q.Threads : (int?)null });
+            WorkerPlanOptions options = new WorkerPlanOptions { RequestedWorkers = q.Threads > 0 ? q.Threads : (int?)null };
+            Func<double, WorkerPlan> planner = grid => WorkerPlanner.Plan(
+                effective, WorkerFootprints.For(tier, WorkerFootprints.CellsForSpacing(grid)), runtime.Hardware, options);
 
             SearchSession session;
             try
             {
                 session = SearchSession.Create(parsed, oracle, engineVersion, parsed.Search.Seeds,
-                                               workers.Workers, outPath, false, q.AcceptScanOrder);
+                                               0, outPath, false, q.AcceptScanOrder, plannerAtGrid: planner);
             }
             catch (QueryException ex)
             {
                 throw new ArgumentException(ex.Message + (string.IsNullOrEmpty(ex.Hint) ? "" : " - " + ex.Hint));
             }
+
+            WorkerPlan workers = session.WorkerPlan!;
+            long gridCells = WorkerFootprints.CellsForSpacing(session.Query.Search.Grid);
 
             // The checkpoint lives in the runtime cache root, never in whatever directory the server
             // happened to be started from. Defect 5 of the audit, and the reason it is passed rather
@@ -272,6 +282,11 @@ namespace SeedLab.Web.Search
                 GoalCount = cq.Goals.Count,
                 KeepN = s.Output.KeepAll ? (long?)null : s.Output.Keep,
                 AllSeedsFlag = s.Plan.Limit >= EstimateInputs.WholeSeedSpace,
+
+                // The workers with blocks, for the rate only: a Block size that cuts the run into fewer
+                // blocks than workers leaves the rest idle, and the estimate used to be the whole
+                // machine's rate anyway. Memory stays every worker's (runtime.Inputs sets Threads).
+                BusyWorkers = s.BlockDecision.BusyWorkers,
             };
 
             Estimate est = runtime.Estimator.Project(runtime.Inputs(inputs, workers, outPath ?? ""));

@@ -26,15 +26,17 @@ Set-Alias vseed .\src\SeedLab.Cli\bin\Release\net10.0\vseed.exe
 
 vseed presets list                       # 13 queries, all of them runnable, with their cost class
 vseed clean                              # what SeedLab is holding on disk, and where
-vseed search gentle-start --seeds 4000 --block-size 16 --keep 20 --out hits.jsonl --yes
+vseed search gentle-start --seeds 4000 --keep 20 --out hits.jsonl --yes
 vseed explain <a seed from that run> gentle-start
 vseed seed <that seed>                   # the whole world: land, biomes, islands, bosses, traders
 vseed serve                              # the map and the same search engine, on 127.0.0.1:8731
 ```
 
 Two flags worth knowing on day one: **`--mode full`** when you are not playing (about 1.5× faster
-than the default), and **`--block-size 16`** on anything expensive, because one worker computes a
-whole 256-seed block and a short run otherwise leaves most of your cores idle.
+than the default), and **`--block-size 16`** on anything expensive when you want a finer resume
+point: one worker computes a whole block, so a kill costs up to one block of that worker's time.
+(It used to be needed for speed too, because a short run at the fixed 256 left most of your cores
+idle; the block size is automatic now — see 2026-09-24 below.)
 
 ## What works today — with the command that proves it
 
@@ -63,7 +65,8 @@ Re-run at the end of this pass (see the bottom of this file for the exact comman
 acceptance **32/32** with 0 biome mismatches and 4,194,304/4,194,304 height codes per world;
 location gate **12,228/12,228** fresh + 12,314 + 12,287 played, 29/29 game-log counters;
 natives **11/11** (262,780 Perlin samples, 276 Random traces, 93 libm, 429 hashes);
-GoldenCheck **PASS** (8,469,000 floats, 0 differing); search tests **70/70**.
+GoldenCheck **PASS** (8,469,000 floats, 0 differing); search tests **70/70** (the suite has grown
+since: **244/244** just before the block-size change below, **321/321** after it).
 
 ## What it costs — measured, not projected
 
@@ -199,6 +202,60 @@ you installed matches the game's build and could be a second route, but it is un
 wiki (your wiki IDs are kept as the cross-check for when the real data arrives). The dumper has been
 taught to read every dungeon door and every Vegvisir, reviewed adversarially, and **installed and
 armed** for one run — see "Two things only you can do" below.
+
+## A short run is cut so every worker can have a block, and a budget says what it really bounds (2026-09-24)
+
+You found it: `vseed search <query> --seeds 512` on 8 workers was **2 blocks of 256**, and one worker
+computes a whole block, so 6 of the 8 did nothing — and the rate the report then printed "on 8
+threads" was two workers' rate. Measured on `axe-heads`: 64 seeds took 1.6 min as one block of 64 and
+16.4 s as eight blocks of 8, with byte-identical results.
+
+- **The block size is automatic.** Leave `--block-size` out and it is 256, or smaller when that would
+  give a worker fewer than four blocks: `--seeds 512` on 8 workers is now 32 blocks of 16, and the
+  plan says why — *"block size 16, sized automatically for this run: the default 256 would cut these
+  512 seeds into 2 blocks, and one worker computes a whole block, so 6 of the 8 workers would have
+  nothing to do"*.
+- **A size you give is kept.** When it leaves workers idle you get a warning with the counts and what
+  the automatic size would be, never a silent change.
+- **A resumed run keeps its checkpoint's size**, on any thread count, because a resume point is a
+  block number. A different `--block-size` on `--resume` is refused before the prompt, naming the
+  size that works and the file to delete — for a funnel's stage 2 at its gate instead, once stage 1
+  has run or its survivor list is reused, because stage 2's checkpoint is recognised by that list.
+  A funnel resumed over a *sample* run's checkpoint of the same query no longer borrows its block
+  size: it says the funnel does not continue that file, and when stage 2 would have to overwrite it
+  (no `--cache-dir`, no `--checkpoint`) it refuses before anything runs instead of after stage 1.
+- **None of this changes a result.** A completed run's results file is the same bytes at every block
+  size — jsonl, json and csv, `--keep N` and `--keep all` — and a run stopped on 8 threads and
+  finished on 3 at the automatic size ends with the uninterrupted run's SHA-256. `proof blocks`
+  checks both.
+- **The web page's Block size box is empty now, and empty means automatic** — the same rule as the
+  terminal's. It used to send a fixed 64. The ceiling is 256 for both, your choice, so on a long
+  location-tier run one block can be about 6 to 8 minutes of one worker's time (256 seeds at 1.3 to
+  1.9 s each: the location presets in `docs\measurements.md`, and `axe-heads` measured with all 8
+  workers busy), and that is when Stop and the first streamed results land. Type a number in the box
+  for finer steps.
+- **The rate says when not every worker had work**: `measured rate  145.7 seeds/s on 8 threads  (2 of
+  8 workers had work)`, and `--json` carries `busy_workers`, `block_size` and `blocks`. It is counted
+  when a worker takes its first block, so a run that lasts well under a second can say `7 of 8` even
+  at the automatic size — one worker was still starting up when the others had taken every block —
+  and that is the truth about that run. The web page no longer keeps such a rate as "measured here"
+  or works out the whole space from it. The
+  `--dry-run` estimate now times a short run by its busiest worker and prints the scale it used.
+- **`--budget` is an overrun, not a floor.** It is checked only when a worker is about to take a
+  block, and a block already taken is finished, so a run can end up to one block of work past the
+  budget, plus the workers' start-up and the final write — the plan prints that bound with the run's
+  own numbers, and a funnel's gate prints stage 2's. The old sentence, "a budget cannot
+  stop a run sooner than one block per worker", was false: `--budget 0.001s` evaluates 0 seeds. That
+  run also reported `coverage 100.00 % ... (the whole space)`; it reports 0 % now. And a run that
+  finished is no longer reported as stopped by the budget as well.
+- **A funnel gives each stage the whole budget, and a stop in stage 1 ends the run**, in the terminal
+  and on the page alike — your call. The terminal's stage 1 used to ignore the budget, and the page's
+  went on into stage 2 after a Stop or a budget stop, with a fresh budget. A Stop pressed after the
+  last block was already taken stops nothing, and is no longer reported as a stop — so it no longer
+  throws a finished stage 1 away; the terminal remembers it (and one pressed while the gate measures
+  placement) and stops stage 2 at its first block boundary, with the survivor list and a checkpoint
+  kept, as the page already did. And the page now ends a funnel whose stage 1 kept no seed, and a
+  run that fails between stages, instead of waiting on it for good.
 
 ## Still not implemented — named so you do not go looking
 

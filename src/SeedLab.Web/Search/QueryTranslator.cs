@@ -107,7 +107,10 @@ namespace SeedLab.Web.Search
             }
 
             if (q.Threads < 0 || q.Threads > 256) throw new ArgumentException("threads must be between 0 and 256.");
-            if (q.BlockSize < 1 || q.BlockSize > 65_536) throw new ArgumentException("the block size must be between 1 and 65,536.");
+            if (q.BlockSize.HasValue && (q.BlockSize.Value < 1 || q.BlockSize.Value > 65_536))
+            {
+                throw new ArgumentException("the block size must be between 1 and 65,536, or left empty to size it automatically.");
+            }
             if (q.GenVersion < 0 || q.GenVersion > 2) throw new ArgumentException("gen_version must be 0, 1 or 2.");
             if (q.RotateBytes < 0) throw new ArgumentException("the rotation size cannot be negative.");
             if (q.MaxBytes < 0) throw new ArgumentException("the output ceiling cannot be negative.");
@@ -160,8 +163,18 @@ namespace SeedLab.Web.Search
             sb.Append("    \"screen\": ").Append(JsonSerializer.Serialize(Screen(q.Screen))).Append(",\n");
             if (q.ScreenGridM > 0) sb.Append("    \"screen_grid\": ").Append(Num(q.ScreenGridM)).Append(",\n");
             if (q.RegionM > 0) sb.Append("    \"region\": ").Append(Num(q.RegionM)).Append(",\n");
-            sb.Append("    \"threads\": ").Append(q.Threads.ToString(CultureInfo.InvariantCulture)).Append(",\n");
-            sb.Append("    \"block_size\": ").Append(q.BlockSize.ToString(CultureInfo.InvariantCulture)).Append('\n');
+            // block_size only when the box holds one: left out, the run sizes it automatically, and so
+            // does 'vseed search' on the exported file - including a --resume of the checkpoint this
+            // run leaves, which then keeps the checkpoint's size. It is the last key, so the comma that
+            // separates it is written before it, never left dangling after "threads" (the reader would
+            // accept one, but this file is one a user reads).
+            sb.Append("    \"threads\": ").Append(q.Threads.ToString(CultureInfo.InvariantCulture));
+            if (q.BlockSize.HasValue)
+            {
+                sb.Append(",\n    \"block_size\": ").Append(q.BlockSize.Value.ToString(CultureInfo.InvariantCulture));
+            }
+
+            sb.Append('\n');
             sb.Append("  },\n");
 
             // The output block. It used to be omitted with a comment saying the server writes nothing;

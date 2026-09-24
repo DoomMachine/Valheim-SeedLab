@@ -69,7 +69,18 @@ namespace SeedLab.Runtime.Estimation
 
             // ---- rate --------------------------------------------------------------------------
             (double tableCost, bool extrapolated, string how) = CostModel.SingleThreadSeconds(inputs.Tier, cells);
-            double tableRate = CostModel.SeedsPerSecond(inputs.Tier, cells, threads);
+
+            // The rate is the busy workers', the memory below is every worker's (EstimateInputs.BusyWorkers).
+            int busy = inputs.BusyWorkers > 0 ? Math.Min(threads, inputs.BusyWorkers) : threads;
+            double tableRate = CostModel.SeedsPerSecond(inputs.Tier, cells, busy);
+            if (busy < threads)
+            {
+                notes.Add("only " + busy.ToString(CultureInfo.InvariantCulture) + " of the "
+                          + threads.ToString(CultureInfo.InvariantCulture)
+                          + " workers have a block to compute (one worker computes a whole block), so the rate is "
+                          + busy.ToString(CultureInfo.InvariantCulture) + " workers', and the memory is still all "
+                          + threads.ToString(CultureInfo.InvariantCulture) + "'s");
+            }
 
             bool calibrated = calibration != null && calibration.IsUsable;
             double rate = calibrated ? calibration!.SeedsPerSecond : tableRate;

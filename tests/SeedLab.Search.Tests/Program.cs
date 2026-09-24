@@ -50,6 +50,15 @@ namespace SeedLab.SearchTests
             Section("10. The plan: grid warnings only for goals the grid measures, each said once");
             PlanChecks.Run(Check);
 
+            Section("11. A block for every worker: the block-size rule, the resume point and the session");
+            BlockChecks.Run(Check);
+
+            Section("12. What a run reports: the busy workers, the wall stop, 0 % coverage and the budget line");
+            RunReportChecks.Run(Check);
+
+            Section("13. A stop, a gate and a plan line that say what the run did");
+            StopAndGateChecks.Run(Check);
+
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));
             Console.WriteLine((_fail == 0 ? "PASS" : "FAIL") + "  " + _pass + " checks passed, " + _fail + " failed");

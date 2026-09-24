@@ -35,6 +35,18 @@ namespace SeedLab.Runtime.Estimation
         /// <summary>Workers, as the <see cref="WorkerPlan"/> decided - not the core count.</summary>
         public int Threads { get; set; } = 1;
 
+        /// <summary>
+        /// Workers that will have a block to compute, when fewer than <see cref="Threads"/>; 0 means
+        /// all of them. Used for the RATE only.
+        ///
+        /// <para>One worker computes a whole block, so a run cut into fewer blocks than workers runs at
+        /// the parallelism of its block count, and a rate projected for every worker is a rate the run
+        /// cannot reach. It is not folded into <see cref="Threads"/> because that also scales the
+        /// memory figure, and memory follows every worker: each thread is started and builds its
+        /// evaluator and grid buffers before it tries to claim a block, busy or not (2026-09-24).</para>
+        /// </summary>
+        public int BusyWorkers { get; set; }
+
         public OutputFormat Format { get; set; } = OutputFormat.Jsonl;
 
         /// <summary>Goals in the query: what decides record size, per the disk audit.</summary>

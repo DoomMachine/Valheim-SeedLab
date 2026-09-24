@@ -2302,6 +2302,16 @@ function applyPreset(name) {
   schedulePreflight();
 }
 
+// The Block size box: null when empty (automatic), else the integer typed - 0 included, which the
+// server refuses with its 1..65,536 message. A number box that holds something unparseable reports an
+// empty value, so there is no third case.
+function blockSizeBox() {
+  const raw = $('qBlock').value.trim();
+  if (raw === '') return null;
+  const n = parseInt(raw, 10);
+  return Number.isNaN(n) ? null : n;
+}
+
 function searchQuery() {
   const keepAll = $('qKeepMode').value === 'all';
   return {
@@ -2317,7 +2327,12 @@ function searchQuery() {
     screenGridM: parseFloat($('qScreenGrid').value) || 0,
     regionM: parseFloat($('qRegion').value) || 0,
     threads: parseInt($('qThreads').value, 10) || 0,
-    blockSize: parseInt($('qBlock').value, 10) || 64,
+    // Empty = automatic, the same rule as the terminal's (256, or smaller so every worker gets
+    // blocks). It used to fall back to a fixed 64, which the query file then carried as a size the
+    // user had "given". Anything typed is sent as typed, so a 0 gets the server's refusal - as
+    // '--block-size 0' and 'block_size: 0' do - instead of quietly meaning "automatic" (`|| null`
+    // turned 0 into null, review of 2026-09-24).
+    blockSize: blockSizeBox(),
     order: $('qOrder').value,
     rangeStart: parseInt($('qFrom').value, 10) || -2147483648,
     rangeEnd: parseInt($('qTo').value, 10) || 2147483647,
@@ -2490,7 +2505,7 @@ function renderPreflightPlan(r) {
   kv($('planKv'), [
     ['query', 'sha-256 ' + String(r.queryHash).slice(0, 16) + '…'],
     ['order', r.order + ', key ' + r.key + '  — same key, same sequence, every time'],
-    ['blocks', nf(r.blocks) + ' of ' + r.blockSize + ' seeds'],
+    ['blocks', nf(r.blocks) + ' of ' + r.blockSize + (r.blockSize === 1 ? ' seed' : ' seeds')],
     ['strategy', (r.strategy || 'sample')
       + (r.strategyAsked === 'auto' ? '  — auto' : '  — asked for')],
     ['highest tier', r.maxTier],
@@ -2717,7 +2732,9 @@ function renderPlan(d) {
   $('planCard').hidden = false;
   const rows = [
     ['range', nf(d.from) + ' … ' + nf(d.to) + '  (' + nf(d.rangeSeeds) + ' seeds)'],
-    ['this run visits', nf(d.limit) + ' seeds in ' + nf(d.blocks) + ' blocks of ' + d.blockSize],
+    // Singulars spelled out: the automatic size makes "1 block" and "blocks of 1" routine.
+    ['this run visits', nf(d.limit) + (d.limit === 1 ? ' seed in ' : ' seeds in ') + nf(d.blocks)
+      + (d.blocks === 1 ? ' block of ' : ' blocks of ') + d.blockSize + (d.blockSize === 1 ? ' seed' : '')],
     ['share of the space', pct(d.fractionOfSpace) + ' of all 4,294,967,296 worlds'],
     ['order', d.order + ', key ' + d.key + '  — same key, same sequence, every time'],
     ['grid', 'G' + nf(d.grid, 0) + (d.gridIsGameGrid ? '  — the grid the game itself samples' : '')],
@@ -2769,15 +2786,20 @@ function renderProgress(p, final) {
   const scanned = p.scanned || 0;
   const frac = limit ? clamp(scanned / limit, 0, 1) : (final ? 1 : 0);
   $('progressFill').style.width = (frac * 100).toFixed(1) + '%';
+  // A final rate the server says is not the machine's - fewer workers had blocks than there were
+  // workers, or it is a funnel's cheap first stage - carries the server's own label and is not
+  // extrapolated to the whole space or kept as "measured here" (the terminal prints the same label).
+  const machineRate = !final || p.rateIsMachine !== false;
   $('progressText').textContent = (final ? p.status + ' · ' : '')
     + nf(scanned) + ' of ' + nf(limit) + ' seeds  ·  ' + nf(p.passed) + ' passed  ·  '
-    + nf(p.seedsPerSecond, 1) + ' seeds/s  ·  ' + duration(p.elapsedS)
+    + nf(p.seedsPerSecond, 1) + ' seeds/s' + (final && p.rateNote ? ' ' + p.rateNote : '')
+    + '  ·  ' + duration(p.elapsedS)
     + (!final && p.etaSeconds != null ? '  ·  ' + duration(p.etaSeconds) + ' left' : '')
     + (final && p.message ? '  ·  ' + p.message : '');
 
   const covered = p.fractionCovered != null ? p.fractionCovered : (scanned / 4294967296);
   let line = 'covered ' + pct(covered) + ' of the 4,294,967,296-world space';
-  if (p.seedsPerSecond > 0) line += '  ·  the whole space at this rate: ' + duration(4294967296 / p.seedsPerSecond);
+  if (machineRate && p.seedsPerSecond > 0) line += '  ·  the whole space at this rate: ' + duration(4294967296 / p.seedsPerSecond);
   if (p.suppressedResults > 0) line += '  ·  ' + nf(p.suppressedResults) + ' finds not shown in the ticker (the table is complete)';
   $('coverageText').textContent = line;
 
@@ -2799,10 +2821,13 @@ function renderProgress(p, final) {
   $('outputText').textContent = out.join('  ·  ');
 
   if (final) {
-    Search.meta.measuredSeedsPerSecond = p.seedsPerSecond;
+    if (machineRate && p.seedsPerSecond > 0) Search.meta.measuredSeedsPerSecond = p.seedsPerSecond;
     renderEngineKv();
     const tiered = Search.top.length && Search.top[0].landKm2 == null;
-    $('resultNote').textContent = (p.complete
+    // A funnel stopped in stage 1 placed nothing: its scanned count is stage 1's, not a set of results.
+    $('resultNote').textContent = (p.stage === 1
+      ? 'The run stopped during stage 1, so stage 2 never placed a seed and there are no results — the line above says why.'
+      : p.complete
       ? 'The whole requested range was evaluated.'
       : 'The run stopped before the range was exhausted, so these are the best of ' + nf(scanned)
         + ' seeds, not of the range.')

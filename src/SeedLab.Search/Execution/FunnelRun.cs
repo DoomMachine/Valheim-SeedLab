@@ -94,15 +94,41 @@ namespace SeedLab.Search.Execution
         /// <summary>Measured seconds per seed for the FULL query, from the calibration sample.</summary>
         public double SecondsPerSurvivor;
 
-        public int Threads = 1;
+        /// <summary>
+        /// Stage two's block size, decided ONCE (<see cref="BlockSizing.Decide"/> over the survivor
+        /// count and the thread count) and given both to this gate and to stage two's plan, so the
+        /// idle count printed here is the one the run has. It used to be <c>q.Search.BlockSize</c> read
+        /// separately by the gate and by the plan, and the stage whose few survivors left workers idle
+        /// never said why, or that anything could be done about it. A resumed stage two's decision
+        /// carries its checkpoint's resume point, and everything below counts only what is left.
+        /// </summary>
+        public BlockSizeDecision Decision = BlockSizing.Decide(null, 0, 1);
+
+        /// <summary>The worker count stage two runs on.</summary>
+        public int Threads => Decision.Workers;
+
+        /// <summary>
+        /// The run's wall budget, which stage two gets whole (as stage one did), or zero for none. Set,
+        /// it adds stage two's own bound under the gate: the plan's budget line was worked out for
+        /// stage one's blocks, and a stage two cut into bigger blocks - fewer survivors on fewer
+        /// threads, or a checkpoint written on fewer - can run further past the budget than that
+        /// line said (review of 2026-09-24).
+        /// </summary>
+        public TimeSpan Wall;
 
         /// <summary>Seeds per block - the unit ONE worker takes. Needed for an honest estimate.</summary>
-        public int BlockSize = 1;
+        public int BlockSize => Decision.Size;
 
         public double Ratio => Scanned > 0 ? Survivors / (double)Scanned : 0.0;
 
         /// <summary>Blocks stage two is cut into.</summary>
         public long Blocks => Math.Max(1, (Survivors + Math.Max(1, BlockSize) - 1) / Math.Max(1, BlockSize));
+
+        /// <summary>True when an earlier leg already finished some of stage two's blocks.</summary>
+        public bool Resumed => Decision.NextBlock > 0;
+
+        /// <summary>Survivors this leg places: all of them, or those after the resume point.</summary>
+        public long ToPlace => Decision.Limit > 0 ? Decision.RemainingSeeds : Survivors;
 
         /// <summary>
         /// Workers that will actually have something to do.
@@ -110,46 +136,26 @@ namespace SeedLab.Search.Execution
         /// <para><b>Not the thread count.</b> One worker computes a whole block, so a stage two with
         /// fewer blocks than threads runs at the parallelism of its BLOCK COUNT and no more.</para>
         /// </summary>
-        public int EffectiveWorkers => (int)Math.Max(1, Math.Min(Threads, Blocks));
+        public int EffectiveWorkers => Math.Max(1, Decision.BusyWorkers);
 
         /// <summary>
         /// Seeds the BUSIEST worker takes - which is what stage two's wall clock actually is.
         ///
-        /// <para>Two corrections live here, both found by measurement rather than by reading.
-        /// Dividing by the thread count gave 2.1 s for a run that took 16.7 s, because 15 survivors at
-        /// a block size of 256 is one block and one worker. Dividing by the effective worker count
-        /// then gave 16.9 s for a run that took 33.6 s, because blocks are not equal: 26 survivors at
-        /// a block size of 25 is a block of 25 and a block of 1, and the worker holding the 25 decides
-        /// when the stage ends. An average over unequal blocks is not a wall clock.</para>
+        /// <para>Two corrections live in the formula, both found by measurement rather than by
+        /// reading. Dividing by the thread count gave 2.1 s for a run that took 16.7 s, because 15
+        /// survivors at a block size of 256 is one block and one worker. Dividing by the effective
+        /// worker count then gave 16.9 s for a run that took 33.6 s, because blocks are not equal: 26
+        /// survivors at a block size of 25 is a block of 25 and a block of 1, and the worker holding
+        /// the 25 decides when the stage ends. An average over unequal blocks is not a wall clock.</para>
         ///
-        /// <para>So the blocks are laid out and dealt round-robin - which is how they are claimed -
-        /// and the heaviest worker's load is the answer.</para>
+        /// <para>So the blocks are dealt round-robin - which is how they are claimed - and the
+        /// heaviest worker's load is the answer. The formula moved to
+        /// <see cref="BlockSizing.BusiestWorkerSeeds"/> on 2026-09-24 so the plan line, the idle
+        /// warning and this estimate cannot disagree.</para>
         /// </summary>
-        public long BusiestWorkerSeeds
-        {
-            get
-            {
-                if (Survivors <= 0) return 0;
-                int bs = Math.Max(1, BlockSize);
-                int workers = EffectiveWorkers;
-                long[] load = new long[workers];
-                long left = Survivors;
-                for (int b = 0; left > 0; b++)
-                {
-                    long take = Math.Min(bs, left);
-                    load[b % workers] += take;
-                    left -= take;
-                }
-
-                long max = 0;
-                foreach (long l in load)
-                {
-                    if (l > max) max = l;
-                }
-
-                return max;
-            }
-        }
+        public long BusiestWorkerSeeds => Decision.Limit > 0
+            ? Decision.BusiestWorkerSeeds
+            : BlockSizing.BusiestWorkerSeeds(Survivors, BlockSize, Threads);
 
         /// <summary>Wall-clock estimate for stage two: the busiest worker, not the average.</summary>
         public double StageTwoSeconds => BusiestWorkerSeeds * SecondsPerSurvivor;
@@ -172,22 +178,48 @@ namespace SeedLab.Search.Execution
                                                    + "time is not this run's to report)");
             yield return "stage 1 kept         " + N(Survivors) + "  (" + Pct(Ratio) + " of them)";
             yield return "survivor list        " + Bytes(SurvivorBytes);
-            yield return "stage 2 will place   " + N(Survivors) + " worlds at "
-                         + F(SecondsPerSurvivor, 2) + " s each, measured";
+            yield return "stage 2 will place   " + N(ToPlace) + " worlds at "
+                         + F(SecondsPerSurvivor, 2) + " s each, measured"
+                         + (Resumed ? "  (the other " + N(Survivors - ToPlace) + " were placed by an earlier leg)" : "");
             yield return "stage 2 estimate     " + Dur(StageTwoSeconds) + " on "
                          + EffectiveWorkers.ToString(CultureInfo.InvariantCulture) + " worker"
                          + (EffectiveWorkers == 1 ? "" : "s");
 
-            if (EffectiveWorkers < Threads || BusiestWorkerSeeds * EffectiveWorkers != Survivors)
+            // Nothing to place is nothing to spread: at zero survivors this said "0 survivors at a
+            // block size of 1 is 1 block over 1 of 8 threads" (review of 2026-09-24).
+            long blocks = Resumed ? Decision.RemainingBlocks : Blocks;
+            if (ToPlace > 0 && (EffectiveWorkers < Threads || BusiestWorkerSeeds * EffectiveWorkers != ToPlace))
             {
-                yield return "                     (" + N(Survivors) + " survivors at a block size of "
-                             + BlockSize.ToString(CultureInfo.InvariantCulture) + " is " + N(Blocks)
-                             + " block" + (Blocks == 1 ? "" : "s") + " over "
+                yield return "                     (" + N(ToPlace) + (Resumed ? " remaining" : "")
+                             + " survivors at a block size of "
+                             + BlockSize.ToString(CultureInfo.InvariantCulture) + " is " + N(blocks)
+                             + " block" + (blocks == 1 ? "" : "s") + " over "
                              + EffectiveWorkers.ToString(CultureInfo.InvariantCulture) + " of "
                              + Threads.ToString(CultureInfo.InvariantCulture) + " thread"
                              + (Threads == 1 ? "" : "s") + "; one worker takes a whole block, and the "
                              + "busiest ends up with " + N(BusiestWorkerSeeds) + " seeds - that worker "
                              + "is what the stage waits for)";
+            }
+
+            // The decision's own sentences - automatic, given or adopted, and the warning when a size
+            // that was given leaves workers idle - under the gate's label, so both front ends show
+            // stage two's block size the way the plan block shows the main run's. A refusal (a size
+            // asked for that is not a resumed stage two's own) is not a gate line: only a resume can
+            // raise it, and the front end that resumes stops on it with its own refusal block.
+            if (Decision.Note != null) yield return "stage 2 block size   " + Decision.Note;
+
+            // Stage two's own budget bound, in the plan's words: the plan's budget line counts stage
+            // one's blocks, and stage two's are sized here over the survivors (or kept from its
+            // checkpoint), so its overrun is one of THESE blocks.
+            if (Wall > TimeSpan.Zero && ToPlace > 0)
+            {
+                yield return "stage 2 budget       " + SearchPreflightCheck.BudgetBound(Wall, Decision, "stage");
+            }
+
+            if (Decision.Warning != null)
+            {
+                yield return "";
+                yield return "WARNING: " + Decision.Warning;
             }
 
             if (Pointless)

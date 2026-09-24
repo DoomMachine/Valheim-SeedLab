@@ -109,8 +109,19 @@ namespace SeedLab.Web.Search
         /// <summary>World.m_worldGenVersion: 0 | 1 | 2.</summary>
         public int GenVersion { get; set; } = 2;
 
-        /// <summary>Seeds per work block. Checkpoints and streamed results land on block boundaries.</summary>
-        public int BlockSize { get; set; } = 64;
+        /// <summary>
+        /// Seeds per work block, or null (the page's empty Block size box) to have it sized
+        /// automatically. Checkpoints, streamed results and Stop land on block boundaries.
+        ///
+        /// <para><b>Automatic, like the terminal's.</b> It used to be a plain 64 the page always sent,
+        /// which the terminal could not express as "automatic" and which left workers idle on a short
+        /// run just as the terminal's fixed 256 did. Null goes through the same rule
+        /// (<c>BlockSizing.Decide</c>): 256, or smaller so every worker gets at least four blocks.
+        /// The user chose one ceiling, 256, for both front ends (2026-09-24), so a long location-tier
+        /// run's block can be minutes of one worker's time; a number in the box pins it, is kept, and
+        /// is warned about when it leaves workers idle.</para>
+        /// </summary>
+        public int? BlockSize { get; set; }
 
         /// <summary>
         /// Drop nice-to-have goals this build cannot measure instead of refusing the run. A

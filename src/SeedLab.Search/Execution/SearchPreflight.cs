@@ -42,6 +42,13 @@ namespace SeedLab.Search.Execution
         public List<string> Plan = new List<string>();
 
         /// <summary>
+        /// The block size this preflight describes, re-derived from the plan and the thread count it
+        /// was given (<see cref="SearchPreflightCheck.Check"/>), so its idle-worker counts are true for
+        /// every caller, including one that passed no decision at all.
+        /// </summary>
+        public BlockSizeDecision BlockDecision = null!;
+
+        /// <summary>
         /// The feasibility, vacuity and degeneracy check, decided before a seed is touched.
         ///
         /// <para>It is a separate object rather than more strings because the CLI and the web API
@@ -101,12 +108,35 @@ namespace SeedLab.Search.Execution
         /// <summary>The whole space, for the coverage line that must never be left implicit.</summary>
         public const double SeedSpace = 4294967296.0;
 
+        /// <param name="blocks">
+        /// How the plan's block size was decided (<see cref="BlockSizing.Decide"/>): whether it was given,
+        /// automatic or adopted from a checkpoint. It supplies only that - the source and the resume
+        /// point - and the counts are derived again here from <paramref name="plan"/> and
+        /// <paramref name="threads"/>, so a caller cannot print an idle count for a run it is not
+        /// making. Null (the Safety tests' direct calls) reads the plan's size as one that was given,
+        /// which is what a hand-built plan's size is. A decision whose size is not the plan's is a
+        /// caller's bug and throws.
+        /// </param>
         public static SearchPreflight Check(Query q, CompiledQuery cq, ScanPlan plan, OutputPolicy output,
                                             int threads, bool acceptScanOrder = false,
                                             SeedLab.Search.Locations.ILocationOracle? oracle = null,
-                                            bool allowVacuous = false)
+                                            bool allowVacuous = false, BlockSizeDecision? blocks = null)
         {
-            SearchPreflight pf = new SearchPreflight { Output = output };
+            BlockSizeDecision bd = blocks == null
+                ? BlockSizing.Decide(plan.BlockSize, plan.Limit, threads)
+                : BlockSizing.Decide(blocks.Requested, plan.Limit, threads, blocks.Ceiling, blocks.Resume);
+            if ((blocks != null && blocks.Size != plan.BlockSize) || bd.Size != plan.BlockSize)
+            {
+                throw new InvalidOperationException(
+                    "the block-size decision (" + (blocks?.Size ?? bd.Size).ToString(CultureInfo.InvariantCulture)
+                    + ", re-derived " + bd.Size.ToString(CultureInfo.InvariantCulture)
+                    + ") does not describe the plan it was given (" + plan.BlockSize.ToString(CultureInfo.InvariantCulture)
+                    + " seeds per block)");
+            }
+
+            SearchPreflight pf = new SearchPreflight { Output = output, BlockDecision = bd };
+            if (bd.Refusal != null) pf.Refusals.Add(bd.Refusal);
+            if (bd.Warning != null) pf.Warnings.Add(bd.Warning);
 
             // ---- 0. the feasibility / vacuity / degeneracy check, before anything is priced ---------
             //
@@ -329,24 +359,61 @@ namespace SeedLab.Search.Execution
                         + " of all 4,294,967,296 worlds"
                         + (plan.Limit >= 4294967296L ? " (the whole space)" : ""));
             pf.Plan.Add("threads      " + threads.ToString(CultureInfo.InvariantCulture));
+            if (bd.PlanLine != null) pf.Plan.Add(bd.PlanLine);
             pf.Plan.Add("checkpoint   one block of " + plan.BlockSize.ToString(CultureInfo.InvariantCulture)
-                        + " seeds is the finest resume point there is. The checkpoint is written on a clock, "
+                        + (plan.BlockSize == 1 ? " seed" : " seeds") + " is the finest resume point there is. The checkpoint is written on a clock, "
                         + "but it can only record blocks that have FINISHED, and ONE worker computes a whole "
                         + "block - so a block's wall time is block size x per-seed cost and the thread count "
                         + "does not divide it");
+
+            // The wall budget, as the bound it really is: an OVERRUN, never a floor. It is checked only
+            // when a worker is about to claim a block (SearchRun.Worker), and a claimed block is always
+            // finished. The old wording - docs and knowledge base alike - was "a budget cannot stop a
+            // run sooner than one block per worker", and that is false: each worker builds its
+            // evaluator before its first check, so a worker whose first check comes after the wall
+            // never claims at all (measured 2026-09-24: --budget 0.001s --seeds 512 evaluated 0 seeds;
+            // at --block-size 16, 0.02 s evaluated 32 where that formula said 128). What IS true is an
+            // upper bound: up to one block of one worker's time past the budget, with at most one
+            // block per busy worker in flight, plus the start-up and the final write every run has
+            // (BudgetBound says why). It is the CLI's --budget and the query's budget.wall alike
+            // (--budget sets q.Search.Wall since the same day), and on the web the page's time budget.
+            // The funnel clause holds because both front ends give each stage the whole budget and end
+            // the run when stage 1 is stopped (the user's decision, 2026-09-24); its figures are stage
+            // one's, which runs this plan, and stage two's blocks - sized over the survivors - get
+            // their own line at the gate (FunnelGate.Wall).
+            if (q.Search.Wall > TimeSpan.Zero && plan.Limit > 0)
+            {
+                pf.Plan.Add("budget       " + BudgetBound(q.Search.Wall, bd, "run")
+                            + ". Each resumed leg gets the whole budget again"
+                            + (FunnelPlan.For(q, cq).Usable
+                                ? ". If this run takes the funnel, each stage gets the whole budget, and a stop in "
+                                  + "stage 1 ends the run (stage 1 has no resume point of its own, so a re-run "
+                                  + "repeats it); the figures here are stage 1's, and stage 2's blocks are sized "
+                                  + "over its survivors, so the gate before it prints stage 2's own"
+                                : ""));
+            }
 
             // Measured, and the reason this warning is worth its space: at T3 on the game's own 12 m
             // grid a seed is about 4.2 s, so a 32-seed block is ~134 s of one worker's time. Sixteen
             // threads do not help: they are working on blocks 1..15 while block 0 decides the resume
             // point. A kill therefore costs up to one block however often the checkpoint is written.
+            //
+            // On a RESUMED leg the advice is for the next fresh run: this leg's boundaries are the
+            // checkpoint's, and following "--block-size 16" here would be refused (a resume point is a
+            // block number). It still names the flag, which is what keeps it out of explain.
             if (cq.MaxTier >= Tier.T3 && plan.BlockSize > 16)
             {
                 pf.Warnings.Add("this query reaches " + cq.MaxTier + " - where a seed costs a large fraction of a "
                                 + "second, and about 4.2 s at 12 m over the whole world - and a block is "
                                 + plan.BlockSize + " seeds computed by ONE worker. A kill can cost up to one "
                                 + "block whatever --checkpoint-every says, so for a fine resume point size the "
-                                + "block to about a minute of work: --block-size 16 at this tier, or 4 if the "
-                                + "query also places locations");
+                                + "block to about a minute of work"
+                                + (bd.Resume != null
+                                    ? " - on a FRESH run of this query: this leg resumes a checkpoint whose blocks "
+                                      + "are " + plan.BlockSize + " seeds, and a resume point is a block number, so "
+                                      + "they cannot change until it finishes. A fresh run can pass --block-size 16 "
+                                      + "at this tier, or 4 if the query also places locations"
+                                    : ": --block-size 16 at this tier, or 4 if the query also places locations"));
             }
 
             // ---- 7. the confirmations decision 10 asks for -----------------------------------------
@@ -436,9 +503,9 @@ namespace SeedLab.Search.Execution
         /// same kind of false sentence this note replaced. A shuffled whole-range run with a
         /// <c>budget.wall</c> is the exception to the third: the budget can stop it part-way through a
         /// permutation whose key comes from the hash, so it gets a "can visit different seeds" clause
-        /// (review of 2026-09-24). The CLI's <c>--budget</c> flag does not reach
-        /// <c>q.Search.Wall</c> in this build - only <c>budget.wall</c> in the query file does - so a
-        /// run limited by that flag alone is not covered yet.</para>
+        /// (review of 2026-09-24). The CLI's <c>--budget</c> flag reaches it too: it sets
+        /// <c>q.Search.Wall</c> (not part of the canonical JSON, so no hash moves) since the block-size
+        /// change of the same day, which is when a run limited by that flag alone got this clause.</para>
         /// </summary>
         private static string? PlacementGridNote(Query q, CompiledQuery cq, ScanPlan plan)
         {
@@ -468,6 +535,47 @@ namespace SeedLab.Search.Execution
                    + ") changes no value here. It is still part of the query's identity: another grid is "
                    + "another run hash, and the hash names the checkpoint and the funnel's survivor list"
                    + seeds;
+        }
+
+        /// <summary>
+        /// A budget as the user wrote it: "0.001 s", "20 s", then minutes, hours and days. The shared
+        /// duration format rounds to one decimal, which would print a 0.001 s budget as "0 s".
+        /// </summary>
+        private static string Seconds(double s)
+            => s < 90 ? s.ToString("0.###", CultureInfo.InvariantCulture) + " s" : RunEstimate.Duration(s);
+
+        /// <summary>
+        /// What a wall budget bounds for a run cut as <paramref name="bd"/> says: "20 s, checked only
+        /// when a worker is about to take a block; ... up to one block of work past 20 s (16 seeds on
+        /// ONE worker), with at most 8 blocks (128 seeds) in progress when it does, plus ...". One
+        /// sentence for the plan's budget line and the funnel gate's stage-two line, so the two bounds
+        /// are worded - and counted - alike.
+        ///
+        /// <para><b>The block named is the largest one left</b>, <c>min(block size, seeds left)</c>:
+        /// <c>--seeds 3 --block-size 256</c> is one block of 3, and the line used to name a block of
+        /// 256 beside "at most 1 block (3 seeds) in progress" (review of 2026-09-24).</para>
+        ///
+        /// <para><b>The start-up and the final write come on top.</b> Each worker builds its evaluator
+        /// before it first looks at the clock, and a run ends by writing its results and checkpoint:
+        /// measured 2026-09-24, <c>--budget 0.001s --seeds 512</c> on 8 workers claimed no block and
+        /// took 0.002 to 0.063 s over six runs, where a whole 16-seed block of that query costs about
+        /// 0.03 s - so "one block of work past the budget" alone was exceeded. Small beside a real
+        /// budget, and said anyway, because the sentence is a bound.</para>
+        /// </summary>
+        /// <param name="what">What ends: "run", or "stage" at the funnel gate.</param>
+        public static string BudgetBound(TimeSpan wall, BlockSizeDecision bd, string what)
+        {
+            string budget = Seconds(wall.TotalSeconds);
+            long perBlock = Math.Max(0, Math.Min(bd.Size, bd.RemainingSeeds));
+            long inFlight = Math.Min(bd.RemainingSeeds, (long)bd.BusyWorkers * bd.Size);
+            return budget + ", checked only when a worker is about to take a block; a block already taken is "
+                   + "always finished, so the " + what + " can end up to one block of work past " + budget + " ("
+                   + perBlock.ToString("N0", CultureInfo.InvariantCulture) + (perBlock == 1 ? " seed" : " seeds")
+                   + " on ONE worker), with at most " + bd.BusyWorkers.ToString("N0", CultureInfo.InvariantCulture)
+                   + (bd.BusyWorkers == 1 ? " block (" : " blocks (")
+                   + inFlight.ToString("N0", CultureInfo.InvariantCulture) + (inFlight == 1 ? " seed)" : " seeds)")
+                   + " in progress when it does, plus the workers' start-up and the final write (each worker "
+                   + "builds its evaluator before it first looks at the clock)";
         }
 
         /// <summary>

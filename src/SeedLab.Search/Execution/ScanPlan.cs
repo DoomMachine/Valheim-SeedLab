@@ -83,6 +83,28 @@ namespace SeedLab.Search.Execution
         /// </summary>
         public double FractionOfSpace => Limit / 4294967296.0;
 
+        /// <summary>
+        /// "0.47 % of all 4,294,967,296 worlds" for a count of seeds - the coverage sentence
+        /// <c>vseed search</c> prints for its plan, its report and its no-match line.
+        ///
+        /// <para><b>A count, never a plan built from a count.</b> The report used to build
+        /// <c>new ScanPlan(..., seedsEvaluated)</c> to print this, and a plan reads a limit of 0 as the
+        /// WHOLE range - so a run the budget stopped before any worker claimed a block (measured
+        /// 2026-09-24: <c>--budget 0.001s --seeds 512</c> evaluates 0 seeds) printed "coverage
+        /// 100.00 % of all 4,294,967,296 worlds (the whole space)", and "At 0.0 seeds/s this run saw
+        /// 100.00 %". Zero is "0 %" here. It lives in the shared library so the tests can pin it.</para>
+        /// </summary>
+        public static string CoverageLine(long seeds)
+        {
+            if (seeds < 0) seeds = 0;
+            double f = seeds / 4294967296.0;
+            string pct = seeds == 0 ? "0 %"
+                       : f >= 0.01 ? (f * 100).ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + " %"
+                       : f >= 1e-6 ? (f * 100).ToString("F6", System.Globalization.CultureInfo.InvariantCulture) + " %"
+                       : (f * 100).ToString("0.###e+00", System.Globalization.CultureInfo.InvariantCulture) + " %";
+            return pct + " of all 4,294,967,296 worlds" + (seeds >= 4294967296L ? " (the whole space)" : "");
+        }
+
         /// <summary>Index -> seed. A bijection over <c>[0, Count)</c> in both orders.</summary>
         public int SeedAt(long index)
         {

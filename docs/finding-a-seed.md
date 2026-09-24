@@ -54,20 +54,26 @@ choose each threshold.
 
 ## 2. Run the first search
 
-Start small. This is a real run from 2026-09-23:
+Start small. This is a real run from 2026-09-24:
 
 ```
 vseed search gentle-start --seeds 400 --keep 10 --out first.jsonl --yes
 ```
 
 Before it scans anything, it tells you what it is about to do — the grid, the region, the tier, the
-coverage, the size ceiling on the output file, and where the checkpoint will live:
+coverage, the cap on the output file, how the seeds are cut into blocks, and where the checkpoint
+will live:
 
 ```
-  keep         the best 10 - a REAL cap on the file: at most 4.94 KB whatever the scan finds,
-               and the true match count is reported beside it
+  keep         the best 10 - a REAL cap on the RECORD COUNT: the file holds at most 10 records
+               whatever the scan finds, and the true match count is reported beside it. ...
   grid         screen at G24 with a 1 % margin, then re-measure every survivor at G12
   coverage     9.313e-06 % of all 4,294,967,296 worlds
+  threads      8
+  block size   12, sized automatically for this run: the default 256 would cut these 400 seeds
+               into 2 blocks, and one worker computes a whole block, so 6 of the 8 workers would
+               have nothing to do; at 12 per block it is 34 blocks and the busiest worker
+               computes 60 seeds
 ```
 
 and afterwards:
@@ -76,8 +82,8 @@ and afterwards:
 Result
   seeds evaluated       400 of 400 planned
   matches               82  (20.500 %)
-  wall clock            3.4 min
-  measured rate         2.0 seeds/s on 8 threads
+  wall clock            44.9 s
+  measured rate         8.9 seeds/s on 8 threads
   results file          ...\first.jsonl  (10 records)
   what was kept         top 10 of 82 matches; 72 were not kept, from the point where the cut line
                         was 0.8231 (it ended at 1)
@@ -96,14 +102,23 @@ Best 10 of 82
 matched, and the run says both. A whole-space run with the default `--keep 1000` still writes about
 200 KB.
 
-*Block size decides how many workers actually work.* That run did 400 seeds in **2 blocks of 256**,
-so only two of the eight workers had anything to do — hence 2.0 seeds/s where the same preset
-measures **7.3 seeds/s** with `--block-size 16`. On short or expensive runs, add
-`--block-size 16` (or `4` when the query places locations).
+*Block size decides how many workers actually work — and it is sized for you.* One worker computes
+a whole block. Until 2026-09-24 the block was a fixed 256, so this same run was **2 blocks of 256**
+and only two of the eight workers had anything to do: it took 3.4 min at 2.0 seeds/s. The size is
+automatic now — **34 blocks of 12** here, and the plan says why — so the same 400 seeds took 44.9 s
+at 8.9 seeds/s and found the same 82 matches: the block size changes how long a run takes, never
+what it finds. A rate from a run where not every worker had work says so, as
+`(2 of 8 workers had work)`.
 
 ```
-vseed search gentle-start --seeds 4000 --block-size 16 --keep 20 --out hits.jsonl --yes
+vseed search gentle-start --seeds 4000 --keep 20 --out hits.jsonl --yes
 ```
+
+At 4,000 seeds the automatic size is 125, and the plan warns that ONE worker computes each block of
+a T3 query — here about two minutes of its time (125 seeds at the ~0.9 s a seed each worker took
+above), which is what a kill can cost however often the checkpoint is written. Add
+`--block-size 16` (or `4` when the query places locations) if you want a finer resume point; a size
+you give is kept.
 
 ## 3. Read what came back
 

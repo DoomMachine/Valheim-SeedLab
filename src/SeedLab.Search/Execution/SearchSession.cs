@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using SeedLab.Runtime.Execution;
 using SeedLab.Search.Criteria;
 using SeedLab.Search.Evaluation;
 using SeedLab.Search.Locations;
@@ -41,6 +42,22 @@ namespace SeedLab.Search.Execution
         public string CheckpointPath = "";
         public int Threads;
 
+        /// <summary>
+        /// The worker plan <see cref="Threads"/> came from, when <see cref="Create"/> was given a
+        /// planner; null when it was given a plain thread count. After a grid raise it is the plan at
+        /// the RAISED grid. A front end prints THIS object rather than planning again: a second plan
+        /// can land on the other side of an auto-throttle flip (the throttle re-polls on a timer and
+        /// flips whenever the game starts), and the block size was decided for this one.
+        /// </summary>
+        public WorkerPlan? WorkerPlan;
+
+        /// <summary>
+        /// How <see cref="Plan"/>'s block size was decided - given, automatic or adopted from a
+        /// checkpoint - with the counts and the sentences the plan block prints. Never written back
+        /// into <c>Query.Search.BlockSize</c>, which stays what the user gave.
+        /// </summary>
+        public BlockSizeDecision BlockDecision = null!;
+
         /// <summary>Orphaned <c>.ckpt.tmp</c> files this session cleaned up. Reported, not hidden.</summary>
         public List<string> CleanedOrphans = new List<string>();
 
@@ -73,12 +90,43 @@ namespace SeedLab.Search.Execution
         /// and the plan block all describe the run that will actually happen rather than the range it
         /// was derived from.
         /// </param>
+        /// <param name="overrideDecision">
+        /// How <paramref name="planOverride"/>'s block size was decided, so the preflight describes it
+        /// truly: a funnel's second stage passes the decision it also gave the funnel gate, and its
+        /// first stage passes the full run's. A plan's size alone cannot say whether it was given,
+        /// automatic or adopted. Left out, the override's size is read as one that was given.
+        /// </param>
+        /// <param name="plannerAtGrid">
+        /// Plans the workers for a grid spacing. When given it replaces <paramref name="threads"/>: it
+        /// is called at the query's grid, and again at the verify grid by the raised session, so the
+        /// block size is decided for the worker count that will really run, and the plan it returned
+        /// is kept on <see cref="WorkerPlan"/> for printing.
+        /// </param>
+        /// <param name="resumeCheckpoint">
+        /// For a run that will be resumed: the final query hash (after the name rewrite and any grid
+        /// raise) to the checkpoint that run would resume, or null. Called whenever it is given, whether
+        /// or not a block size was asked for - on a resume the checkpoint's size wins, and a different
+        /// one asked for is refused HERE, before any prompt or funnel stage runs. Its size is adopted
+        /// only when the checkpoint matches this run on everything else
+        /// (<see cref="Checkpoint.MatchesExceptBlockSize"/>). It must only read: the pre-raise session
+        /// calls it too, with the pre-raise hash, and is then discarded. An exception counts as null,
+        /// and <see cref="Start"/> reports the real problem with the file.
+        /// </param>
         public static SearchSession Create(Query q, ILocationOracle oracle, string engineVersion,
                                            long seedBudget, int threads, string? outPath = null,
                                            bool noPrefilter = false, bool acceptScanOrder = false,
                                            bool allowVacuous = false, ScanPlan? planOverride = null,
-                                           bool alreadyRaised = false)
+                                           BlockSizeDecision? overrideDecision = null,
+                                           bool alreadyRaised = false,
+                                           Func<double, WorkerPlan>? plannerAtGrid = null,
+                                           Func<string, Checkpoint?>? resumeCheckpoint = null)
         {
+            if (overrideDecision != null && planOverride == null)
+            {
+                throw new ArgumentException("an override decision describes an override plan, and none was given",
+                                            nameof(overrideDecision));
+            }
+
             SearchSession s = new SearchSession
             {
                 Query = q,
@@ -86,6 +134,12 @@ namespace SeedLab.Search.Execution
                 _engine = engineVersion,
                 Threads = threads > 0 ? threads : Math.Max(1, Environment.ProcessorCount),
             };
+
+            if (plannerAtGrid != null)
+            {
+                s.WorkerPlan = plannerAtGrid(q.Search.Grid);
+                s.Threads = Math.Max(1, s.WorkerPlan.Workers);
+            }
 
             // ---- names in, prefabs out: done HERE, before anything derives an identity from the query --
             //
@@ -105,8 +159,47 @@ namespace SeedLab.Search.Execution
             s.Compiled = CompiledQuery.Compile(q, oracle, noPrefilter);
             s.QueryHash = QueryReader.Hash(q);
             ulong key = q.Search.Key ?? ScanPlan.KeyFromHash(s.QueryHash);
-            s.Plan = planOverride
-                     ?? new ScanPlan(q.Search.Order, q.Search.From, q.Search.To, key, q.Search.BlockSize, seedBudget);
+
+            // ---- the block size: decided here, for the final worker count, before the preflight ------
+            //
+            // The provisional plan exists for its clamped Limit (a budget of 0 is the whole range, and a
+            // budget is capped by the range) and for the identity a checkpoint is matched on; neither
+            // depends on the block size, so its size is irrelevant. Nothing is written back into
+            // q.Search.BlockSize: stage one shares it by reference and the raise re-enters with it.
+            BlockSizeDecision decision;
+            if (planOverride != null)
+            {
+                decision = overrideDecision
+                           ?? BlockSizing.Decide(planOverride.BlockSize, planOverride.Limit, s.Threads);
+                s.Plan = planOverride;
+            }
+            else
+            {
+                ScanPlan provisional = new ScanPlan(q.Search.Order, q.Search.From, q.Search.To, key,
+                                                    SearchSpec.DefaultBlockSize, seedBudget);
+                ResumePoint? resumePoint = null;
+                if (resumeCheckpoint != null)
+                {
+                    Checkpoint? c;
+                    try
+                    {
+                        c = resumeCheckpoint(s.QueryHash);
+                    }
+                    catch (Exception)
+                    {
+                        c = null;
+                    }
+
+                    if (c != null && c.MatchesExceptBlockSize(q, provisional, s.QueryHash))
+                    {
+                        resumePoint = ResumePoint.From(c);
+                    }
+                }
+
+                decision = BlockSizing.Decide(q.Search.BlockSize, provisional.Limit, s.Threads,
+                                              SearchSpec.DefaultBlockSize, resumePoint);
+                s.Plan = new ScanPlan(q.Search.Order, q.Search.From, q.Search.To, key, decision.Size, seedBudget);
+            }
 
             string? path = outPath ?? q.Output.Path;
             s.Output = new OutputPolicy
@@ -146,7 +239,8 @@ namespace SeedLab.Search.Execution
             // bosses, traders and dungeons is silently unreachable - which is the defect this wiring
             // exists to close.
             s.Preflight = SearchPreflightCheck.Check(q, s.Compiled, s.Plan, s.Output, s.Threads,
-                                                     acceptScanOrder, oracle, allowVacuous);
+                                                     acceptScanOrder, oracle, allowVacuous, decision);
+            s.BlockDecision = s.Preflight.BlockDecision;
             s.Grid = s.Preflight.Grid;
             foreach (string u in s.Grid.UnsafeMusts) s.Preflight.Warnings.Add(u);
             foreach (string w in s.Compiled.Warnings) s.Preflight.Warnings.Add(w);
@@ -204,8 +298,13 @@ namespace SeedLab.Search.Execution
                 q.Search.Grid = s.Grid.VerifyGrid;
                 q.CanonicalJson = QueryReader.Canonicalise(q);
 
+                // The planner and the checkpoint peek go through: the raised session plans its workers
+                // at the grid it will really run at (a 12 m worker holds far more than a 384 m one) and
+                // looks for the checkpoint under the RAISED hash, which is the one Start will open.
                 SearchSession raised = Create(q, oracle, engineVersion, seedBudget, threads, outPath,
-                                              noPrefilter, acceptScanOrder, allowVacuous, null, true);
+                                              noPrefilter, acceptScanOrder, allowVacuous,
+                                              planOverride: null, overrideDecision: null, alreadyRaised: true,
+                                              plannerAtGrid: plannerAtGrid, resumeCheckpoint: resumeCheckpoint);
                 raised.Grid.RaisedFrom = from;
 
                 // A carried note goes into the PLAN too, directly under the grid line. The raised
@@ -258,6 +357,18 @@ namespace SeedLab.Search.Execution
                                           + ", not only described as it");
                 return raised;
             }
+
+            // The plan's grid line was written by the preflight from the grid policy's FIRST answer, and
+            // the two branches above can turn the screening pass off after it (--no-prefilter, or a
+            // screen query that screens nothing). The CLI re-rendered its own copy at print time
+            // (SearchCommand.GridLine); the web page printed Preflight.Plan as it stood, so its plan
+            // block said "screen at G24 with a 1 % margin, then re-measure every survivor at G12"
+            // beside a verdict row saying "measure once at G12" (review of 2026-09-24, large-continents
+            // at 300 seeds). Re-rendered here, once, every front end prints the grid the run has. A
+            // raised session comes through here too (the recursion), and Describe does not read
+            // RaisedFrom, so the line the raise branch inserts its notes under is already the true one.
+            int gridLine = s.Preflight.Plan.FindIndex(l => l.StartsWith("grid         ", StringComparison.Ordinal));
+            if (gridLine >= 0) s.Preflight.Plan[gridLine] = "grid         " + s.Grid.Describe();
 
             s.CheckpointPath = CheckpointStore.DefaultPath(s.QueryHash);
             return s;

@@ -119,9 +119,13 @@ vseed clean                  what SeedLab holds in its cache root; --yes removes
   `--accept-unverified-platform`, `--json`, `--debug`.
 - `--json` on any data command; exit codes `0` ok, `1` a check failed, `2` bad command line, `3` not
   found, `4` internal fault.
-- **`--block-size` decides how many workers actually work.** One worker computes a whole block, so
-  400 seeds in blocks of 256 is two busy workers (measured 2.0 seeds/s where the same preset does 7.3
-  with `--block-size 16`). Use 16 at T3, 4 with location goals.
+- **The block size is automatic since 2026-09-24** (CLI and web alike; ceiling 256, the user's
+  choice). One worker computes a whole block, so a short run used to leave workers idle (400 seeds in
+  blocks of 256 = two busy workers: 2.0 seeds/s against 7.3). Now, when no size is given, a run too
+  short to give every worker 4 blocks is cut finer and the plan says why; an explicit `--block-size` /
+  `search.block_size` / web box value is kept and WARNS with the idle count; a `--resume` adopts the
+  checkpoint's size (a resume point is a block number). Pass a size only to pin the resume
+  granularity (the T3+ warning still suggests 16, or 4 with location goals).
 - **Run it with the working directory at the SeedLab root**, or set `SEEDLAB_DATA_DIR` to
   `data\1.0.15-59f53fb5\`; otherwise every location answer fails closed (invariant 2).
 - A token that parses as an int32 is read as the **int**; `--text` / `--int` force either reading.

@@ -26,8 +26,8 @@ silently turn a must-have into nothing at all.
     "screen_grid": 24,
     "region": 2000,
     "approx": false,
-    "threads": 16,
-    "block_size": 256
+    "threads": 16
+    // "block_size": 16      // omit it: sized automatically. Set it only to pin the resume point
   },
 
   "output": {
@@ -73,7 +73,7 @@ silently turn a must-have into nothing at all.
 | `key` | derived from the query hash | the Feistel key, as a number or a `"0x..."` string. Same key + same range = the same seed sequence = the same results. |
 | `range` | the whole int32 space | `[from, to]`, inclusive. |
 | `budget.seeds` | the whole range | stop after this many seeds. |
-| `budget.wall` | none | stop after this long: `90s`, `45m`, `8h`, `2d`. **A wall-limited run is not reproducible on its own** - how many seeds fit depends on the machine - but its checkpoint records exactly how many blocks finished, so re-running with that `budget.seeds` is. |
+| `budget.wall` | none | stop after this long: `90s`, `45m`, `8h`, `2d` (`--budget` on the command line sets the same thing). **A wall-limited run is not reproducible on its own** - how many seeds fit depends on the machine - but its checkpoint records exactly how many blocks finished, so re-running with that `budget.seeds` is. **It bounds an overrun, not a floor**: it is checked only when a worker is about to take a block, and a block already taken is finished, so a run can end up to one block of one worker's time past it, with at most one block per busy worker in flight, plus the workers' start-up and the final write - the plan prints both numbers, and a funnel's gate prints stage 2's - and it can stop a run at 0 seeds. With the funnel strategy each stage gets the whole budget, and a stop in stage 1 ends the run. |
 | `keep` | 1000 | **a real cap on the results file.** Only the best `keep` records are ever written, so the disk cost is `keep x record size` however many seeds are scanned, and the run reports the true match count beside them ("top 1000 of 131,076"). Ties break on score then seed ascending, so a re-run is byte-identical. `"all"` streams every match instead - pair it with `output.rotate`, because a query with no must-have goal matches **100 %** of seeds and a whole-space run of one was measured at **7.36 TB**. |
 | `grid` | 12 | the definitional sampling grid, metres. `12` is the game's own 2048x2048 grid. For a metric measured on the grid, anything coarser is a different measurement, not an approximation - it is printed with every number and stamped on every record, and the plan warns by name about each goal it applies to. Location and group goals are not measured on it: placement uses the game's own 2048x2048 @ 12 m grid whatever this says, so they are exact at every grid. The grid is still part of the query's identity: it moves the run hash, so the checkpoint and the survivor list, and - for a shuffled run with no `key` over part of the range, or one a `budget.wall` can stop before it covers the range - which seeds are visited. |
 | `screen` | `auto` | `auto` \| `on` \| `off`. Screen-then-verify: a cheap coarse pass with a measured margin, then an exact re-measurement of every survivor at `grid`. Measured on 2,560 seeds: a **1 % margin at 24 m loses zero true matches** on every bulk-area goal tested, at 1.2x survivors. `auto` turns it on only for the goals it is safe for - a counting metric (biome area, share, `area_within`, land share). It never screens an island, spawn-island, island-count, shore, peak, `area_above_height` or nearest-distance goal, because **no margin at any grid is both safe and selective** for those. Every record written is measured at `grid`, and says which grid screened it. |
@@ -81,7 +81,7 @@ silently turn a must-have into nothing at all.
 | `region` | from the goals | measure inside this disc only, metres. **Exact**: a metric bounded by a disc cannot be changed by a cell outside it. Measured at the game's own 12 m grid, one biome goal costs **7.90 ms/seed** inside a 1 km disc against **314.40 ms/seed** over the whole world. A goal whose own definition is wider is still measured - inside the disc - and every record it touches is marked `bounded` with the radius, because that is a different number and must not be read as a whole-world one. |
 | `approx` | false | would enable HEURISTIC prefilters. **This build ships none**, so it only stamps `approx` on the output. |
 | `threads` | every logical core | workers. At `grid: 12` each worker holds 36 MB of buffers. |
-| `block_size` | 256 | seeds per work block. Checkpoints land on block boundaries, so a smaller block means a finer resume point and slightly more overhead. |
+| `block_size` | automatic | seeds per work block, and **one worker computes a whole block**, so a run with fewer blocks than workers leaves the rest idle. Left out, it is sized per run: 256, or smaller so every worker gets at least four blocks (512 seeds on 8 workers is 32 blocks of 16), and the plan says which and why. A size given here or with `--block-size` is kept, and warned about when it leaves workers idle. A resumed run keeps its checkpoint's size whatever its thread count - a resume point is a block number - and a different size given on a resume is refused before the prompt (for a funnel's stage 2, at its gate once stage 1 has made the survivor list that identifies its checkpoint). Checkpoints land on block boundaries, so a smaller block is a finer resume point. A completed run's results are the same bytes at every size. |
 
 ## `output`
 

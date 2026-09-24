@@ -344,7 +344,8 @@
           <label for="qThreads">Threads</label>
           <input id="qThreads" type="number" min="0" max="256" step="1" value="0" placeholder="0 = the mode decides">
           <label for="qBlock">Block size</label>
-          <input id="qBlock" type="number" min="1" max="65536" step="1" value="64">
+          <input id="qBlock" type="number" min="1" max="65536" step="1" value="" placeholder="auto"
+                 title="Empty: sized automatically, like vseed search - 256 seeds, or smaller so every worker gets at least four blocks. One worker computes a whole block, and Stop, streamed results and the checkpoint land on block boundaries, so a number here gives finer steps on a slow query; one that leaves workers idle is warned about.">
         </div>
         <div class="row-inline">
           <label><input id="qIgnoreGame" type="checkbox"> run at full speed even while Valheim is open</label>

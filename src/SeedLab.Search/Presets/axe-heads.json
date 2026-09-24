@@ -26,8 +26,9 @@
   // COST: StartTemple, WoodHouse2 and WoodHouse6 sit at 52 of 183 ordered entries, so a seed runs
   // that prefix (every earlier type can take a later one's zone, so it cannot be shorter). MEASURED
   // 2026-09-24, 256 seeds, --block-size 16, 8 workers (balanced mode): 61.6 s, 4.2 seeds/s.
-  // (A plain '--seeds 512' is only 2 blocks of 256, so 2 of the 8 workers get work and it runs at
-  // 1.3 seeds/s - that is the block size, not this preset.)
+  // (Until 2026-09-24 a plain '--seeds 512' was only 2 blocks of 256, so 2 of the 8 workers got work
+  // and it ran at 1.3 seeds/s - that was the block size, not this preset. Left out, the block size is
+  // now automatic: 512 seeds on 8 workers is 32 blocks of 16.)
   //
   // NO "grid" ON PURPOSE. Every goal here is a location goal, and a location run builds its own
   // 2048^2 biome-point grid whatever the query says. The same 256-seed run at G384 took 60.1 s

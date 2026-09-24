@@ -4,7 +4,99 @@ Newest first. Each entry says what changed, why, and how it was verified. Game f
 discovered are recorded in the valheim-worldgen / valheim-modding references and only pointed at from
 here.
 
-## 2026-09-24 (latest) - grid warnings only for goals the grid measures
+## 2026-09-24 (latest) - a block for every worker, and what a budget really bounds
+
+**The defect (reported by the user).** `vseed search <query> --seeds N` with N below workers x block
+size left workers idle: one worker computes a whole block and the size was a fixed 256, so `--seeds
+512` on 8 workers was 2 blocks and 6 workers did nothing - and the report printed that 2-worker rate
+"on 8 threads". Measured: `axe-heads` at 64 seeds took 1.6 min as one block of 64 and 16.4 s as eight
+blocks of 8. `docs\measurements.md` also said a `--budget` "cannot stop a run sooner than one block per
+worker"; that floor does not exist (`--budget 0.001s --seeds 512` evaluates 0 seeds, and reported
+"coverage 100.00 % ... (the whole space)"). The premise that made the size free to choose was measured
+first: a completed run's results file is byte-identical across block sizes (jsonl, json and csv, keep N
+and keep all, evict limits, screen-then-verify); compressed rotated output is not byte-stable even at a
+fixed size (gzip boundaries follow the flush clock), so it is never compared.
+
+**The user's two decisions.** (1) One automatic ceiling of **256 for both front ends**, chosen over the
+recommended 64: the web page's hard-coded 64 is gone and an empty Block size box means automatic (a
+location-tier block can then be about 6 to 8 minutes of one worker, which is when Stop and the first
+streamed results land; the box gives finer steps). (2) **`--budget` covers funnel stage 1 too**: the
+CLI's stage 1 obeys the wall (it ran with none), and the web page stops after a stage-1 wall stop or
+Stop press as the CLI does (it went on into stage 2 with a fresh budget), so one budget sentence is true
+on both.
+
+What changed (`BlockSizing` is new; `SearchSession`, `SearchPreflight`, `Checkpoint`, `FunnelRun`,
+`SearchRun`, `ScanPlan`, `QueryModel`/`QueryReader`, the CLI's `SearchCommand`, the web engine, planner,
+model, translator and page, the estimator):
+- **The rule, shared** (`BlockSizing.Decide`): automatic is 256, or `floor(limit / (4 x workers))`
+  (never below 1) when 256 would give a worker fewer than four blocks; one worker keeps 256. Four per
+  worker because blocks are not equal in time. A size that is given (`--block-size`,
+  `search.block_size`, the Block size box) is kept and warned about with the idle count and what
+  automatic would pick. `--block-size 0` is a usage error (it used to run as blocks of 1), and so is a 0
+  in the box. The plan says which rule applied and why, in counts, never "Nx as long".
+- **Resume**: a resumed run keeps its checkpoint's size on any thread count (a resume point is a block
+  number), adopted only from a checkpoint that matches the run on everything else
+  (`Checkpoint.MatchesExceptBlockSize`), so a funnel stage-2 file or another `--seeds` never feeds the
+  main plan; `MustMatch` checks the seed budget before the block size. A different size asked for is
+  refused, naming the size that works and the file: before the prompt for the main run, at the gate for
+  funnel stage 2 (stage 2's checkpoint is recognised by the survivor list stage 1 makes).
+- **The session plans its workers** at the grid it runs at (`plannerAtGrid`, after any raise) and keeps
+  that `WorkerPlan`, which both front ends print instead of planning twice (`SeedLab.Search` now
+  references `SeedLab.Runtime`). The decided size is never written back into the query.
+- **Funnel stage 2** is sized by the same rule over its survivors, decided once for the gate and the
+  plan; the gate prints its size line, its warning and, with a budget, stage 2's own bound.
+- **Rates**: `SearchOutcome.BusyWorkers` (counted at the claim) labels a rate "(N of M workers had
+  work)" on the CLI, in `--json` (`busy_workers`, `block_size`, `blocks`) and on the page, which keeps
+  a rate as the machine's only when every worker had work. The dry run times "this run" by its busiest
+  worker and prints the scale it used.
+- **Budget**: `--budget` sets `q.Search.Wall`. The plan's budget line states the overrun: up to one
+  block of one worker's time past the budget (the largest block left), at most one block per busy
+  worker in flight, plus the workers' start-up and the final write. `StoppedByWall` and `StoppedByUser`
+  are false on a complete run. A 0-seed stop reports 0 % coverage (`ScanPlan.CoverageLine(long)`).
+- **Review fixes** (three adversarial reviews of the implementation): a funnel `--resume` over a SAMPLE
+  run's checkpoint no longer adopts its block size - the CLI decides the strategy before the session
+  (sound because a grid raise cannot change it, pinned by a check) - and says the funnel does not
+  continue that file, refusing before anything runs when stage 2's checkpoint is that same file; resume
+  refusals have their own header and keep the checkpoint path on one line (it can hold a space); a Stop
+  after the last claim no longer throws a finished stage 1 away, and the CLI remembers a Ctrl-C and hands
+  it to the next run, so one pressed then - or while the gate measures placement, when no run was live -
+  stops stage 2 at its first block boundary (a real Ctrl-C sent during the gate: 0 of 400 placed,
+  survivor list and checkpoint kept; before, by reading the code, stage 2 ran in full); the page now
+  ends a funnel whose stage 1 kept no seed and a run that fails between stages (they published an event
+  it had no listener for,
+  and the browser replayed the run every few seconds); the page's plan block prints the session's final
+  grid (`SearchSession.Create` re-renders the line); no spreading sentence at zero survivors; singular
+  "1 block" / "1 seed"; a stale `axe-heads` comment; `--threads` help. The `proof refuse` fixture's
+  must-have filtered nothing and was refused as vacuous; it is 5,000,000 m² now and the proof exits 0.
+- Docs: README, CHANGES-FOR-THE-USER, `docs\search.md`, `docs\measurements.md` (the false floor corrected
+  in place, dated, every measurement kept), `docs\finding-a-seed.md` (re-captured: 400 seeds of
+  gentle-start in 34 blocks of 12, 44.9 s at 8.9 seeds/s, where 2 blocks of 256 took 3.4 min at 2.0;
+  the same 82 matches and top 10), `schema.md`.
+
+Verified: `SeedLab.Search.Tests` **321/321** (244 before; sections 11-13 are new, 77 checks),
+`SeedLab.Runtime.Tests` **125/125**; `proof refuse`, `proof policy` and `proof blocks` exit 0 - `blocks`
+finds jsonl, json and csv at keep 50 and keep all identical at the automatic 62 on 8 threads, 256 on 8
+and 7 on 3, and a run stopped on 8 threads at the automatic 187 and finished on 3 (adopting 187) equal
+to the uninterrupted `--block-size 7` run, bounded and keep-all. `killtest.ps1` 3/3 IDENTICAL bare, and
+3/3 each with `-AutoBlock -ResumeThreads 3 -Seeds 6000 -Grid 24 -Radius 5000`, bounded and `-KeepAll`.
+`vseed serve --selftest` all PASS. A real CLI run hard-killed on 8 threads at the automatic 187 and
+resumed on 3 threads ends with the uninterrupted `--block-size 7` run's SHA-256, and a funnel whose
+stage 2 the budget stopped on 8 threads (automatic 12) and that resumed on 3 (adopting 12) equals a
+fresh `--block-size 7` funnel. `proof estimate` reports 1 estimator violation, as the build before the
+change does.
+
+Follow-ups, not in this change:
+- Funnel stage 2 still checkpoints in the default cache root whatever `--cache-dir` or
+  `SEEDLAB_CACHE_DIR` says (CLI and web), and `vseed serve` ignores `--cache-dir`; moving the path needs
+  a migration for the stage-2 checkpoints that exist.
+- A resumed leg's report puts cumulative "seeds evaluated" beside this leg's rate; the web planner
+  ignores the `SearchThreads` ceiling; the page keeps stage 2's placement rate as the machine's.
+- The example in `schema.md` is refused by `vseed explain` (it sets `reduce` with no segments).
+- Observed while testing, present before this change: a checkpoint save fails with "Access to the path
+  is denied" while another process holds the checkpoint file open (a harness polling it every 50 ms
+  triggered it); a virus scanner or file viewer could do the same to a real run.
+
+## 2026-09-24 - grid warnings only for goals the grid measures
 
 **The defect (reported by the user).** A query whose goals were all location or group goals was told
 two false things at a coarse grid, by `vseed search`, `vseed explain` and the web page alike: "grid =

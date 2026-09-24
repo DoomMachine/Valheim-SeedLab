@@ -55,7 +55,11 @@ namespace SeedLab.Search.Execution
         public long Blocks;
         public long BlocksDone;
         public bool Complete;
+
+        /// <summary>The wall budget cut the run short. Never true of a run that is <see cref="Complete"/>.</summary>
         public bool StoppedByWall;
+
+        /// <summary>A Stop (Ctrl-C, the page's button) cut the run short. Never true of a run that is <see cref="Complete"/>.</summary>
         public bool StoppedByUser;
 
         /// <summary>The run stopped because the result ceiling was reached and <c>--on-limit stop</c> was in force.</summary>
@@ -89,6 +93,32 @@ namespace SeedLab.Search.Execution
         public long Pregenerated;
 
         public int Threads;
+
+        /// <summary>
+        /// Workers that claimed at least one block in this leg - counted at the claim, not predicted.
+        ///
+        /// <para><b>Why the rate needs it.</b> One worker computes a whole block, so a leg with fewer
+        /// blocks than workers - a short run at a block size that was given, the tail of a resumed
+        /// run, a run the budget stopped before every worker had claimed - measures the rate of the
+        /// workers that had blocks, not of the machine. Reported as "on 8 threads" it was a starved
+        /// number wearing the machine's name: the gentle-start run captured in finding-a-seed.md was
+        /// 400 seeds in 2 blocks of 256 at 2.0 seeds/s, where the same preset measured 7.3 with every
+        /// worker fed. Every front end labels the rate with this whenever it is below
+        /// <see cref="Threads"/> (2026-09-24), and the web page does not keep such a rate as the
+        /// machine's.</para>
+        /// </summary>
+        public int BusyWorkers;
+
+        /// <summary>
+        /// The label a rate needs when not every worker had work - "(2 of 8 workers had work)" - or
+        /// null when every one did. One sentence for the CLI's report, its no-match line, and the web
+        /// page, so the three cannot word it differently.
+        /// </summary>
+        public string? RateNote => BusyWorkers < Threads
+            ? "(" + BusyWorkers.ToString(System.Globalization.CultureInfo.InvariantCulture) + " of "
+              + Threads.ToString(System.Globalization.CultureInfo.InvariantCulture) + " workers had work)"
+            : null;
+
         public List<SeedResult> Top = new List<SeedResult>();
         public string? ResultsPath;
 
@@ -152,6 +182,7 @@ namespace SeedLab.Search.Execution
         private volatile bool _limitHit;
         private long _startBlock;
         private int _peakPending;
+        private int _busyWorkers;
 
         private double _constructSeconds;
         private double _sampleSeconds;
@@ -269,6 +300,7 @@ namespace SeedLab.Search.Execution
             _nextClaim = startBlock;
             _startBlock = startBlock;
             _peakPending = 0;
+            _busyWorkers = 0;
 
             // A resumed bounded run has to continue the SAME best-N, or its file would hold the best
             // of the tail of the scan under the name "top N". The kept set travels with the
@@ -452,8 +484,21 @@ namespace SeedLab.Search.Execution
                 Blocks = _plan.Blocks,
                 BlocksDone = emit,
                 Complete = complete,
-                StoppedByWall = _wallHit,
-                StoppedByUser = _userStop,
+
+                // Only a run the wall actually cut short. A worker that sees the wall after the last
+                // block has already been claimed still sets the flag, so a run that FINISHED used to
+                // report complete and stopped_by_wall together (and the web page, which tests the wall
+                // first, said "the wall-clock budget ran out" on a finished run). Guarding the flag at
+                // the claim races instead: another worker can take the last block between the check
+                // and the flag. `complete` is decided after every worker has joined, so this cannot
+                // lose a true stop - blocks left unclaimed means incomplete (review of 2026-09-24).
+                StoppedByWall = _wallHit && !complete,
+
+                // The same rule for a Stop, for the same reason. A Stop pressed after the last block was
+                // claimed stops nothing - every block is finished - and a funnel's stage one reported so
+                // was thrown away as "stopped after 400 of 400 seeds ... not of the range asked for", on
+                // both front ends, which test StoppedByUser || StoppedByWall (review of 2026-09-24).
+                StoppedByUser = _userStop && !complete,
                 StoppedByLimit = _limitHit,
                 ProbeAccepts = Interlocked.Read(ref _probeAccepts),
                 EarlyExits = Interlocked.Read(ref _earlyExits),
@@ -466,6 +511,7 @@ namespace SeedLab.Search.Execution
                 PregenSeconds = _pregenSeconds,
                 Pregenerated = Interlocked.Read(ref _pregenerated),
                 Threads = _threads,
+                BusyWorkers = Volatile.Read(ref _busyWorkers),
                 Top = top,
                 ResultsPath = sink?.Path,
                 ResultsWritten = sink?.Kept ?? 0,
@@ -482,6 +528,7 @@ namespace SeedLab.Search.Execution
                             ManualResetEventSlim roomReady, Stopwatch sw, double wallSeconds, int maxPending)
         {
             ISeedEvaluator ev = EvaluatorFactory != null ? EvaluatorFactory() : new SeedEvaluator(_q, _oracle);
+            bool claimed = false;
             try
             {
                 while (true)
@@ -504,6 +551,14 @@ namespace SeedLab.Search.Execution
 
                     long block = Interlocked.Increment(ref _nextClaim) - 1;
                     if (block >= _plan.Blocks) break;
+
+                    // Counted at the claim, once per worker: the workers that had work, which is what
+                    // the rate at the end was measured on (SearchOutcome.BusyWorkers).
+                    if (!claimed)
+                    {
+                        claimed = true;
+                        Interlocked.Increment(ref _busyWorkers);
+                    }
 
                     long lo = _plan.BlockStart(block), hi = _plan.BlockEnd(block);
                     List<SeedResult> hits = new List<SeedResult>();

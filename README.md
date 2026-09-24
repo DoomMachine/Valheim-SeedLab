@@ -451,7 +451,7 @@ the space it is going to cover **before it starts**.
 vseed presets list                             what ships, and what each one costs
 vseed presets show gentle-start > mine.json    a working query to edit
 vseed search mine.json --dry-run               estimate the cost (an upper bound - see below)
-vseed search mine.json --seeds 200000 --block-size 16 --keep 20 --out hits.jsonl --yes
+vseed search mine.json --seeds 200000 --keep 20 --out hits.jsonl --yes
 vseed explain -1772362158 mine.json            why that one seed passed or failed
 ```
 
@@ -461,17 +461,19 @@ output.
 ### Before every run, not only `--dry-run`
 
 Every `vseed search` prints a plan first: the grid and why, the region, the tier each goal is
-answered at, the coverage as a fraction of 2³², the worker count with its arithmetic, the memory
-budget, the **ceiling on the output file**, the free space, and the checkpoint path. Then one of
-three things happens.
+answered at, the coverage as a fraction of 2³², the worker count with its arithmetic, the block
+size (and why, when it is not the default 256), the memory budget, the **ceiling on the output
+file**, the free space, the checkpoint path, and — when `--budget` is set — how far past it a run
+can go. Then one of three things happens.
 
 - **It runs.**
 - **It asks**, when the run is expensive or surprising — the whole space, over an hour, over 100 M
   seeds, over 1 GB of output or 10 % of the volume, an evicting ceiling, or a grid the engine had to
   raise. With stdin redirected it does not start: it prints what needs confirming and tells you to
   pass `--yes` or use `--dry-run`.
-- **It refuses**, when the run could not answer the question honestly, and names the fix. Nothing is
-  scanned and nothing is written. Real examples from this build: a query whose goals are *all*
+- **It refuses**, when the run could not answer the question honestly — or, on `--resume`, could not
+  continue the checkpoint that is there (a different `--block-size`, say) — and names the fix. Nothing
+  is scanned and nothing is written. Real examples from this build: a query whose goals are *all*
   must-haves (nothing to rank by, so "top 1,000" would be an arbitrary sample — fix it with a
   nice-to-have goal or `--accept-scan-order`); `--keep all` on a query that matches every seed
   (*"it WILL write about 818 GB and the volume has 599 GB free"*); a goal no seed can satisfy; a
@@ -497,6 +499,17 @@ Checkpoints live in the cache root, keyed by the query hash — never in the dir
 standing in — and a completed run deletes its own. A hard kill costs at most one block, and the
 resumed file is **byte-identical** to an uninterrupted run's, verified by killing runs at three
 points, bounded and streaming, and comparing SHA-256.
+
+One worker computes a whole block, so the block size is **automatic**: 256 seeds, or smaller when a
+short run would otherwise leave workers with nothing to do (`--seeds 512` on 8 workers is 32 blocks
+of 16, where a fixed 256 was 2 blocks and 6 idle workers), and the plan says which and why. The web
+page uses the same rule when its Block size box is empty. `--block-size` still pins it — for a
+finer resume point on an expensive query — and is warned about when it leaves workers idle. A
+resumed run keeps its checkpoint's size on any thread count, because a resume point is a block
+number. None of this changes a result: a completed run's file is the same bytes at every block size
+(`proof blocks`). A `--budget` is checked only when a worker takes a block, so a run can end up to
+one block of work past it, plus the workers' start-up and the final write — the plan prints that
+bound with this run's numbers, and a funnel's gate prints stage 2's.
 
 ### The grid is part of the answer, and the engine will raise it
 

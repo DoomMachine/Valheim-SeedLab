@@ -14,7 +14,8 @@ namespace Proof
 {
     /// <summary>
     /// Proof harness for the search engine's safety work. Every number it prints it measured.
-    /// Subcommands: bounded, memory, run (for the kill test), resume, rotate, refuse, policy, region.
+    /// Subcommands: bounded, memory, run (for the kill test), rotate, refuse, policy, region,
+    /// estimate, screen, blocks.
     /// </summary>
     public static class Program
     {
@@ -22,7 +23,7 @@ namespace Proof
 
         public static int Main(string[] args)
         {
-            if (args.Length == 0) { Console.Error.WriteLine("usage: proof <bounded|memory|run|rotate|refuse|policy|region|estimate>"); return 2; }
+            if (args.Length == 0) { Console.Error.WriteLine("usage: proof <bounded|memory|run|rotate|refuse|policy|region|estimate|screen|blocks>"); return 2; }
             switch (args[0])
             {
                 case "bounded": return Bounded(args);
@@ -34,18 +35,26 @@ namespace Proof
                 case "region": return Region(args);
                 case "estimate": return Estimate(args);
                 case "screen": return Screen(args);
+                case "blocks": return Blocks(args);
                 default: Console.Error.WriteLine("unknown: " + args[0]); return 2;
             }
         }
 
         // A cheap biome query: every seed is measured on a small disc, so a leg runs in seconds.
+        //
+        // blockSize null leaves block_size out of the query, so the run is sized automatically
+        // (BlockSizing) - and a resumed leg takes its checkpoint's size - which is what the 'blocks'
+        // proof and killtest.ps1 -AutoBlock exercise. Every other proof keeps the pinned 64.
         private static Query Q(string keep, double grid = 96, double radius = 2000, string test = "at_least",
-                               double value = 1, string importance = "nice")
+                               double value = 1, string importance = "nice", int? blockSize = 64)
         {
+            string blocks = blockSize.HasValue
+                ? @"""block_size"": " + blockSize.Value.ToString(CultureInfo.InvariantCulture) + @", "
+                : "";
             string json = @"{
               ""version"": 1, ""defs"": 1, ""name"": ""proof"",
               ""search"": { ""order"": ""shuffled"", ""key"": ""0x5EEDF00D1234ABCD"", ""grid"": " + grid.ToString(CultureInfo.InvariantCulture) + @",
-                            ""keep"": " + keep + @", ""block_size"": 64, ""screen"": ""off"" },
+                            ""keep"": " + keep + @", " + blocks + @"""screen"": ""off"" },
               ""goals"": [
                 { ""id"": ""meadows"", ""target"": ""biome:Meadows"", ""metric"": ""area_within"",
                   ""radius"": " + radius.ToString(CultureInfo.InvariantCulture) + @",
@@ -152,8 +161,15 @@ namespace Proof
                 foreach (string f in new[] { outPath, ckpt, ckpt + ".top" }) if (File.Exists(f)) File.Delete(f);
             }
 
-            Query q = Q(Has(args, "--keep-all") ? "\"all\"" : "100", 96, 2000);
-            SearchSession s = SearchSession.Create(q, Oracle, Engine, seeds, threads, outPath, acceptScanOrder: true);
+            // --auto-block leaves block_size out, so the size is the automatic rule's for THIS leg's
+            // thread count - and a resumed leg on another thread count must take the checkpoint's size
+            // instead, through the same peek the CLI's --resume uses, or its own checkpoint refuses it.
+            // killtest.ps1 -AutoBlock -ResumeThreads N is that proof with hard kills in between.
+            Query q = Q(Has(args, "--keep-all") ? "\"all\"" : "100", Arg(args, "--grid", 96.0), Arg(args, "--radius", 2000.0),
+                        blockSize: Has(args, "--auto-block") ? null : 64);
+            Func<string, Checkpoint?>? peek = resume ? _ => File.Exists(ckpt) ? Checkpoint.Load(ckpt) : null : null;
+            SearchSession s = SearchSession.Create(q, Oracle, Engine, seeds, threads, outPath, acceptScanOrder: true,
+                                                   resumeCheckpoint: peek);
             IResultSink? sink = s.Start(resume, ckpt);
             if (s.RepairedBytes > 0)
             {
@@ -161,11 +177,13 @@ namespace Proof
                                   + " B discarded back to the checkpoint's results_length");
             }
 
-            SearchOutcome o = s.Run(sink, null, TimeSpan.Zero, TimeSpan.FromSeconds(Arg(args, "--ckpt-every", 2)));
+            SearchOutcome o = s.Run(sink, null, TimeSpan.Zero, TimeSpan.FromSeconds(Arg(args, "--ckpt-every", 2.0)));
             sink?.Finish();
             sink?.Dispose();
             Console.WriteLine("leg done  complete=" + o.Complete + "  seeds=" + o.Evaluated
                               + "  matches=" + o.Passed + "  kept=" + o.ResultsWritten
+                              + "  threads=" + s.Threads + "  block_size=" + s.Plan.BlockSize
+                              + " (" + s.BlockDecision.Source.ToString().ToLowerInvariant() + ")"
                               + "  ckpt=" + (o.CheckpointPath ?? "(retired)"));
             return 0;
         }
@@ -253,7 +271,13 @@ namespace Proof
             failures += Expect("rotate with --format json", () => p.Validate());
 
             // (c) the refusal rule: all must-haves, nothing to rank by
-            Query q = Q("1000", 96, 2000, "at_least", 1000, "must");
+            //
+            // The must-have has to FILTER, or this is a vacuity test in disguise: at 1,000 m2 the
+            // feasibility check refuses it as true for every seed ("does not exclude any seed ... It
+            // filters nothing"), so that refusal fired as well, and "--accept-scan-order allows it"
+            // failed (proof refuse exited 1, found 2026-09-24) for a reason that has nothing to do with
+            // scan order. 5 km2 of Meadows inside a 2 km disc (12.57 km2) passes the check.
+            Query q = Q("1000", 96, 2000, "at_least", 5_000_000, "must");
             CompiledQuery cq = CompiledQuery.Compile(q, Oracle);
             ScanPlan plan = new ScanPlan(q.Search.Order, q.Search.From, q.Search.To, 1, 64, 10000);
             SearchPreflight pf = SearchPreflightCheck.Check(q, cq, plan, new OutputPolicy { Path = "r.jsonl", Keep = 1000 }, 8);
@@ -491,6 +515,140 @@ namespace Proof
             Console.WriteLine("records compared         " + compared + ", differing " + differing
                               + " (the screened run writes the 12 m measurement, not the 24 m one)");
             return lost == 0 && extra == 0 && differing == 0 ? 0 : 1;
+        }
+
+        // ---- 10. a completed run's results do not depend on the block size ---------------------------
+        //
+        // The premise the automatic block size stands on (2026-09-24): the size is chosen per run -
+        // from the seed count and the worker count, or from the checkpoint a resumed run continues -
+        // so it may differ between two runs of one query, and between the legs' thread counts of one
+        // resumed run. That is safe only because a COMPLETED run's results file is the same bytes at
+        // every size: results are emitted in block order by one collector, and a block is a
+        // contiguous run of the same permutation. Measured by hand before the change; this is the
+        // regression guard. Uncompressed files only - a rotated run's gzip members close on the
+        // flush clock, so its .gz bytes differ even at one size, and a run stopped by a budget, a
+        // ceiling or Ctrl-C ends on a block boundary by construction.
+        private static int Blocks(string[] args)
+        {
+            long seeds = Arg(args, "--seeds", 2000);
+            string dir = Path.Combine(Dir(args), "blocks");
+            Directory.CreateDirectory(dir);
+            int failures = 0;
+
+            // (a) completed runs: every uncompressed format, keep N and keep all, at the automatic
+            // size, the old default and an odd size, on three thread counts.
+            (int? Size, int Threads)[] legs = { (null, 8), (256, 8), (7, 3) };
+            foreach (string ext in new[] { "jsonl", "json", "csv" })
+            {
+                foreach (string keep in new[] { "50", "\"all\"" })
+                {
+                    string keepTag = keep == "50" ? "keep50" : "keepall";
+                    string? first = null;
+                    bool same = true;
+                    List<string> seen = new List<string>();
+                    foreach ((int? size, int threads) in legs)
+                    {
+                        string file = Path.Combine(dir, "a-" + keepTag + "-" + (size?.ToString(CultureInfo.InvariantCulture) ?? "auto")
+                                                        + "-" + threads + "t." + ext);
+                        string ckpt = Path.Combine(dir, "a.ckpt");
+                        foreach (string f in new[] { file, ckpt, ckpt + ".top" }) if (File.Exists(f)) File.Delete(f);
+
+                        SearchSession s = SearchSession.Create(Q(keep, blockSize: size), Oracle, Engine, seeds, threads, file,
+                                                               acceptScanOrder: true);
+                        IResultSink? sink = s.Start(resume: false, ckpt);
+                        SearchOutcome o = s.Run(sink, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+                        sink?.Finish();
+                        sink?.Dispose();
+                        if (!o.Complete) { same = false; seen.Add("INCOMPLETE"); continue; }
+
+                        string sha = Sha(file);
+                        seen.Add(s.Plan.BlockSize + " (" + s.BlockDecision.Source.ToString().ToLowerInvariant() + ", "
+                                 + s.Plan.Blocks + " blocks, " + threads + " threads) " + sha.Substring(0, 12));
+                        if (first == null) first = sha;
+                        else if (sha != first) same = false;
+                    }
+
+                    Console.WriteLine("  " + ext.PadRight(5) + " " + keepTag.PadRight(8) + " -> "
+                                      + (same ? "IDENTICAL" : "DIFFERENT") + "   " + string.Join("  |  ", seen));
+                    if (!same) failures++;
+                }
+            }
+
+            // The automatic size really was a third size, or (a) proved less than it says.
+            BlockSizeDecision auto = BlockSizing.Decide(null, seeds, 8);
+            bool distinct = auto.Size != 256 && auto.Size != 7;
+            Console.WriteLine("  automatic size on 8 workers: " + auto.Size + " (" + auto.Source.ToString().ToLowerInvariant()
+                              + ") - " + (distinct ? "a third size, distinct from 256 and 7" : "NOT distinct: pass a --seeds that shrinks it"));
+            if (!distinct) failures++;
+
+            // (b) a resumed run whose legs have different thread counts, at the automatic size: leg 1
+            // on 8 workers is stopped part-way by its wall; leg 2 on 3 workers would size it
+            // differently on its own (256 for 6,000 seeds, against 187 on 8), so it must take the
+            // checkpoint's size - through the same peek the CLI's --resume uses - or its checkpoint
+            // refuses it. The finished file must be the uninterrupted run's bytes.
+            long resumeSeeds = Arg(args, "--resume-seeds", 6000);
+            foreach (string keep in new[] { "\"all\"", "50" })
+            {
+                string keepTag = keep == "50" ? "keep50" : "keepall";
+                string reference = Path.Combine(dir, "b-" + keepTag + "-ref.jsonl");
+                string resumed = Path.Combine(dir, "b-" + keepTag + "-resumed.jsonl");
+                string ckpt = Path.Combine(dir, "b-" + keepTag + ".ckpt");
+                foreach (string f in new[] { reference, resumed, ckpt, ckpt + ".top", Path.Combine(dir, "b-ref.ckpt") })
+                {
+                    if (File.Exists(f)) File.Delete(f);
+                }
+
+                // A slower query than (a), so a wall can land inside it: 48 m over a 5 km disc.
+                Stopwatch sw = Stopwatch.StartNew();
+                SearchSession r = SearchSession.Create(Q(keep, 48, 5000, blockSize: 7), Oracle, Engine, resumeSeeds, 8,
+                                                       reference, acceptScanOrder: true);
+                IResultSink? rs = r.Start(resume: false, Path.Combine(dir, "b-ref.ckpt"));
+                SearchOutcome ro = r.Run(rs, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+                rs?.Finish();
+                rs?.Dispose();
+                double refSeconds = sw.Elapsed.TotalSeconds;
+
+                SearchSession one = SearchSession.Create(Q(keep, 48, 5000, blockSize: null), Oracle, Engine, resumeSeeds, 8,
+                                                         resumed, acceptScanOrder: true);
+                IResultSink? s1 = one.Start(resume: false, ckpt);
+                SearchOutcome o1 = one.Run(s1, null, TimeSpan.FromSeconds(Math.Max(0.05, refSeconds * 0.3)), TimeSpan.FromSeconds(30));
+                s1?.Finish();
+                s1?.Dispose();
+
+                SearchSession two = SearchSession.Create(Q(keep, 48, 5000, blockSize: null), Oracle, Engine, resumeSeeds, 3,
+                                                         resumed, acceptScanOrder: true,
+                                                         resumeCheckpoint: _ => File.Exists(ckpt) ? Checkpoint.Load(ckpt) : null);
+                IResultSink? s2 = two.Start(resume: true, ckpt);
+                SearchOutcome o2 = two.Run(s2, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+                s2?.Finish();
+                s2?.Dispose();
+
+                bool partial = o1.Evaluated > 0 && !o1.Complete;
+                bool adopted = two.BlockDecision.Source == BlockSizeSource.Adopted && two.Plan.BlockSize == one.Plan.BlockSize
+                               && two.BlockDecision.AutomaticSize != two.Plan.BlockSize;
+                bool identical = ro.Complete && o2.Complete && Sha(reference) == Sha(resumed);
+                Console.WriteLine("  resume " + keepTag.PadRight(8) + " leg 1: " + one.Plan.BlockSize + " per block ("
+                                  + one.BlockDecision.Source.ToString().ToLowerInvariant() + ") on 8 threads, stopped at "
+                                  + o1.Evaluated.ToString("N0", CultureInfo.InvariantCulture) + " of "
+                                  + resumeSeeds.ToString("N0", CultureInfo.InvariantCulture) + " seeds"
+                                  + (partial ? "" : " - NOT PARTIAL, the proof is vacuous: raise --resume-seeds"));
+                Console.WriteLine("         " + "".PadRight(8) + " leg 2: " + two.Plan.BlockSize + " per block ("
+                                  + two.BlockDecision.Source.ToString().ToLowerInvariant() + ", where a fresh run on 3 threads would use "
+                                  + two.BlockDecision.AutomaticSize + ") on 3 threads, complete=" + o2.Complete);
+                Console.WriteLine("         " + "".PadRight(8) + " sha " + Sha(resumed).Substring(0, 16) + " vs the uninterrupted --block-size 7 run "
+                                  + Sha(reference).Substring(0, 16) + " -> " + (identical ? "IDENTICAL" : "DIFFERENT"));
+                if (!partial || !adopted || !identical) failures++;
+            }
+
+            Console.WriteLine(failures == 0 ? "blocks: every file identical across block sizes" : "blocks: " + failures + " FAILED");
+            return failures == 0 ? 0 : 1;
+        }
+
+        private static string Sha(string path)
+        {
+            using System.Security.Cryptography.SHA256 h = System.Security.Cryptography.SHA256.Create();
+            using FileStream fs = File.OpenRead(path);
+            return Convert.ToHexString(h.ComputeHash(fs));
         }
 
         /// <summary>Removes the two provenance fields only a screened record carries.</summary>

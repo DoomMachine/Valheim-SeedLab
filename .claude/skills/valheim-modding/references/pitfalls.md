@@ -1004,11 +1004,18 @@ rule that fixed it: **`--block-size` such that every worker gets at least 8 bloc
 the tool's default**, i.e. `floor(seeds / (workers * 8))` clamped to `[1, default]`. Assert the
 worker count the run *reports* as well, and publish the block size beside every figure.
 
-**The same mechanism makes a wall budget a floor.** A budget checked at block boundaries cannot stop a
-run sooner than one block per worker: `vseed search all-traders --budget 20s` at the default
-`--block-size 256` with 8 workers ran for **355 s** and evaluated 2,048 seeds. If a tool offers "stop
-after 20 s", either check the clock inside the block or say in the help that the budget is
-`one round, then stop`.
+**The same mechanism makes a wall budget overrun** (corrected 2026-09-24: this said "a floor", which
+is false). A budget checked only when a worker is about to take a block cannot interrupt a block
+already taken: `vseed search all-traders --budget 20s` at the default `--block-size 256` with 8
+workers ran for **355 s** and evaluated 2,048 seeds. But it is not a floor - a worker whose first
+check comes after the wall never claims anything, and `--budget 0.001s` stopped at **0 seeds** (which
+then reported "100 % coverage" until the coverage line was fixed). If a tool offers "stop after 20
+s", either check the clock inside the block or state the overrun bound in the plan it prints.
+
+**Fixed in SeedLab on 2026-09-24:** with no size given, the block size is chosen so every worker gets
+at least 4 blocks (the 8 above was the measurement pass's own rule), the plan prints the arithmetic, an
+explicit size is kept and warned about, a resumed run adopts the checkpoint's size, and the budget line
+states the overrun rather than a floor.
 
 ## A "did it run" flag is not coverage; only a count is (2026-09-23, SeedLab dumper)
 
@@ -1357,6 +1364,8 @@ samples ran at 1.3 seeds/s; the same query with `--block-size 16` ran at 4.2. Th
 seeds in 2 blocks of 256" and a warning about kill granularity, but nothing says six workers did
 nothing - a rate read from such a run understates the query by up to the worker count.
 
-**Do instead:** for a small sample, pass `--block-size` so that seeds / block size is at least the
-worker count (16 or 32 for a few hundred seeds at the location tier), and never quote a rate from a run
-with fewer blocks than workers.
+**Do instead:** never quote a rate from a run with fewer blocks than workers. **Fixed in the tool the
+same day:** SeedLab now sizes blocks automatically when none is given (at least 4 per worker, ceiling
+256), prints why, warns about an explicit size that idles workers, and labels a measured rate "(N of M
+workers had work)" whenever some had none - so this trap now announces itself. The lesson stands for
+any tool whose unit of work is also its unit of scheduling.

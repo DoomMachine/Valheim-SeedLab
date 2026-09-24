@@ -9,7 +9,7 @@ starts — and what it costs on disk is bounded by what you asked for rather tha
 ```
 vseed presets list                           what ships, and what each one costs
 vseed presets show gentle-start > mine.json  a working query to edit
-vseed search mine.json --seeds 200000 --block-size 16 --keep 20 --out hits.jsonl --yes
+vseed search mine.json --seeds 200000 --keep 20 --out hits.jsonl --yes
 vseed explain -1772362158 mine.json          why that one seed passed or failed
 vseed search --schema                        the query language
 vseed search --metrics                       every target/metric, its tier and its status
@@ -38,14 +38,26 @@ Four things make it usable rather than a slot machine:
 - **The block is the resume granularity, and ONE worker computes a whole block.** A block's wall
   time is `block size × per-seed cost`; the thread count does not divide it. At 12 m over the whole
   world a seed is about 4.2 s, so a 256-seed block is ~18 minutes that no checkpoint interval can
-  shorten — and on a short run it also means most of your workers have nothing to do. Use
-  `--block-size 16` at T3, or `4` when the query places locations.
+  shorten. For a finer resume point use `--block-size 16` at T3, or `4` when the query places
+  locations.
+- **The block size is automatic unless you give one** (since 2026-09-24): 256, or smaller when that
+  would give a worker fewer than four blocks, so a short run no longer leaves workers idle —
+  `--seeds 512` on 8 workers is 32 blocks of 16, where the old fixed 256 was 2 blocks and 6 idle
+  workers. The plan's `block size` line says which rule applied and why. A size you give
+  (`--block-size`, `search.block_size`, or the web page's Block size box) is kept, with a warning
+  that counts the idle workers when it leaves any; a resumed run keeps its checkpoint's size on any
+  thread count, and a different size on `--resume` is refused before the prompt — for a funnel's
+  stage 2 at its gate, once stage 1 has run (or its survivor list is reused), because stage 2's
+  checkpoint is recognised by that list. A completed
+  run's results file is the same bytes at every block size (`proof blocks`), so none of this
+  changes an answer.
 
 ## Before every run, not only `--dry-run`
 
 Every run prints a plan: the grid and the reason for it, the region, the tier per goal, the coverage
-as a fraction of 2³², the worker count with its arithmetic, the memory budget, the **ceiling on the
-results file**, free space, and the checkpoint path. Then one of three things happens.
+as a fraction of 2³², the worker count with its arithmetic, the block size (and why, when it is not
+the default 256), the memory budget, the **ceiling on the results file**, free space, the checkpoint
+path, and with a `--budget` how far past it the run can go. Then one of three things happens.
 
 **It runs.**
 
@@ -121,6 +133,13 @@ Funnel gate - measured, before stage 2 places anything
 
 That run then took 17.3 s. The alternative - extrapolating from a handful of calibration seeds - has
 been wrong by 35x on this tool's own record, which is the whole argument for measuring instead.
+
+(That gate was captured before 2026-09-24, when stage 2 still took the query's fixed block size.
+Stage 2 is now sized by the same automatic rule as the main run, over the survivor count, and the
+gate prints a `stage 2 block size` line saying so: those 16 survivors would be 16 blocks of 1, with
+every one of the 8 workers busy. A size you give is kept for stage 2 too, and the gate warns when it
+leaves workers idle. With a `--budget`, each stage gets the whole budget, and a stop in stage 1 -
+Ctrl-C or the budget - ends the run, on the page as in the terminal.)
 
 **When it will not funnel, and says so.** A funnel needs something cheap to filter on AND something
 expensive to defer. It refuses to pretend otherwise:
@@ -270,8 +289,11 @@ fire while their tests passed for the wrong reason.
   exactly. A prefilter that rejects a seed the full evaluation would have accepted is a silent wrong
   answer, and this is what catches it.
 - `tests\SeedLab.Search.Safety.Tests` — the output layer: bounds, rotation, reduction, ceilings,
-  hard kills and resumes. None of the checks in `SeedLab.Search.Tests` reaches a sink, a checkpoint
-  or the grid policy, so this is a separate suite on purpose.
+  hard kills and resumes, and (`proof blocks`) that a completed run's file is the same bytes at
+  every block size and that a run resumed on another thread count keeps its checkpoint's size.
+  `SeedLab.Search.Tests` does build sessions, run the preflight and the grid policy, and run a scan
+  with no sink, but none of its checks writes a results file, resumes a checkpoint from disk or
+  kills a process, so this is a separate suite on purpose.
 - The metrics it measures are the same `WorldField` / `WorldSummary` code the acceptance suite
   proves against the game's own output, so a passing seed's *numbers* are the verified ones.
 - `vseed serve --selftest` includes `search panel vs the engine`: the page's own query file run
@@ -284,8 +306,18 @@ fire while their tests passed for the wrong reason.
   4,294,967,296, deliberately out loud; `--seeds 0` is refused for the same reason.
 - **`--budget` makes a run irreproducible on its own.** Its checkpoint records the `--seeds` value
   that makes it reproducible.
-- **A small run under-uses the machine.** 400 seeds in blocks of 256 is two blocks, so two workers
-  work: measured 2.0 seeds/s where the same preset does 7.3 with `--block-size 16`.
+- **`--budget` bounds an overrun, not a floor.** It is checked only when a worker is about to take a
+  block, and a block already taken is finished, so a run can end up to one block of one worker's
+  time past the budget, with at most one block per busy worker in flight, plus the workers' start-up
+  and the final write; the plan prints both numbers for the run in hand, and a funnel's gate prints
+  stage 2's. It can also stop a run at 0 seeds (`--budget 0.001s` does), which
+  then reports 0 % coverage.
+- **A rate measured with idle workers is not the machine's.** One worker computes a whole block, so
+  a run with fewer blocks than workers — a `--block-size` you gave, the tail of a resumed run, a
+  budget that stopped it early — runs at its busy workers' rate. The report labels it `(2 of 8
+  workers had work)` and `--json` carries `busy_workers`, `block_size` and `blocks`. Before the block
+  size was automatic (2026-09-24), 400 seeds of `gentle-start` in 2 blocks of 256 measured 2.0
+  seeds/s where the same preset does 7.3 with every worker fed.
 - **A leftover `vseed search` or `vseed serve` locks `bin\Release\`** and the next build fails with
   MSB3027 / MSB3021.
 - **`--approx` allows heuristic prefilters. This build ships none**, so it currently only stamps

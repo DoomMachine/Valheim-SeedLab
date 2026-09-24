@@ -183,7 +183,11 @@ namespace SeedLab.Search.Criteria
             }
 
             if (!(s.Grid > 0) || !double.IsFinite(s.Grid)) throw new QueryException("search.grid", "must be a positive spacing in metres");
-            if (s.BlockSize < 1) throw new QueryException("search.block_size", "must be at least 1");
+            if (s.BlockSize != null && s.BlockSize < 1)
+            {
+                throw new QueryException("search.block_size", "must be at least 1",
+                                         "leave it out to have it sized automatically");
+            }
             if (s.From > s.To) throw new QueryException("search.range", "the range runs backwards");
         }
 

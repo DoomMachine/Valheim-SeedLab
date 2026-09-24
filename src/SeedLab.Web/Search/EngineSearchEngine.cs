@@ -565,7 +565,8 @@ namespace SeedLab.Web.Search
                 {
                     SearchSession one = SearchSession.Create(
                         funnel.StageOneQuery!, _oracle, _planned.EngineVersion,
-                        _plan.Limit, _threads, null, false, true, true, _plan);
+                        _plan.Limit, _threads, null, false, true, true, _plan,
+                        overrideDecision: _session.BlockDecision);
 
                     _hub.Publish(new SearchEvent("stage", new
                     {
@@ -597,6 +598,19 @@ namespace SeedLab.Web.Search
 
                     sw.Stop();
                     stageOneSeconds = sw.Elapsed.TotalSeconds;
+
+                    // A stage one that was stopped - the Stop button or the time budget - saw a PREFIX of
+                    // the range, so its survivors are not the answer's candidates. This page used to
+                    // write them as the survivor list anyway and go on to stage two with a fresh, whole
+                    // budget (so a run could take about twice its budget), where the terminal stops. It
+                    // stops here too now, writes nothing, and says why - the user's decision of
+                    // 2026-09-24, which is what lets one budget sentence in the plan be true on both.
+                    if (res.StoppedByUser || res.StoppedByWall)
+                    {
+                        StoppedInStageOne(res, one.Plan.Limit, sink.Count);
+                        return false;
+                    }
+
                     survivors = new int[sink.Seeds.Count];
                     for (int i = 0; i < survivors.Length; i++) survivors[i] = sink.Seeds[i];
                     head = new SurvivorList.Header
@@ -619,12 +633,17 @@ namespace SeedLab.Web.Search
                     }
                 }
 
+                // Stage two's block size, decided ONCE for the gate and for stage two's plan by the rule
+                // the terminal uses, over the survivor count - few survivors is exactly where a fixed
+                // size left workers idle. The page never resumes, so there is no checkpoint to adopt.
+                BlockSizeDecision stageTwo = BlockSizing.Decide(_q.Search.BlockSize, survivors.Length, _threads);
+
                 FunnelGate gate = new FunnelGate
                 {
                     Scanned = head!.Scanned,
                     Survivors = survivors.Length,
-                    Threads = _threads,
-                    BlockSize = _q.Search.BlockSize,
+                    Decision = stageTwo,
+                    Wall = _q.Search.Wall,
                     StageOneSeconds = stageOneSeconds,
                     SecondsPerSurvivor = MeasurePlacement(survivors),
                 };
@@ -645,14 +664,18 @@ namespace SeedLab.Web.Search
 
                 if (survivors.Length == 0)
                 {
+                    const string none = "stage 1 kept no seeds, so there is nothing for stage 2 to place - no seed in "
+                                        + "this run matches";
                     lock (_lock)
                     {
                         _progress.Status = "done";
-                        _progress.Message = "stage 1 kept no seeds, so there is nothing for stage 2 to place";
+                        _progress.Message = none;
                         _progress.Scanned = gate.Scanned;
+                        _progress.Passed = 0;
+                        _progress.Limit = _plan.Limit;
                     }
 
-                    _hub.Publish(new SearchEvent("finished", new { status = "done", matches = 0 }));
+                    PublishEnded("done", none, complete: true);
                     return false;
                 }
 
@@ -660,7 +683,8 @@ namespace SeedLab.Web.Search
                 {
                     _session = SearchSession.Create(_q, _oracle, _planned.EngineVersion, _plan.Limit,
                                                     _threads, _planned.OutPath, false, true, false,
-                                                    ScanPlan.OverSeeds(survivors, _q.Search.BlockSize));
+                                                    ScanPlan.OverSeeds(survivors, stageTwo.Size),
+                                                    overrideDecision: stageTwo);
                 }
                 catch (Exception ex)
                 {
@@ -699,6 +723,68 @@ namespace SeedLab.Web.Search
                 return sw.Elapsed.TotalSeconds / n;
             }
 
+            /// <summary>
+            /// Ends the run after a stage one the Stop button or the time budget cut short - the same
+            /// stop and the same words as the terminal's "Stopped during stage 1". Published as
+            /// <c>done</c>, the event the page ends a run on. The rate is stage one's, of the cheap
+            /// goals only, so it is marked as not the machine's rate for this query.
+            /// </summary>
+            private void StoppedInStageOne(SearchOutcome res, long stageOneLimit, long kept)
+            {
+                string why = res.StoppedByUser ? "you stopped it" : "the wall-clock budget ran out";
+                string message = "stopped during stage 1 - " + why + " after "
+                                 + res.Evaluated.ToString("N0", CultureInfo.InvariantCulture) + " of "
+                                 + stageOneLimit.ToString("N0", CultureInfo.InvariantCulture) + " seeds, with "
+                                 + kept.ToString("N0", CultureInfo.InvariantCulture) + " survivors so far. Stage 2 "
+                                 + "has NOT run: these are the survivors of the seeds stage 1 reached, not of the "
+                                 + "range asked for, and placing them would answer a narrower question. Nothing was "
+                                 + "written, and stage 1 has no resume point of its own, so re-running repeats it"
+                                 + (res.StoppedByWall ? " - a smaller seed count or a longer budget lets it finish" : "");
+                string status = res.StoppedByUser ? "cancelled" : "done";
+
+                lock (_lock)
+                {
+                    _progress.Status = status;
+                    _progress.Message = message;
+                    _progress.Scanned = res.Evaluated;
+                    _progress.Passed = 0;
+                    _progress.Limit = stageOneLimit;
+                    _progress.ElapsedS = res.Seconds;
+                    _progress.SeedsPerSecond = res.SeedsPerSecond;
+                    _progress.FractionCovered = res.Evaluated / 4294967296.0;
+                    _progress.EtaSeconds = 0;
+                }
+
+                _hub.Publish(new SearchEvent("done", new
+                {
+                    status,
+                    message,
+                    stage = 1,
+                    scanned = res.Evaluated,
+                    passed = 0,
+                    limit = stageOneLimit,
+                    elapsedS = res.Seconds,
+                    seedsPerSecond = res.SeedsPerSecond,
+                    threads = res.Threads,
+                    busyWorkers = res.BusyWorkers,
+                    rateNote = res.RateNote,
+                    rateIsMachine = false,
+                    blocks = res.Blocks,
+                    blocksDone = res.BlocksDone,
+
+                    // Stage one runs the full plan, so its block size is the plan's - carried like on
+                    // every other done event (it was missing here, review of 2026-09-24).
+                    blockSize = _plan.BlockSize,
+                    complete = false,
+                    stoppedByWall = res.StoppedByWall,
+                    fractionOfSpace = _plan.FractionOfSpace,
+                    fractionCovered = res.Evaluated / 4294967296.0,
+                    kept = 0,
+                    resultsWritten = 0,
+                    resultBytes = -1,
+                }));
+            }
+
             private void Fail(string message)
             {
                 lock (_lock)
@@ -707,7 +793,55 @@ namespace SeedLab.Web.Search
                     _progress.Message = message;
                 }
 
-                _hub.Publish(new SearchEvent("finished", new { status = "failed", message }));
+                PublishEnded("failed", message, complete: false);
+            }
+
+            /// <summary>
+            /// Ends a run that stops before it has a <see cref="SearchOutcome"/> to report - a failure
+            /// before or between the stages, or a funnel whose stage one kept no seed - with the same
+            /// <c>done</c> event every other end publishes, carrying the fields the page draws its final
+            /// progress line from.
+            ///
+            /// <para>These two used to publish <c>finished</c>, which the page has no listener for. The
+            /// server closed the stream, the browser's EventSource reconnected about every 3 s and was
+            /// replayed the run, and Run stayed disabled and Stop enabled for good (review of
+            /// 2026-09-24: a funnel on Meadows area plus a Haldor distance at G192, 64 seeds, gave 5
+            /// streams and 5 <c>finished</c> events in 15 s and no <c>done</c>). The page's
+            /// <c>done</c> handler already shows a failed run's message.</para>
+            /// </summary>
+            private void PublishEnded(string status, string message, bool complete)
+            {
+                long scanned, passed, limit;
+                double elapsed, rate;
+                lock (_lock)
+                {
+                    scanned = _progress.Scanned;
+                    passed = _progress.Passed;
+                    limit = _progress.Limit;
+                    elapsed = _progress.ElapsedS;
+                    rate = _progress.SeedsPerSecond;
+                }
+
+                _hub.Publish(new SearchEvent("done", new
+                {
+                    status,
+                    message,
+                    scanned,
+                    passed,
+                    limit,
+                    elapsedS = elapsed,
+                    seedsPerSecond = rate,
+                    threads = _threads,
+                    blockSize = _plan.BlockSize,
+                    rateIsMachine = false,
+                    complete,
+                    stoppedByWall = false,
+                    fractionOfSpace = _plan.FractionOfSpace,
+                    fractionCovered = scanned / 4294967296.0,
+                    kept = 0,
+                    resultsWritten = 0,
+                    resultBytes = -1,
+                }));
             }
 
             // -------------------------------------------------------------------------------------
@@ -739,7 +873,14 @@ namespace SeedLab.Web.Search
 
                     _sink?.Finish();
                     FlushTop(force: true);
-                    if (outcome.Seconds > 0 && outcome.Evaluated > 0) _reportRate(outcome.SeedsPerSecond);
+
+                    // Kept as the machine's rate ("measured here ... the whole space would take") only
+                    // when every worker had work. A run in fewer blocks than workers - a Block size too
+                    // large for the seed count, a budget stop before every worker claimed - measured the
+                    // busy workers, and the page used to store that starved number as this machine's and
+                    // extrapolate the whole space from it (2026-09-24).
+                    bool machineRate = outcome.BusyWorkers >= outcome.Threads;
+                    if (machineRate && outcome.Seconds > 0 && outcome.Evaluated > 0) _reportRate(outcome.SeedsPerSecond);
 
                     string status = outcome.StoppedByUser ? "cancelled" : "done";
                     string? message = outcome.StoppedByUser
@@ -777,10 +918,19 @@ namespace SeedLab.Web.Search
                         seedsPerSecond = outcome.SeedsPerSecond,
                         blocks = outcome.Blocks,
                         blocksDone = outcome.BlocksDone,
+                        blockSize = _plan.BlockSize,
                         complete = outcome.Complete,
+                        stoppedByWall = outcome.StoppedByWall,
                         fractionOfSpace = _plan.FractionOfSpace,
                         fractionCovered = outcome.Evaluated / 4294967296.0,
                         threads = outcome.Threads,
+
+                        // The workers that had blocks, the label the rate needs when that is fewer
+                        // than the threads - the same words the terminal prints - and whether the rate
+                        // may be kept as the machine's.
+                        busyWorkers = outcome.BusyWorkers,
+                        rateNote = outcome.RateNote,
+                        rateIsMachine = machineRate,
                         probeAccepts = outcome.ProbeAccepts,
                         earlyExits = outcome.EarlyExits,
                         pregenerated = outcome.Pregenerated,
@@ -789,7 +939,9 @@ namespace SeedLab.Web.Search
                         pregenSeconds = outcome.PregenSeconds,
                         streamedResults = Interlocked.Read(ref _streamedResults),
                         suppressedResults = Interlocked.Read(ref _suppressedResults),
-                        wholeSpaceSeconds = outcome.SeedsPerSecond > 0 ? 4294967296.0 / outcome.SeedsPerSecond : double.NaN,
+                        wholeSpaceSeconds = machineRate && outcome.SeedsPerSecond > 0
+                            ? 4294967296.0 / outcome.SeedsPerSecond
+                            : (double?)null,
 
                         // What actually reached the disk, and the line that never says "N matches"
                         // when N was capped.

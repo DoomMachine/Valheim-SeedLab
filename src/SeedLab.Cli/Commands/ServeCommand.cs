@@ -1434,8 +1434,12 @@ Examples:
               ],
               ""budgetSeeds"": 384, ""budgetSeconds"": 0, ""keep"": 200, ""gridSpacingM"": 192,
               ""order"": ""shuffled"", ""rangeStart"": -2147483648, ""rangeEnd"": 2147483647,
-              ""blockSize"": 64, ""screen"": ""off"", ""confirmed"": true, ""acceptScanOrder"": true
+              ""blockSize"": null, ""screen"": ""off"", ""confirmed"": true, ""acceptScanOrder"": true
             }";
+            // "blockSize": null is what the page sends for its empty Block size box (2026-09-24): the
+            // block size is then decided by the same rule as the terminal's, and the query file the
+            // page produces must say nothing about it - checked below, strictly, for the comma that
+            // omitting the last key of "search" could leave behind.
             // The last three fields are what the PAGE sends once the user has answered its dialogs,
             // and they are here because the server now runs the whole preflight and refuses a run
             // that has not been confirmed - a hand-written POST cannot walk past it, which is the
@@ -1511,13 +1515,47 @@ Examples:
                 return 1;
             }
 
+            // An empty Block size box must reach the query file as NO block_size - so 'vseed search' on
+            // the exported file sizes it automatically too, and a --resume keeps the checkpoint's - and
+            // leave no dangling comma after "threads". QueryReader accepts trailing commas, so it cannot
+            // catch one; a strict parse (no trailing commas, no comments) can.
+            bool strictOk;
+            try
+            {
+                using System.Text.Json.JsonDocument strict = System.Text.Json.JsonDocument.Parse(queryJson);
+                strictOk = true;
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                strictOk = false;
+            }
+
+            bool autoOk = strictOk && !queryJson.Contains("block_size", StringComparison.Ordinal);
+            rows.Add(new[]
+            {
+                "search panel: automatic block size",
+                autoOk ? "PASS" : "FAIL",
+                autoOk
+                    ? "an empty Block size box leaves block_size out of the query file, which parses strictly"
+                    : (strictOk ? "the query file names a block_size the page never set" : "the query file is not strict JSON (a dangling comma?)"),
+            });
+            if (!autoOk) return 1;
+
             // ---- the same query, the terminal's way ---------------------------------------------------
             Query q = QueryReader.Parse(queryJson, "selftest");
             SeedLab.Search.Locations.ILocationOracle oracle = SearchOracle(out _);
             CompiledQuery cq = CompiledQuery.Compile(q, oracle);
             string hash = QueryReader.Hash(q);
-            ScanPlan plan = new ScanPlan(q.Search.Order, q.Search.From, q.Search.To,
-                                         q.Search.Key ?? ScanPlan.KeyFromHash(hash), q.Search.BlockSize, q.Search.Seeds);
+            ulong key = q.Search.Key ?? ScanPlan.KeyFromHash(hash);
+
+            // The block size by the rule the session uses: the query file carries none, so it is the
+            // automatic size for this side's worker count, which need not be the page's. Any size would
+            // do for this comparison - a completed run's results do not depend on it (measured
+            // 2026-09-24) - so the two sides must agree whichever sizes they chose.
+            long limit = new ScanPlan(q.Search.Order, q.Search.From, q.Search.To, key,
+                                      SearchSpec.DefaultBlockSize, q.Search.Seeds).Limit;
+            int blockSize = BlockSizing.Decide(q.Search.BlockSize, limit, SelfTestWorkers).Size;
+            ScanPlan plan = new ScanPlan(q.Search.Order, q.Search.From, q.Search.To, key, blockSize, q.Search.Seeds);
             SearchRun run = new SearchRun(cq, plan, oracle, SelfTestWorkers);
             // The parameters are (startBlock, writer, checkpoint, checkpointPath, checkpointInterval,
             // wallBudget, onProgress). They used to be given as (..., FromSeconds(30), Zero, null),

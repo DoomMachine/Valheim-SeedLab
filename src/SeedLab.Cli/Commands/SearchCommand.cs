@@ -38,7 +38,11 @@ range and budget
   --from <int32>         first seed of the range (default -2147483648)
   --to <int32>           last seed of the range (default 2147483647)
   --budget <dur>         stop after 90s / 45m / 8h / 2d; a wall-limited run is not reproducible
-                         on its own - its checkpoint records what to pass to --seeds so it is
+                         on its own - its checkpoint records what to pass to --seeds so it is.
+                         Checked when a worker takes a block, and a block already taken is
+                         finished, so a run can end up to one block of work past the budget
+                         (plus the workers' start-up and the final write). A funnel gives
+                         each stage the whole budget; a stop in stage 1 ends it
 
 how
   --grid <m>             override the query's sampling grid, metres (12 is the game's own)
@@ -55,8 +59,11 @@ how
                                   and the coverage of the whole space is always reported.
   --order shuffled|sequential
   --key <0x...>          the Feistel key; same key + same range = the same seed sequence
-  --threads <n>          workers (default: every logical core)
-  --block-size <n>       seeds per work block; checkpoints land on block boundaries
+  --threads <n>          workers (default: --mode decides; balanced, the default, is about
+                         half the logical cores)
+  --block-size <n>       seeds per work block; checkpoints land on block boundaries.
+                         Default: automatic - 256, or smaller when that would give a worker
+                         fewer than 4 blocks; a resumed run keeps its checkpoint's size
   --no-prefilter         audit mode: no T0 rejection, no region restriction, no early exit.
                          Must produce the same result set as a normal run - that is the test.
   --approx               allow HEURISTIC prefilters. This build ships none.
@@ -159,9 +166,9 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                     "--all is how you ask for the whole 4,294,967,296-seed range");
             }
 
-            TimeSpan wall = a.Get("budget") != null
-                ? QueryReader.Duration(a.Require("budget"), "--budget")
-                : q.Search.Wall;
+            // --budget is applied to the query (ApplyOverrides), so the preflight's budget line and the
+            // grid notes see it the way they see budget.wall in a query file; this is the same value.
+            TimeSpan wall = q.Search.Wall;
             bool yes = a.Flag("yes");
             bool acceptScanOrder = a.Flag("accept-scan-order");
 
@@ -272,21 +279,49 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             // the one assembly of those parts; the CLI's job is now to print what it decided, ask
             // where it says to ask, and stop where it says to stop.
             //
-            // The worker count is planned twice on purpose. The first plan sizes against the grid the
-            // QUERY asked for, because the session needs a thread count to build its plan with; the
-            // session may then RAISE the grid (a must-have goal a coarse grid measures wrongly is
-            // moved to the game's own 12 m), and a 12 m worker holds far more than a 384 m one. So the
-            // plan is redone against the grid that will actually run, and that is the number printed
-            // and used.
+            // The worker count is planned by the SESSION, through this planner, at the grid it will
+            // really run at: the session may RAISE the grid (a must-have goal a coarse grid measures
+            // wrongly is moved to the game's own 12 m), a 12 m worker holds far more than a 384 m one,
+            // and the block size is now decided for the worker count. It used to be planned here twice
+            // - once against the query's grid for Create, once against the final grid after it - and
+            // the second call could land on the other side of an auto-throttle flip (the throttle
+            // re-polls on a timer and flips whenever the game starts), so the block size would have
+            // been decided for one worker count and the run started with another. The plan the session
+            // used is the one printed and run (session.WorkerPlan).
             WorkTier tier = TierOf(cq);
-            WorkerPlan plan0 = rt.Plan(tier, q.Search.Grid);
-            int threads = plan0.Workers;
+            Func<double, WorkerPlan> planner = grid => rt.Plan(tier, grid);
+
+            // The checkpoint goes in the cache root, one file per query hash - not 'vseed-search.ckpt'
+            // in whatever directory the user happened to be standing in (audit defect 5). Two searches
+            // running side by side therefore cannot overwrite each other's resume point, and --cache-dir
+            // moves all of it together. One expression, used for the resume peek below and for the
+            // path the run opens, so the two cannot name different files.
+            Func<string, string> checkpointFor = hash => ckptPath ?? Path.Combine(rt.Cache.Checkpoints, Short(hash) + ".ckpt");
+
+            // On --resume the session reads the checkpoint BEFORE it decides the block size: a resume
+            // point is a block number, so a resumed run keeps its checkpoint's size whatever the rule
+            // would pick now, and a different size asked for is refused before the prompt and before
+            // any funnel stage runs. Only reads; a file that cannot be read is left for Start to report.
+            //
+            // Only for a run that will SCAN this plan, which is a sample. A funnel's stage one runs this
+            // plan from the beginning - it has no resume point of its own - and its stage two resumes
+            // its own checkpoint over the survivors, so a checkpoint here that matches this plan is a
+            // sample run's, which the funnel never continues. Peeking it anyway (until 2026-09-24's
+            // review) printed "block size 37, from the checkpoint being resumed", ran stage one at that
+            // inherited 37 where a fresh run would use 75, and priced a --dry-run at the seeds the
+            // sample had left. The strategy is decided here, ahead of the session, from the query as
+            // compiled above: FunnelPlan.For reads only each goal's must-ness, availability and tier
+            // (the metric's), none of which a grid raise inside Create changes, and the strategy block
+            // below re-derives it from the session and checks the two agree.
+            bool willFunnel = WillFunnel(strategy, FunnelPlan.For(q, cq));
+            Func<string, Checkpoint?>? peek = resume && !willFunnel ? hash => PeekCheckpoint(checkpointFor(hash)) : null;
 
             SearchSession session;
             try
             {
-                session = SearchSession.Create(q, oracle, Verified.EngineVersion, seedBudget, threads,
-                                               outPath, noPrefilter, acceptScanOrder);
+                session = SearchSession.Create(q, oracle, Verified.EngineVersion, seedBudget, 0,
+                                               outPath, noPrefilter, acceptScanOrder,
+                                               plannerAtGrid: planner, resumeCheckpoint: peek);
             }
             catch (QueryException ex)
             {
@@ -301,18 +336,29 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             q = session.Query;
             cq = session.Compiled;
 
-            WorkerPlan workers = rt.Plan(tier, session.Grid.VerifyGrid);
-            session.Threads = workers.Workers;
+            WorkerPlan workers = session.WorkerPlan!;
 
-            // The checkpoint goes in the cache root, one file per query hash - not 'vseed-search.ckpt'
-            // in whatever directory the user happened to be standing in (audit defect 5). Two searches
-            // running side by side therefore cannot overwrite each other's resume point, and --cache-dir
-            // moves all of it together.
-            string checkpointPath = ckptPath
-                ?? Path.Combine(rt.Cache.Checkpoints, Short(session.QueryHash) + ".ckpt");
+            string checkpointPath = checkpointFor(session.QueryHash);
             session.CheckpointPath = checkpointPath;
 
             ScanPlan plan = session.Plan;
+
+            // A funnel resumed over a SAMPLE run's checkpoint of this very plan (the peek above was
+            // skipped for it): said out loud, because the funnel does not continue it. When stage two's
+            // own checkpoint path is that same file - the default layout, with no --cache-dir and no
+            // --checkpoint - stage two would refuse it ("the scan order has changed") only after stage
+            // one had run, so that case is refused below, before anything runs.
+            string? sampleLeftover = null;
+            bool sampleCollides = false;
+            if (resume && willFunnel)
+            {
+                Checkpoint? left = PeekCheckpoint(checkpointPath);
+                if (left != null && left.MatchesExceptBlockSize(q, plan, session.QueryHash))
+                {
+                    sampleLeftover = checkpointPath;
+                    sampleCollides = SamePath(checkpointPath, CheckpointStore.DefaultPath(session.QueryHash));
+                }
+            }
 
             // ---- the plan block, before EVERY run (decision 10) -----------------------------------
             if (!o.Json)
@@ -326,14 +372,39 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             PrintPreflight(o, session, checkpointPath);
 
             // ---- refusals: the run must not start --------------------------------------------------
-            if (!session.Preflight.Ok)
+            //
+            // Two kinds, and the header says which. Most refusals say the run would not answer the
+            // question honestly; a resume that cannot continue the checkpoint that is there - a block
+            // size that differs from its own, or a funnel over a sample run's file at stage two's own
+            // path - would answer it perfectly well, and the old single header told the user otherwise
+            // (review of 2026-09-24). A path in the sentence is kept on one line (Wrap's `unbroken`): it
+            // can hold a space, and split at it the path could not be copied.
+            string? blockRefusal = session.BlockDecision.Refusal;
+            string? collision = sampleCollides
+                ? "the checkpoint at " + sampleLeftover + " is a sample run's of this query (--strategy sample), "
+                  + "and this run takes the funnel, which does not continue it - and the funnel's stage 2 keeps "
+                  + "its own checkpoint at that same path, so it would refuse to start once stage 1 had run. "
+                  + "Continue the sample with --strategy sample --resume, or move that file away to run the "
+                  + "funnel from the beginning"
+                : null;
+            if (!session.Preflight.Ok || collision != null)
             {
+                int resumeRefusals = (collision != null ? 1 : 0)
+                                     + (blockRefusal != null && session.Preflight.Refusals.Contains(blockRefusal) ? 1 : 0);
+                int total = session.Preflight.Refusals.Count + (collision != null ? 1 : 0);
                 Console.Error.WriteLine();
-                Console.Error.WriteLine("vseed search: REFUSED - this run would not answer the question honestly.");
+                Console.Error.WriteLine(resumeRefusals == total
+                    ? "vseed search: REFUSED - this run cannot continue the checkpoint that is there."
+                    : resumeRefusals == 0
+                        ? "vseed search: REFUSED - this run would not answer the question honestly."
+                        : "vseed search: REFUSED - this run would not answer the question honestly, and cannot "
+                          + "continue the checkpoint that is there.");
                 foreach (string r in session.Preflight.Refusals)
                 {
-                    Console.Error.WriteLine("  " + Wrap(r, "      "));
+                    Console.Error.WriteLine("  " + Wrap(r, "      ", r == blockRefusal ? session.BlockDecision.Resume?.Path : null));
                 }
+
+                if (collision != null) Console.Error.WriteLine("  " + Wrap(collision, "      ", sampleLeftover));
 
                 Console.Error.WriteLine();
                 Console.Error.WriteLine("  Nothing was scanned and nothing was written.");
@@ -342,6 +413,13 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
 
             // ---- warnings: it runs, but the user has to know ----------------------------------------
             foreach (string w in session.Preflight.Warnings) Out.Warn(Wrap(w, "         "));
+            if (sampleLeftover != null)
+            {
+                Out.Warn(Wrap("the checkpoint at " + sampleLeftover + " is a sample run's of this query (--strategy "
+                              + "sample), and this run takes the funnel, which does not continue it: stage 1 runs from "
+                              + "the beginning, and that file is left as it is. Continue the sample with --strategy "
+                              + "sample --resume", "         ", sampleLeftover));
+            }
 
             // ---- --dry-run: the cost, and what the real run WOULD ask ----------------------------
             //
@@ -366,7 +444,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                     Console.Error.WriteLine("  (--yes accepts them all.)");
                 }
 
-                Calibrate(o, cq, oracle, plan, session.Threads, calibrate);
+                Calibrate(o, cq, oracle, plan, session.Threads, session.BlockDecision, calibrate);
                 o.Flush();
                 return ExitCodes.Ok;
             }
@@ -413,15 +491,30 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             // was lost. Measured 2026-09-23 on a 6,000-seed funnel: 19.7 CPU-seconds gone, an empty
             // checkpoint directory, and no resume point of any kind. The handler now covers every phase
             // that can run long, and `running` is re-pointed at whichever SearchRun is live.
+            //
+            // The request is also REMEMBERED and handed to every run started after it. A stop pressed
+            // after stage one's last block was taken stops nothing in stage one (every block finishes,
+            // and since 2026-09-24 that run is not reported as stopped, so its survivor list is kept),
+            // and one pressed during the gate's placement measurement had no live run to reach at all:
+            // either way stage two then started as if nobody had asked. Handed on, stage two stops at
+            // its first block boundary with its checkpoint written - which is also what the web page
+            // does, re-applying its Stop to each run it starts.
             SearchRun? running = null;
+            bool stopRequested = false;
             ConsoleCancelEventHandler cancel = (_, e) =>
             {
                 e.Cancel = true;
+                stopRequested = true;
                 Out.Info("");
                 Out.Info("stopping at the next block boundary and writing the checkpoint...");
                 running?.RequestStop();
             };
             Console.CancelKeyPress += cancel;
+            Action<SearchRun> publishRun = run =>
+            {
+                running = run;
+                if (stopRequested) run.RequestStop();
+            };
 
             // ---- strategy: which of the two shapes this run takes, and why ---------------------------
             FunnelPlan funnel = FunnelPlan.For(q, cq);
@@ -443,6 +536,17 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 strategyWhy = (chosen == SearchStrategy.Funnel ? "funnel: " : "sample: ") + funnel.Reason;
             }
 
+            // Decided once ahead of the session (willFunnel, for the resume peek) and once here from the
+            // session's own query; they cannot differ unless a grid raise changed a goal's tier, which it
+            // does not. If that ever changes, stopping is the honest answer: the block size above was
+            // decided for the other strategy.
+            if ((chosen == SearchStrategy.Funnel) != willFunnel)
+            {
+                throw new CliException("internal: the strategy chosen before the session (" + (willFunnel ? "funnel" : "sample")
+                                       + ") is not the one chosen after it (" + chosen.ToString().ToLowerInvariant() + ").",
+                                       ExitCodes.Internal, "run it again with --strategy funnel or --strategy sample");
+            }
+
             o.Header("Strategy");
             o.Field("chosen", chosen.ToString().ToLowerInvariant()
                               + (strategy == SearchStrategy.Auto ? "  (auto)" : "  (asked for)"));
@@ -462,18 +566,21 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                     : checkpointPath + ".survivors";
 
                 int[]? survivors = RunStageOne(o, q, funnel, oracle, plan, session, seedBudget,
-                                               survivorPath, resume, yes, progressMode,
-                                               run => running = run, out int stageExit);
+                                               survivorPath, resume, yes, progressMode, wall,
+                                               publishRun, out int stageExit,
+                                               out BlockSizeDecision stageTwo);
                 if (survivors == null) return stageExit;
 
                 // Stage two is the SAME session code over a different bijection - the survivor list -
                 // so every guarantee the ordinary path has (checkpoint, resume, bounded sink, torn-tail
-                // repair) applies to it without a second implementation.
+                // repair) applies to it without a second implementation. Its block size is the one the
+                // gate above was given and printed, decided once, never re-read from the query.
                 try
                 {
                     session = SearchSession.Create(q, oracle, Verified.EngineVersion, seedBudget,
                                                    session.Threads, outPath, noPrefilter, acceptScanOrder,
-                                                   false, ScanPlan.OverSeeds(survivors, q.Search.BlockSize));
+                                                   false, ScanPlan.OverSeeds(survivors, stageTwo.Size),
+                                                   overrideDecision: stageTwo);
                 }
                 catch (QueryException ex)
                 {
@@ -559,8 +666,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             SearchOutcome outcome;
             try
             {
-                outcome = session.Run(sink, onProgress, wall, TimeSpan.FromSeconds(ckptEvery),
-                                      run => running = run);
+                outcome = session.Run(sink, onProgress, wall, TimeSpan.FromSeconds(ckptEvery), publishRun);
             }
             finally
             {
@@ -576,6 +682,29 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             Report(o, q, cq, plan, outcome, checkpointPath, session);
             o.Flush();
             return ExitCodes.Ok;
+        }
+
+        /// <summary>
+        /// Whether this run will take the funnel: the strategy block's own decision (auto picks the
+        /// funnel exactly when it is usable, and a funnel asked for that is not usable runs as a
+        /// sample), made ahead of the session so the resume peek knows whether the main plan is ever
+        /// continued. The strategy block checks the two agree.
+        /// </summary>
+        private static bool WillFunnel(SearchStrategy asked, FunnelPlan funnel)
+            => asked != SearchStrategy.Sample && funnel.Usable;
+
+        /// <summary>Two spellings of one file, compared the way the file system compares them here.</summary>
+        private static bool SamePath(string a, string b)
+        {
+            try
+            {
+                return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b),
+                                     OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static SearchStrategy ParseStrategy(string? v)
@@ -600,14 +729,24 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
         /// <paramref name="exitCode"/> says with what. A survivor list from an earlier identical stage
         /// one is reused rather than recomputed, because recomputing it is the expensive half of the
         /// point of resuming.</para>
+        ///
+        /// <para><paramref name="stageTwo"/> is stage two's block size, decided here once for the gate
+        /// and for stage two's plan (meaningful only when survivors are returned).</para>
+        ///
+        /// <para><paramref name="wall"/> is the whole <c>--budget</c> (or <c>budget.wall</c>), and stage
+        /// one obeys it: it used to run with no budget at all while the web page's stage one honoured
+        /// it, so one plan line could not be true on both. Each stage gets the whole budget, and a
+        /// stage one the budget stops ends the run through the stop branch below, which already
+        /// existed for Ctrl-C (the user's decision, 2026-09-24).</para>
         /// </summary>
         private static int[]? RunStageOne(Out o, Query q, FunnelPlan funnel, ILocationOracle oracle,
                                           ScanPlan plan, SearchSession full, long seedBudget,
                                           string survivorPath, bool resume, bool yes,
-                                          string progressMode, Action<SearchRun> publishRun,
-                                          out int exitCode)
+                                          string progressMode, TimeSpan wall, Action<SearchRun> publishRun,
+                                          out int exitCode, out BlockSizeDecision stageTwo)
         {
             exitCode = ExitCodes.Ok;
+            stageTwo = BlockSizing.Decide(null, 0, full.Threads);
             string stamp = oracle.Available ? oracle.Provenance : "";
             string qhash = full.QueryHash;
 
@@ -650,7 +789,8 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                     // nobody had asked. (Mutating one.Search.Key instead would edit the user's own
                     // query object, which q and the stage-one query share by reference.)
                     one = SearchSession.Create(funnel.StageOneQuery!, oracle, Verified.EngineVersion,
-                                               seedBudget, full.Threads, null, false, true, true, plan);
+                                               seedBudget, full.Threads, null, false, true, true, plan,
+                                               overrideDecision: full.BlockDecision);
                 }
                 catch (QueryException ex)
                 {
@@ -679,7 +819,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 {
                     // The handler installed before this block holds `running`; without publishing the
                     // stage-one run into it, Ctrl-C here would have nothing to ask to stop.
-                    res = one.Run(sink, onProgress, TimeSpan.Zero, TimeSpan.FromSeconds(30),
+                    res = one.Run(sink, onProgress, wall, TimeSpan.FromSeconds(30),
                                   run => publishRun(run));
                 }
                 catch (InvalidOperationException ex)
@@ -710,7 +850,9 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                     o.Note("  question than the one on the command line.");
                     o.Note("");
                     o.Note("  Nothing was written. Stage 1 has no resume point of its own in this build,");
-                    o.Note("  so re-running repeats it - run a smaller --seeds if you want it to finish.");
+                    o.Note(res.StoppedByWall
+                        ? "  so re-running repeats it - run a smaller --seeds or a longer --budget if you want it to finish."
+                        : "  so re-running repeats it - run a smaller --seeds if you want it to finish.");
                     o.Flush();
                     exitCode = ExitCodes.Ok;
                     return null;
@@ -738,13 +880,34 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 }
             }
 
+            // ---- stage two's block size, decided once for the gate and for its plan --------------
+            //
+            // Few survivors is exactly where a fixed size left workers idle, so stage two goes through
+            // the same rule as the main run, over the survivor count. On --resume it keeps the size of
+            // an interrupted stage two's checkpoint - at the path stage two has always used (its
+            // session's default path, unchanged here: moving it would strand the stage-two checkpoints
+            // that exist) - but only one that is THIS stage two: sequential over this survivor list,
+            // same key (a hash of the list), same range and count.
+            ResumePoint? stageTwoResume = null;
+            if (resume)
+            {
+                Checkpoint? c = PeekCheckpoint(CheckpointStore.DefaultPath(full.QueryHash));
+                if (c != null && c.MatchesExceptBlockSize(q, ScanPlan.OverSeeds(survivors, 1), full.QueryHash))
+                {
+                    stageTwoResume = ResumePoint.From(c);
+                }
+            }
+
+            stageTwo = BlockSizing.Decide(q.Search.BlockSize, survivors.Length, full.Threads,
+                                          SearchSpec.DefaultBlockSize, stageTwoResume);
+
             // ---- the measured gate ----------------------------------------------------------------
             FunnelGate gate = new FunnelGate
             {
                 Scanned = head!.Scanned,
                 Survivors = survivors.Length,
-                Threads = full.Threads,
-                BlockSize = q.Search.BlockSize,
+                Decision = stageTwo,
+                Wall = wall,
                 StageOneSeconds = stageOneSeconds,
                 SecondsPerSurvivor = MeasurePlacement(full, oracle, survivors),
             };
@@ -754,6 +917,18 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             o.Note("  (the per-seed figure is measured on a small sample of this query and scaled; "
                    + "everything above it is a count, not an estimate)");
             o.Flush();
+
+            // A size asked for that is not the interrupted stage two's own: refused before anything is
+            // placed, with the same sentence the gate just printed, rather than after the prompt by
+            // the checkpoint's own mismatch check.
+            if (stageTwo.Refusal != null)
+            {
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("vseed search: REFUSED - stage 2 cannot continue its checkpoint at that block size.");
+                Console.Error.WriteLine("  " + Wrap(stageTwo.Refusal, "      ", stageTwo.Resume?.Path));
+                exitCode = ExitCodes.CheckFailed;
+                return null;
+            }
 
             if (survivors.Length == 0)
             {
@@ -852,6 +1027,30 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
         /// </summary>
         internal static string Wrap(string text, string indent, int width = 94)
         {
+            return WrapWords(text, indent, width);
+        }
+
+        /// <summary>
+        /// <see cref="Wrap(string, string, int)"/>, keeping <paramref name="unbroken"/> - a file path -
+        /// whole, on a line of its own. A path can hold a space ("C:\Users\First Last\..."), and the
+        /// word wrap split the "delete &lt;checkpoint&gt;" advice there, half on each line, where it
+        /// could not be copied (review of 2026-09-24). Null, or not in the text, is a plain wrap.
+        /// </summary>
+        internal static string Wrap(string text, string indent, string? unbroken, int width = 94)
+        {
+            int at = unbroken == null || unbroken.Length == 0 ? -1 : text.IndexOf(unbroken, StringComparison.Ordinal);
+            if (at < 0) return WrapWords(text, indent, width);
+
+            string before = text.Substring(0, at).TrimEnd();
+            string after = text.Substring(at + unbroken!.Length).TrimStart();
+            string nl = Environment.NewLine + indent;
+            return (before.Length > 0 ? WrapWords(before, indent, width) + nl : "")
+                   + unbroken
+                   + (after.Length > 0 ? nl + WrapWords(after, indent, width) : "");
+        }
+
+        private static string WrapWords(string text, string indent, int width)
+        {
             List<string> lines = new List<string>();
             string current = "";
             foreach (string word in text.Split(' '))
@@ -877,6 +1076,10 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
         /// must-have, the JSON report of the same run said screen_then_verify false. One of the two was
         /// wrong and it was the sentence the user reads. Re-rendering it from the session's own grid at
         /// the moment of printing makes them the same statement by construction.</para>
+        ///
+        /// <para>Since 2026-09-24 <c>SearchSession.Create</c> re-renders that line itself before it
+        /// returns, because the web page prints <c>Preflight.Plan</c> as it stands and showed the stale
+        /// sentence; this stays as the print-time guard for anything that changes the grid later.</para>
         /// </summary>
         private static string GridLine(string line, SearchSession session)
         {
@@ -885,17 +1088,30 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 return "grid         " + session.Grid.Describe();
             }
 
-            // Same problem, same cause: the preflight was given the thread count planned against the
-            // grid the QUERY asked for, and the run uses the one planned against the grid the session
-            // settled on. On a machine with room to spare those are the same number; on one where the
-            // memory guard bites at 12 m and not at 384 m they are not, and the plan block would then
-            // have printed two different thread counts three lines apart.
-            if (line.StartsWith("threads  ", StringComparison.Ordinal))
-            {
-                return "threads      " + session.Threads.ToString(CultureInfo.InvariantCulture);
-            }
-
+            // The "threads" line used to be patched here too: the preflight was given the thread count
+            // planned against the grid the QUERY asked for, and the run used one planned afterwards
+            // against the grid the session settled on. Since 2026-09-24 the session plans its workers
+            // itself at the grid it runs at, before its preflight, so the line is already the run's -
+            // and patching it would now contradict the block-size line, which was decided for it.
             return line;
+        }
+
+        /// <summary>
+        /// The checkpoint at <paramref name="path"/>, or null when there is none or it cannot be read.
+        /// Only ever reads: it is how the session learns a resumed run's block size before deciding
+        /// one, and a file that does not parse is left for <see cref="SearchSession.Start"/> to report
+        /// with its own message, which names the fix.
+        /// </summary>
+        private static Checkpoint? PeekCheckpoint(string path)
+        {
+            try
+            {
+                return File.Exists(path) ? Checkpoint.Load(path) : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -938,7 +1154,28 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
         private static void ApplyOverrides(Query q, Args a)
         {
             if (a.Has("grid")) q.Search.Grid = a.Double("grid", q.Search.Grid);
-            if (a.Has("block-size")) q.Search.BlockSize = a.Int("block-size", q.Search.BlockSize);
+
+            // --budget used to go straight to the run and nowhere else, so the preflight - the plan's
+            // budget line, the placement note's "can visit different seeds" clause - never knew a wall
+            // was set unless it came from budget.wall in the query file. It is the same field now.
+            // Wall is not part of the canonical JSON, so no hash, key or checkpoint path moves.
+            if (a.Get("budget") != null) q.Search.Wall = QueryReader.Duration(a.Require("budget"), "--budget");
+
+            // Validated, not clamped: ScanPlan turns a size below 1 into 1, so '--block-size 0' used to
+            // run quietly as blocks of one seed - a size nobody asked for. Assigned only when given, so
+            // a size left out stays null and is decided per run (BlockSizing), never baked in here.
+            if (a.Has("block-size"))
+            {
+                int blockSize = a.Int("block-size", 0);
+                if (blockSize < 1)
+                {
+                    throw new CliException("--block-size must be at least 1, not " + blockSize.ToString(CultureInfo.InvariantCulture) + ".",
+                        ExitCodes.Usage,
+                        "leave it out to have it sized automatically: 256, or smaller so every worker gets blocks");
+                }
+
+                q.Search.BlockSize = blockSize;
+            }
 
             // --keep takes a number OR the word "all", because the two are different modes and not
             // two spellings of one: a number is a REAL CAP on the file (the best N records and
@@ -1088,7 +1325,11 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                              + " (key 0x" + plan.Key.ToString("X16") + ")");
             o.Field("range", Out.N(plan.From) + " .. " + Out.N(plan.To)
                              + "  (" + plan.Count.ToString("N0", CultureInfo.InvariantCulture) + " seeds)");
-            o.Field("this run", Out.N(plan.Limit) + " seeds in " + Out.N(plan.Blocks) + " blocks of " + plan.BlockSize);
+            // Singulars spelled out: the automatic size makes "1 block" and "blocks of 1" routine (3 or
+            // 20 seeds on 8 workers), where a fixed 256 almost never did.
+            o.Field("this run", Out.N(plan.Limit) + (plan.Limit == 1 ? " seed in " : " seeds in ") + Out.N(plan.Blocks)
+                                + (plan.Blocks == 1 ? " block of " : " blocks of ") + plan.BlockSize
+                                + (plan.BlockSize == 1 ? " seed" : ""));
             o.Field("coverage", CoverageLine(plan));
             o.Field("threads", threads.ToString(CultureInfo.InvariantCulture)
                                + ", " + Bytes(SearchGrids.BytesPerWorker(cq.Grid) * threads) + " of grid buffers");
@@ -1128,18 +1369,17 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             o.Table(new[] { "id", "measures", "test", "importance", "tier" }, rows);
         }
 
-        internal static string CoverageLine(ScanPlan plan)
-        {
-            double f = plan.Limit / 4294967296.0;
-            string pct = f >= 0.01 ? Out.F(f * 100, 2) + " %"
-                       : f >= 1e-6 ? Out.F(f * 100, 6) + " %"
-                       : (f * 100).ToString("0.###e+00", CultureInfo.InvariantCulture) + " %";
-            return pct + " of all 4,294,967,296 worlds"
-                   + (plan.Limit >= 4294967296L ? " (the whole space)" : "");
-        }
+        /// <summary>
+        /// The plan's coverage. A count of seeds evaluated goes through
+        /// <see cref="ScanPlan.CoverageLine(long)"/> directly: building a plan from a count read 0 as
+        /// the whole range and printed 100 % for a run that evaluated nothing.
+        /// </summary>
+        internal static string CoverageLine(ScanPlan plan) => ScanPlan.CoverageLine(plan.Limit);
+
+        private static string Scale(double x) => x.ToString("0.#", CultureInfo.InvariantCulture);
 
         private static void Calibrate(Out o, CompiledQuery cq, ILocationOracle oracle, ScanPlan plan,
-                                      int threads, int n)
+                                      int threads, BlockSizeDecision blocks, int n)
         {
             if (n < 1) n = 1;
             o.Header("Measured cost on this machine");
@@ -1189,12 +1429,36 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             o.Note("");
             o.Field("pass rate on this sample", hits + " / " + n);
 
-            double par = per / Math.Min(threads, 10.5);
-            o.Header("What that means for this run - measured 1T, scaled by 10.5x");
-            o.Note("(10.5x is the measured 16-thread speed-up on the reference 8-core/16-thread machine for this");
-            o.Note(" kind of FP-heavy work, not the 16x the core count would suggest.)");
-            o.Field("estimated rate", Out.F(1.0 / par, 1) + " seeds/s on " + threads + " threads");
-            o.Field("this run", Duration(plan.Limit * par) + " for " + Out.N(plan.Limit) + " seeds");
+            // Two scale factors, because "this run" and "the whole space" are not run by the same
+            // number of workers. The whole space is 16.7 million blocks and feeds every worker, so it
+            // keeps the thread count. This run is cut into ITS blocks, and one worker computes a whole
+            // block: it lasts as long as its busiest worker, and only the workers with blocks share
+            // the speed-up. Until 2026-09-24 both were scaled by the thread count, so a 512-seed run
+            // in 2 blocks of 256 was projected as if 8 workers shared it - about 4x too short - and
+            // the header said "scaled by 10.5x" at every thread count, where the factor used below
+            // 10.5 threads was the thread count. The factor printed is now the one used.
+            double machineScale = Math.Min(threads, 10.5);
+            double par = per / machineScale;
+            int busy = Math.Max(1, blocks.BusyWorkers);
+            double runScale = Math.Min(busy, 10.5);
+            double runSeconds = blocks.BusiestWorkerSeeds * per * busy / runScale;
+            long evenShare = (blocks.RemainingSeeds + threads - 1) / Math.Max(1, threads);
+            bool uneven = busy < threads || blocks.BusiestWorkerSeeds > evenShare;
+
+            o.Header("What that means for this run - measured on 1 thread, scaled by " + Scale(machineScale) + "x");
+            o.Note("(the scale is min(workers, 10.5): 10.5x is the measured 16-thread speed-up on the reference");
+            o.Note(" 8-core/16-thread machine for this kind of FP-heavy work, not the 16x the core count would suggest.)");
+            o.Field("estimated rate", Out.F(1.0 / par, 1) + " seeds/s on " + threads + " threads, every worker busy");
+            o.Field("this run", Duration(runSeconds) + " for " + Out.N(blocks.RemainingSeeds) + " seeds"
+                                + (uneven
+                                    ? " - one worker computes a whole block, and the busiest of the " + busy
+                                      + (busy == 1 ? " worker" : " workers") + " with blocks computes "
+                                      + Out.N(blocks.BusiestWorkerSeeds) + " of them"
+                                      + (runScale != machineScale
+                                          ? " (" + busy + " busy: scaled by " + Scale(runScale) + "x, not "
+                                            + Scale(machineScale) + "x)"
+                                          : "")
+                                    : ""));
             o.Field("coverage", CoverageLine(plan));
             o.Field("the whole space", Duration(4294967296.0 * par) + " for all 2^32 worlds");
             o.Note("");
@@ -1235,6 +1499,12 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 o.J.WriteNumber("seconds", r.Seconds);
                 o.J.WriteNumber("seeds_per_second", r.SeedsPerSecond);
                 o.J.WriteNumber("threads", r.Threads);
+
+                // What the rate was measured on, and what a script needs to resume: seeds_per_second is
+                // the busy workers' rate, and it is the machine's only when busy_workers == threads.
+                o.J.WriteNumber("busy_workers", r.BusyWorkers);
+                o.J.WriteNumber("block_size", plan.BlockSize);
+                o.J.WriteNumber("blocks", plan.Blocks);
                 o.J.WriteNumber("fraction_of_seed_space", r.Evaluated / 4294967296.0);
                 o.J.WriteBoolean("complete", r.Complete);
                 o.J.WriteBoolean("stopped_by_wall", r.StoppedByWall);
@@ -1285,7 +1555,8 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             o.Field("matches", Out.N(r.Passed)
                                + (r.Evaluated > 0 ? "  (" + Rate(r.Passed, r.Evaluated) + ")" : ""));
             o.Field("wall clock", Duration(r.Seconds));
-            o.Field("measured rate", Out.F(r.SeedsPerSecond, 1) + " seeds/s on " + r.Threads + " threads");
+            o.Field("measured rate", Out.F(r.SeedsPerSecond, 1) + " seeds/s on " + r.Threads + " threads"
+                                     + (r.RateNote != null ? "  " + r.RateNote : ""));
             if (r.ConstructSeconds > 0)
             {
                 double tot = r.ConstructSeconds + r.PregenSeconds + r.SampleSeconds;
@@ -1308,8 +1579,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 o.Field("  never started", Out.N(r.LocationSkips)
                                            + " seeds a cheaper must-goal had already rejected");
             }
-            o.Field("coverage", CoverageLine(new ScanPlan(plan.Order, plan.From, plan.To, plan.Key,
-                                                          plan.BlockSize, r.Evaluated)));
+            o.Field("coverage", ScanPlan.CoverageLine(r.Evaluated));
             if (!r.Complete)
             {
                 o.Note(r.StoppedByUser ? "stopped on request." : r.StoppedByWall ? "stopped on the wall budget." : "stopped early.");
@@ -1337,8 +1607,11 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             if (r.Top.Count == 0)
             {
                 o.Header("No seed matched");
-                o.Note("At " + Out.F(r.SeedsPerSecond, 1) + " seeds/s this run saw "
-                       + CoverageLine(new ScanPlan(plan.Order, plan.From, plan.To, plan.Key, plan.BlockSize, r.Evaluated)) + ".");
+                o.Note(r.Evaluated == 0
+                    ? "This run evaluated no seed at all, so it saw " + ScanPlan.CoverageLine(0) + "."
+                    : "At " + Out.F(r.SeedsPerSecond, 1) + " seeds/s"
+                      + (r.RateNote != null ? " " + r.RateNote : "") + " this run saw "
+                      + ScanPlan.CoverageLine(r.Evaluated) + ".");
                 o.Note("That is not evidence that no such world exists - only that none was in this sample.");
                 o.Note("Loosen a must-have, or run longer with --resume.");
                 return;

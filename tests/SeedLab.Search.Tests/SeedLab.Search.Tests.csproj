@@ -12,7 +12,7 @@
          does the early abort ever change a verdict?
 
     Run it with:  dotnet run  (project tests/SeedLab.Search.Tests, configuration Release).
-    Pass /quick style argument "quick" for a shorter pass; see Program.cs.
+    Pass the argument "quick" with two leading dashes for a shorter pass; see Program.cs.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

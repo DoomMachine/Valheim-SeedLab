@@ -36,8 +36,11 @@
     // "region": 2000,                    // measure inside this disc only. EXACT and the biggest lever
                                           // in the tool: measured 8.16 ms/seed for a 1 km goal at 12 m
                                           // against 1,324 ms for the whole world - 162x, no loss
-    "approx": false,                      // this build ships no heuristic filter, so leave it false
-    "block_size": 256                     // seeds per work block; smaller means finer checkpoints
+    "approx": false                       // this build ships no heuristic filter, so leave it false
+    // "block_size": 16,                  // seeds per work block. Omit it: it is sized automatically
+                                          // (256, or smaller so every worker gets blocks). Set it only
+                                          // to pin the resume granularity - a checkpoint can only
+                                          // record finished blocks, and ONE worker computes a block
   },
 
   "output": {

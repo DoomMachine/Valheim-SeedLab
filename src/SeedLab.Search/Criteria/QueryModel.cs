@@ -150,7 +150,12 @@ namespace SeedLab.Search.Criteria
         /// <summary>Stop after this many seeds. 0 or negative means "the whole range".</summary>
         public long Seeds;
 
-        /// <summary>Stop after this long. Zero means no wall-clock limit.</summary>
+        /// <summary>
+        /// Stop after this long. Zero means no wall-clock limit. <c>budget.wall</c> in a query file,
+        /// the CLI's <c>--budget</c> (since 2026-09-24, so the preflight's budget line sees it) and the
+        /// web page's time budget all land here. Not part of the canonical JSON: a budget changes when
+        /// a run stops, never which seeds it visits in what order.
+        /// </summary>
         public TimeSpan Wall = TimeSpan.Zero;
 
         /// <summary>
@@ -210,8 +215,38 @@ namespace SeedLab.Search.Criteria
         /// <summary>Worker threads. 0 means every logical core.</summary>
         public int Threads;
 
-        /// <summary>Seeds per work block. Small enough that a 16-way tail is short.</summary>
-        public int BlockSize = 256;
+        /// <summary>
+        /// The largest block the automatic rule picks, and the size a long run gets: 256 seeds.
+        ///
+        /// <para>Measured cost of smaller blocks: 32 against 256 cost 2.62 % on the fastest tier, and
+        /// 125 against 256 nothing measurable (docs\measurements.md). A completed run's results file is
+        /// byte-identical at every block size (measured 2026-09-24 in jsonl, json and csv, keep N and
+        /// keep all, evict limits and screen-then-verify), so the size is a cost and resume-granularity
+        /// knob, never part of the answer. One ceiling for the CLI and the web page, by the user's
+        /// decision of 2026-09-24.</para>
+        /// </summary>
+        public const int DefaultBlockSize = 256;
+
+        /// <summary>
+        /// Seeds per work block, as the user GAVE it (<c>--block-size</c>, <c>search.block_size</c> or
+        /// the web's Block size box), or null for "size it automatically"
+        /// (<see cref="Execution.BlockSizing.Decide"/>).
+        ///
+        /// <para><b>Why nullable.</b> One worker computes a whole block, so a run with fewer blocks than
+        /// workers leaves the rest idle: <c>--seeds 512</c> at the old fixed 256 was two blocks, and six
+        /// of eight workers did nothing. The automatic rule shrinks the block for such a run, but it
+        /// must not overrule a size the user asked for - it warns instead - and a plain int with the
+        /// default baked in could not tell the two apart (the shipped custom.json and the web page
+        /// both wrote 256 or 64 explicitly).</para>
+        ///
+        /// <para><b>Never write a decided size back here.</b> Funnel stage one shares this object by
+        /// reference (<c>FunnelPlan.StageOne</c>) and the grid raise re-enters
+        /// <c>SearchSession.Create</c> with the same query, so a write-back would turn "automatic" into
+        /// "explicit" for both. The decided size lives on the plan and on
+        /// <c>SearchSession.BlockDecision</c>. Not part of the canonical JSON, so neither the hash,
+        /// the key nor the checkpoint path depends on it.</para>
+        /// </summary>
+        public int? BlockSize;
     }
 
     /// <summary>How a run chooses its sampling strategy. Auto-pick is the default (decision 6).</summary>

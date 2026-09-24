@@ -6,6 +6,12 @@
     has exactly ONE definition shared with 'vseed map' and 'vseed seed' - a search hit must re-measure
     identically when the user inspects it.
 
+    SeedLab.Runtime is referenced for WorkerPlan only (2026-09-24): SearchSession.Create plans its
+    workers through a caller's planner at the grid it finally runs at, and keeps the WorkerPlan it used,
+    so a front end prints the very object the block size was decided with instead of re-planning and
+    racing the auto-throttle. Runtime references nothing, so this adds no cycle (CheckpointStore.Root
+    already asked for this reference).
+
     SeedLab.Locations is deliberately NOT referenced. Location goals go through
     SeedLab.Search.Locations.ILocationOracle, so this project builds and runs with no dumped asset
     table at all, and gains bosses/traders/dungeons the day one implementation of that interface
@@ -20,6 +26,7 @@
     <ProjectReference Include="..\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
     <ProjectReference Include="..\SeedLab.Render\SeedLab.Render.csproj" />
     <ProjectReference Include="..\SeedLab.Seeds\SeedLab.Seeds.csproj" />
+    <ProjectReference Include="..\SeedLab.Runtime\SeedLab.Runtime.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Presets\*.json" />

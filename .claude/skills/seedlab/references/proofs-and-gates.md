@@ -188,8 +188,12 @@ whole `--block-size` block, so a *short* run whose seed count divided by the blo
 worker count leaves most workers idle. At the shipped default of 256 a 540-seed G12 run is two
 blocks; measuring it reported **1.04x** scaling from 1 to 8 workers where the real figure is
 **6.36x**. Any benchmark shorter than a few thousand seeds must set `--block-size` so every worker
-gets several blocks. The same mechanism means **a `--budget` cannot stop a run sooner than one block
-per worker**: `vseed search all-traders --budget 20s` at the default block size ran for **355 s**.
+gets several blocks. **Fixed in the tool on 2026-09-24:** with no size given, `vseed search` now
+sizes blocks so every worker gets at least 4, and says so in the plan; an explicit size is kept and
+warned about. **Corrected the same day: a `--budget` is not a floor.** It is checked only when a
+worker is about to take a block, and a taken block is always finished, so the bound is an OVERRUN of
+up to one block (plus worker start-up and the final write) - `all-traders --budget 20s` at 256 x 8
+ran **355 s** for that reason - but a run can stop at **0 seeds** (measured with `--budget 0.001s`).
 
 **Unverified:** the per-stage breakdown this section used to carry (pre-generation 0.31-0.44 s, the
 2048x2048 point grid 1.44-1.54 s, placement 6.5-6.8 s for all 183 types) has **not** been

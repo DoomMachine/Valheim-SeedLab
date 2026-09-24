@@ -2,10 +2,12 @@
   <!--
     The search engine's SAFETY suite: what the output layer does to the disk, to memory and to a
     hard kill. It is deliberately a separate project from tests\SeedLab.Search.Tests, which answers
-    "is the answer right" and reaches none of this code - every one of its 70 checks constructs
-    SeedEvaluator, CompiledQuery, ScanPlan or Presets directly, so it would still pass with every
-    fix in this suite reverted. That gap is what decisions item 9 calls a tripwire that is not
-    tested, and this project is it.
+    "is the answer right". That suite's later sections do build sessions and run the preflight, and
+    one runs a scan with no sink, but none of its checks writes a results file, resumes a checkpoint
+    from disk or kills a process, so it would still pass with every fix in this suite reverted.
+    (This comment used to say "every one of its 70 checks constructs SeedEvaluator, CompiledQuery,
+    ScanPlan or Presets directly"; it has grown past 300 since, and the gap it names is still open.)
+    That gap is what decisions item 9 calls a tripwire that is not tested, and this project is it.
 
     It is a console program with subcommands rather than a single run, because two of the things it
     proves can only be proved by killing a process:
@@ -23,9 +25,14 @@
       proof estimate   the live projection against what the run really did
       proof screen     screen-then-verify returns the same seeds AND the same records as a pure
                        12 m run - the check that makes the whole mechanism trustworthy
+      proof blocks     a completed run's results file is the same bytes at every block size (jsonl,
+                       json, csv; keep N and keep all), and a run resumed on another thread count at
+                       the automatic size keeps its checkpoint's size and finishes with the
+                       uninterrupted run's bytes - what makes a per-run block size safe
 
       killtest.ps1     hard-kills a run at three points and resumes it, then compares SHA-256 with
-                       an uninterrupted run. Run it twice: bare, and with the KeepAll switch.
+                       an uninterrupted run. Run it twice: bare, and with the KeepAll switch; add
+                       AutoBlock and ResumeThreads to resume at the automatic size on another thread count.
 
     Exit code is 0 when the subcommand's own checks pass.
   -->

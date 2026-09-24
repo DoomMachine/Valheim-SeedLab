@@ -58,6 +58,27 @@ namespace SeedLab.RuntimeTests
                 t1.ToString("N0") + " -> " + t8.ToString("N0") + " seeds/s (x"
                 + (t8 / t1).ToString("0.00") + " on 8 threads)");
 
+            // --- workers with nothing to compute ---------------------------------------------------
+            //
+            // One worker computes a whole block, so a run cut into 2 blocks on 8 workers runs at 2
+            // workers' rate - but every worker still starts and builds its buffers, so memory is 8's.
+            // BusyWorkers carries the first fact without disturbing the second (2026-09-24).
+            EstimateInputs starved = Query(512, WorkTier.HeightsRivers, 96, 8, 1000);
+            starved.BusyWorkers = 2;
+            Estimate es2 = est.Project(starved);
+            Estimate full8 = est.Project(Query(512, WorkTier.HeightsRivers, 96, 8, 1000));
+            Estimate only2 = est.Project(Query(512, WorkTier.HeightsRivers, 96, 2, 1000));
+            check(Math.Abs(es2.SeedsPerSecond - only2.SeedsPerSecond) < 1e-9 && es2.SeedsPerSecond < full8.SeedsPerSecond,
+                "busy workers set the rate: 2 of 8 with blocks project 2 workers' rate",
+                es2.SeedsPerSecond.ToString("N2") + " seeds/s, against " + full8.SeedsPerSecond.ToString("N2")
+                + " for 8 busy and " + only2.SeedsPerSecond.ToString("N2") + " for 2 threads");
+            check(Math.Abs(es2.Memory.High - full8.Memory.High) < 1 && es2.Memory.High > only2.Memory.High,
+                "and memory stays every worker's, busy or not",
+                es2.Memory.HumanBytes() + " against " + only2.Memory.HumanBytes() + " for 2 threads");
+            bool saidIdle = false;
+            foreach (string n in es2.Notes) if (n.Contains("only 2 of the 8 workers have a block")) saidIdle = true;
+            check(saidIdle, "and the estimate says why its rate is below the machine's", string.Join("; ", es2.Notes));
+
             // --- ranges and constants ---------------------------------------------------------------
             Estimate e = est.Project(Query(200_000, WorkTier.BiomeGrid, 384, 8, 1000));
             check(e.Time.Low <= e.Time.Mid && e.Time.Mid <= e.Time.High && e.Time.Low > 0,
