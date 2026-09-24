@@ -568,7 +568,11 @@ Examples:
         ///
         /// <para>A spelling two different prefabs claim is given to NEITHER - it is dropped and said
         /// out loud, because silently picking one would make the same typed word mean different
-        /// things in the page and in the terminal. There are none in this dump.</para>
+        /// things in the page and in the terminal. There are none in this dump, apart from the three
+        /// names the game itself gives to several prefabs ("Burial Chambers", "Infested Mine",
+        /// "Putrid Hole", from the dungeon doors dumped 2026-09-24): those are dropped without a
+        /// note, as the oracle drops them, because the server refuses them with the prefabs
+        /// listed.</para>
         /// </summary>
         private static LocationVocabulary? _vocabulary;
         private static List<string> _vocabularyNotes = new List<string>();
@@ -620,6 +624,13 @@ Examples:
 
                     vocab.Names.Remove(s);
                     dropped.Add(s);
+
+                    // The game's own shared names - Crypt2, Crypt3 and Crypt4 are all "Burial
+                    // Chambers" by the same door token - are dropped too, but without a note on every
+                    // report: nothing was lost, the name never meant one prefab, and typing it is
+                    // refused with the prefabs listed. The oracle's NameIndex makes the same call.
+                    if (SameDerivedName(names.TypeOf(owner)?.Presentation, info?.Presentation, s)) continue;
+
                     problems.Add("the name '" + s + "' is claimed by both " + owner + " and " + prefab
                                  + ", so the page will not canonicalise it; type either prefab instead.");
                 }
@@ -627,6 +638,17 @@ Examples:
 
             return vocab;
         }
+
+        /// <summary>True when <paramref name="spelling"/> is the DISPLAY name of both places, from the
+        /// same rule and the same token - the game naming two variants of one dungeon alike, not two
+        /// different names colliding.</summary>
+        private static bool SameDerivedName(SeedLab.Search.Locations.LocationPresentation? a,
+                                            SeedLab.Search.Locations.LocationPresentation? b, string spelling)
+            => a != null && b != null
+               && string.Equals(a.DisplayName, spelling, StringComparison.Ordinal)
+               && string.Equals(b.DisplayName, spelling, StringComparison.Ordinal)
+               && string.Equals(a.DisplayNameSource, b.DisplayNameSource, StringComparison.Ordinal)
+               && string.Equals(a.NameToken, b.NameToken, StringComparison.Ordinal);
 
         /// <summary>
         /// One category per prefab, most specific first. A Mistlands boss entrance is a boss AND a

@@ -123,6 +123,9 @@ namespace SeedLab.Data
         internal static readonly DumpSchema OfferingBowlDef;
         internal static readonly DumpSchema RuneStoneDef;
         internal static readonly DumpSchema TraderDef;
+        internal static readonly DumpSchema TeleportDef;
+        internal static readonly DumpSchema VegvisirLocationDef;
+        internal static readonly DumpSchema VegvisirDef;
         internal static readonly DumpSchema LocationChildrenDef;
         internal static readonly DumpSchema LocationChildrenFile;
         internal static readonly DumpSchema Vec3Def;
@@ -526,6 +529,49 @@ namespace SeedLab.Data
                 Scalar("activeSelf"),
             });
 
+        TeleportDef = new DumpSchema("TeleportDef", new[]
+            {
+                Scalar("path"),
+                Scalar("prefabName"),
+                Scalar("hoverTextToken"),
+                Scalar("hoverTextLocalized"),
+                Scalar("enterTextToken"),
+                Scalar("enterTextLocalized"),
+                Scalar("hasTarget"),
+                Scalar("targetInPrefab"),
+                Scalar("targetPath"),
+                Scalar("enabledInHierarchy"),
+                Scalar("activeSelf"),
+            });
+
+        VegvisirLocationDef = new DumpSchema("VegvisirLocationDef", new[]
+            {
+                Scalar("locationName"),
+                Scalar("pinNameToken"),
+                Scalar("pinNameLocalized"),
+                Scalar("pinType"),
+                Scalar("pinTypeName"),
+                Scalar("discoverAll"),
+                Scalar("showMap"),
+            });
+
+        VegvisirDef = new DumpSchema("VegvisirDef", new[]
+            {
+                Scalar("path"),
+                Scalar("prefabName"),
+                Scalar("nameToken"),
+                Scalar("localizedName"),
+                Scalar("hoverNameToken"),
+                Scalar("hoverNameLocalized"),
+                Scalar("useTextToken"),
+                Scalar("useTextLocalized"),
+                Scalar("setsGlobalKey"),
+                Scalar("setsPlayerKey"),
+                Arr("locations", VegvisirLocationDef),
+                Scalar("enabledInHierarchy"),
+                Scalar("activeSelf"),
+            });
+
         LocationChildrenDef = new DumpSchema("LocationChildrenDef", new[]
             {
                 Scalar("hasLocationComponent"),
@@ -721,6 +767,8 @@ namespace SeedLab.Data
                 Arr("traders", TraderDef),
                 Arr("offeringBowls", OfferingBowlDef),
                 Arr("runeStones", RuneStoneDef),
+                Arr("teleports", TeleportDef),
+                Scalar("waymarksCaptured"),
             });
 
         LocationOccupantsFile = new DumpSchema("LocationOccupantsFile", new[]

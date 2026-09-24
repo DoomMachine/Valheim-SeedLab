@@ -234,12 +234,24 @@ namespace SeedLab.LocationOracle
         /// folded key, that key stops resolving to either and a Note records which spelling stopped
         /// working - the alternative, picking a winner, would answer a question the data does not
         /// answer. All three fold indexes are collision-free in 1.0.15.</para>
+        ///
+        /// <para><b>A name the game gives to several prefabs resolves to none, silently.</b> Since the
+        /// dungeon doors were dumped (2026-09-24) three captions are shared: "Burial Chambers"
+        /// (Crypt2/3/4), "Infested Mine" (both Dvergr town entrances) and "Putrid Hole"
+        /// (MorgenHole1/2/3). That is the game's naming, not a lost spelling, so it drops the key
+        /// without a note; typing it is refused and the refusal lists the prefabs
+        /// (<see cref="SharedDisplayNames"/>).</para>
         /// </summary>
         private sealed class NameIndex
         {
             /// <summary>Sentinel for a key two different prefabs claim. A value, not a deletion, so a
             /// third spelling of the same collision cannot quietly re-add it.</summary>
             private const string Ambiguous = "\u0000ambiguous";
+
+            /// <summary>Sentinel for a key the game itself gives to several prefabs - "Burial Chambers"
+            /// is Crypt2, Crypt3 and Crypt4. It resolves to nothing, like <see cref="Ambiguous"/>, but
+            /// it is not a lost spelling and says nothing; see <see cref="SharedDisplayNames"/>.</summary>
+            private const string SharedName = "\u0000shared";
 
             private readonly Dictionary<string, string> _exactDisplay;
             private readonly Dictionary<string, string> _foldedPrefab;
@@ -322,6 +334,8 @@ namespace SeedLab.LocationOracle
                 List<(string Prefab, string? Display)> pairs =
                     new List<(string Prefab, string? Display)>(order.Count);
 
+                Dictionary<string, HashSet<string>> shared = SharedDisplayNames(names, order);
+
                 foreach (string prefab in order)
                 {
                     LocationDisplayName? n = names?.For(prefab);
@@ -333,11 +347,12 @@ namespace SeedLab.LocationOracle
                         // Aliases[0] IS the prefab; it is already passes 1 and 3, and indexing it here
                         // as well would only manufacture self-collisions in the display passes.
                         if (string.Equals(alias, prefab, StringComparison.Ordinal)) continue;
-                        Add(exactDisplay, alias, prefab, notes, "display name");
+                        HashSet<string>? sharers = shared.TryGetValue(alias, out HashSet<string>? s) ? s : null;
+                        Add(exactDisplay, alias, prefab, notes, "display name", sharers);
                         Add(foldedDisplay, LocationNameKey.Fold(alias), prefab, notes,
-                            "folded display name");
+                            "folded display name", sharers);
                         Add(articleDisplay, LocationNameKey.FoldDroppingArticle(alias), prefab, notes,
-                            "display name with a leading 'the' dropped");
+                            "display name with a leading 'the' dropped", sharers);
                     }
                 }
 
@@ -349,9 +364,12 @@ namespace SeedLab.LocationOracle
             }
 
             /// <summary>Indexes one key, or - when a DIFFERENT prefab already holds it - marks it
-            /// ambiguous and records which spelling stopped working.</summary>
+            /// ambiguous and records which spelling stopped working. <paramref name="sharers"/> is the
+            /// set of prefabs the game gives this very name (see <see cref="SharedDisplayNames"/>); a
+            /// collision INSIDE that set is the game's naming, not a fold that went wrong, so it is
+            /// marked ambiguous without a note.</summary>
             private static void Add(Dictionary<string, string> index, string key, string prefab,
-                                    List<string> notes, string what)
+                                    List<string> notes, string what, HashSet<string>? sharers = null)
             {
                 if (key.Length == 0) return;
                 if (!index.TryGetValue(key, out string? existing))
@@ -363,10 +381,89 @@ namespace SeedLab.LocationOracle
                 if (string.Equals(existing, prefab, StringComparison.Ordinal)) return;
                 if (string.Equals(existing, Ambiguous, StringComparison.Ordinal)) return;
 
-                index[key] = Ambiguous;
+                if (string.Equals(existing, SharedName, StringComparison.Ordinal))
+                {
+                    // Another sharer of the same name: nothing new. Anything else reaching this key
+                    // IS a collision, and a real one must not hide behind the game's shared name.
+                    if (sharers != null && sharers.Contains(prefab)) return;
+                    index[key] = Ambiguous;
+                    notes.Add("the " + what + " '" + key + "' is the game's name for several places and "
+                              + "now also means '" + prefab + "'; spell the one you mean as its prefab name.");
+                    return;
+                }
+
+                bool shared = sharers != null && sharers.Contains(existing) && sharers.Contains(prefab);
+                index[key] = shared ? SharedName : Ambiguous;
+                if (shared) return;
+
                 notes.Add("the " + what + " '" + key + "' now means both '" + existing + "' and '"
                           + prefab + "', so it no longer resolves to either; spell the one you mean as "
                           + "its prefab name.");
+            }
+
+            /// <summary>
+            /// Display names the derivation gives to MORE than one prefab, each with the prefabs that
+            /// carry it - "Burial Chambers" for <c>Crypt2</c>, <c>Crypt3</c> and <c>Crypt4</c>.
+            ///
+            /// <para>These are not collisions in the sense the note above is written for. That note
+            /// exists for a spelling that used to mean one place and silently stopped - two different
+            /// names folding onto one key. Here the game itself captions three variants of one dungeon
+            /// identically (the same <c>m_enterText</c> token on each entrance door, first dumped
+            /// 2026-09-24), so the name never meant one prefab and no spelling was lost. It still does
+            /// not RESOLVE - picking one of the three would answer a question the data does not answer
+            /// - and a query that types it is refused with the three prefabs listed, which is where the
+            /// user needs to hear it. A permanent note printed on every run would say the same thing
+            /// to everyone who never typed it.</para>
+            ///
+            /// <para>Only a name that is the DISPLAY name of every prefab in the set, from the same
+            /// source rule and the same token, qualifies. A display name that equals some other place's
+            /// alias is still a real collision and still notes.</para>
+            /// </summary>
+            private static Dictionary<string, HashSet<string>> SharedDisplayNames(
+                LocationDisplayNames? names, List<string> order)
+            {
+                Dictionary<string, List<LocationDisplayName>> byName =
+                    new Dictionary<string, List<LocationDisplayName>>(StringComparer.Ordinal);
+                if (names != null)
+                {
+                    foreach (string prefab in order)
+                    {
+                        LocationDisplayName n = names.For(prefab);
+                        if (n.DisplayName == null) continue;
+                        if (!byName.TryGetValue(n.DisplayName, out List<LocationDisplayName>? list))
+                        {
+                            list = new List<LocationDisplayName>();
+                            byName[n.DisplayName] = list;
+                        }
+
+                        list.Add(n);
+                    }
+                }
+
+                Dictionary<string, HashSet<string>> outp =
+                    new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+                foreach (KeyValuePair<string, List<LocationDisplayName>> kv in byName)
+                {
+                    if (kv.Value.Count < 2) continue;
+
+                    bool sameOrigin = true;
+                    foreach (LocationDisplayName n in kv.Value)
+                    {
+                        if (n.Source != kv.Value[0].Source
+                            || !string.Equals(n.NameToken, kv.Value[0].NameToken, StringComparison.Ordinal))
+                        {
+                            sameOrigin = false;
+                        }
+                    }
+
+                    if (!sameOrigin) continue;
+
+                    HashSet<string> set = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (LocationDisplayName n in kv.Value) set.Add(n.Prefab);
+                    outp[kv.Key] = set;
+                }
+
+                return outp;
             }
 
             /// <summary>
@@ -484,7 +581,10 @@ namespace SeedLab.LocationOracle
             {
                 if (key.Length == 0) return null;
                 if (!index.TryGetValue(key, out string? prefab)) return null;
-                return string.Equals(prefab, Ambiguous, StringComparison.Ordinal) ? null : prefab;
+                return string.Equals(prefab, Ambiguous, StringComparison.Ordinal)
+                       || string.Equals(prefab, SharedName, StringComparison.Ordinal)
+                    ? null
+                    : prefab;
             }
 
             private LocationNameMatch Match(string prefab, string typed, string how)

@@ -10,10 +10,10 @@ namespace SeedLab.Dumper
     /// a game update instead of producing plausible nonsense.
     ///
     /// Two hashes, not one. <c>assembly_valheim.dll</c> covers the game code - it is the same artifact
-    /// <c>check-game-version.ps1</c> hashes, so the stamps can be compared by eye. <c>UnityPlayer.dll</c>
-    /// covers the natives: <c>Mathf.PerlinNoise</c>, <c>UnityEngine.Random</c> and
-    /// <c>Mathf.FloatToHalf</c> all live there, and a Unity upgrade could change them while the game
-    /// code is untouched.
+    /// <c>tools\check-game-version.ps1</c> hashes, so the stamps can be compared by eye.
+    /// <c>UnityPlayer.dll</c> covers the natives: <c>Mathf.PerlinNoise</c>,
+    /// <c>UnityEngine.Random</c> and <c>Mathf.FloatToHalf</c> all live there, and a Unity upgrade
+    /// could change them while the game code is untouched.
     /// </summary>
     internal static class GameInfo
     {
@@ -62,9 +62,10 @@ namespace SeedLab.Dumper
         }
 
         /// <summary>
-        /// The DATA-STAMP line, in exactly the shape <c>check-game-version.ps1</c> prints, so the dump
-        /// and the knowledge base can be compared without tooling. Repeated as the first property of
-        /// every file in the dump: a file lifted out of the folder is still self-identifying.
+        /// The DATA-STAMP line. Its <c>assembly_valheim-sha256</c> is the hash
+        /// <c>tools\check-game-version.ps1</c> reports for the installed game, so the dump and the
+        /// game can be compared without tooling. Repeated as the first property of every file in the
+        /// dump: a file lifted out of the folder is still self-identifying.
         /// </summary>
         public static string Stamp(string mode)
         {

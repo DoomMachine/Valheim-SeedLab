@@ -40,7 +40,7 @@ namespace SeedLab.Contracts.Dump
         public string? unityVersion;
 
         /// <summary>SHA-256 of <c>valheim_Data\Managed\assembly_valheim.dll</c> - the same artifact
-        /// <c>check-game-version.ps1</c> hashes, so the two stamps can be compared by eye.</summary>
+        /// <c>tools\check-game-version.ps1</c> hashes, so the two stamps can be compared by eye.</summary>
         public string? assemblyValheimSha256;
 
         /// <summary>SHA-256 of <c>UnityPlayer.dll</c>. The natives (PerlinNoise, Random, FloatToHalf)

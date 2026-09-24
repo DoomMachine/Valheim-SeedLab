@@ -1871,8 +1871,12 @@ namespace SeedLab.Dumper
         ///
         /// <para><b>Teleport is here for one field:</b> <c>m_enterText</c>, the caption
         /// <c>Teleport.Interact</c> hands to <c>MessageHud.ShowBiomeFoundMsg</c> after a successful
-        /// teleport - "Burial Chambers" and the like. It is the game's only name for a dungeon, and it
-        /// lives on the prefab, not in code, so this walk is the only way to read it.</para>
+        /// teleport - "Burial Chambers" and the like. For most dungeons it is the only name the game
+        /// has (run 6, 2026-09-24: 17 location prefabs are named by it, and only Hildir's two also get
+        /// the same token from her map table's pins). It lives on the prefab, not in code, so it has
+        /// to be read off a loaded asset: this walk does that inside the running game. A Unity editor
+        /// of the game's exact version reading the asset bundles directly is a second route that has
+        /// not been tried.</para>
         ///
         /// <para><b>Vegvisir</b> is read in the same pass because its <c>m_locations</c> entries are
         /// the pin captions the game writes for the places it reveals - evidence about OTHER prefabs'

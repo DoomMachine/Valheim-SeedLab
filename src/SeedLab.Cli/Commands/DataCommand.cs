@@ -549,9 +549,13 @@ namespace SeedLab.Cli.Commands
             o.Note(names.All.Count.ToString(CultureInfo.InvariantCulture) + " prefabs, of which "
                    + Named(names).ToString(CultureInfo.InvariantCulture) + " carry a name this dump can "
                    + "produce: " + names.BossAltarPrefabs.Count.ToString(CultureInfo.InvariantCulture)
-                   + " boss altars, " + names.TraderPrefabs.Count.ToString(CultureInfo.InvariantCulture)
-                   + " traders and the rest from Location.m_discoverLabel. The others are named nothing");
-            o.Note("in the data, and SeedLab shows the prefab rather than inventing a name for them.");
+                   + " boss altars,");
+            o.Note(names.TraderPrefabs.Count.ToString(CultureInfo.InvariantCulture)
+                   + " traders, and the rest from Location.m_discoverLabel or from the caption on a dungeon's");
+            o.Note("entrance door (Teleport.m_enterText). The others are named nothing in the data, and");
+            o.Note("SeedLab shows the prefab rather than inventing a name for them. A name the game gives to");
+            o.Note("several prefabs (Crypt2/3/4 are all \"Burial Chambers\") is shown on each of them, but");
+            o.Note("typed as input it picks none of them: spell the prefab you mean.");
             o.Note("");
             o.Note("'also answers to' and the two name columns are all accepted as INPUT by 'vseed");
             o.Note("locations --name' and by a query's 'location:' target, with case and spacing ignored");

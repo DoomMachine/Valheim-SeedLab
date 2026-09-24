@@ -7,9 +7,10 @@ namespace SeedLab.Contracts.Dump
     /// <para><b>Why a second DTO for a file that already has one.</b>
     /// <see cref="LocationChildrenFile"/> is the full contract: 29.9 MB of RandomSpawn draw order,
     /// container drop tables and per-prefab name indices, which is what a stream replay needs and what
-    /// a NAME needs none of. Naming reads four arrays - <c>characters</c>, <c>traders</c>,
-    /// <c>offeringBowls</c>, <c>runeStones</c> - out of 186 entries. Deserializing into the full DTO to
-    /// reach them would allocate every <see cref="RandomSpawnDef"/>, <see cref="ContainerDef"/> and
+    /// a NAME needs none of. Naming reads five arrays - <c>characters</c>, <c>traders</c>,
+    /// <c>offeringBowls</c>, <c>runeStones</c>, <c>teleports</c> - out of 186 entries. Deserializing
+    /// into the full DTO to reach them would allocate every <see cref="RandomSpawnDef"/>,
+    /// <see cref="ContainerDef"/> and
     /// <see cref="PrefabNameDef"/> in the file and throw them away. <c>System.Text.Json</c> skips a
     /// member no DTO declares, so a trimmed type parses the same bytes and builds only these objects.
     /// The parse still walks the whole file; the allocation does not.</para>
@@ -29,6 +30,17 @@ namespace SeedLab.Contracts.Dump
     /// carries every field <see cref="CharacterDef"/>, <see cref="TraderDef"/>,
     /// <see cref="OfferingBowlDef"/> and <see cref="RuneStoneDef"/> declare. A schema ahead of the
     /// shipped dump fails closed, so that was checked before this type existed.</para>
+    ///
+    /// <para><b>The doors joined the slice with the dump that first carried them</b> (run 6,
+    /// dumped 2026-09-24): <see cref="LocationOccupantsDef.teleports"/> and
+    /// <see cref="LocationOccupantsDef.waymarksCaptured"/>. Measured against that dump before they
+    /// were declared here: 186 entries, <c>waymarksCaptured</c> true on all of them, 38 teleports
+    /// over 19 prefabs - one entrance and one exit each - and every teleport carrying every field
+    /// <see cref="TeleportDef"/> declares. A dump older than run 6 has neither field, so it now fails
+    /// this schema by name rather than reporting a world whose dungeons have no names. The
+    /// <c>vegvisirs</c> the same dump carries are deliberately NOT in the slice: they name the
+    /// places they reveal, never their host, and every name they could add is already given by the
+    /// door or the boss (see <see cref="VegvisirDef"/>).</para>
     /// </summary>
     public sealed class LocationOccupantsFile
     {
@@ -43,7 +55,7 @@ namespace SeedLab.Contracts.Dump
     }
 
     /// <summary>
-    /// One location prefab's occupants. The four arrays are the same objects the full walk records -
+    /// One location prefab's occupants. The five arrays are the same objects the full walk records -
     /// see <see cref="InteriorDef.characters"/> and its neighbours for what each one is and is not good
     /// for.
     /// </summary>
@@ -78,6 +90,19 @@ namespace SeedLab.Contracts.Dump
         /// names</b>: a stone names the location it makes the game DISCOVER, not the one it stands in,
         /// and its own name token is "Runestone". See <see cref="RuneStoneDef"/>.</summary>
         public RuneStoneDef[]? runeStones;
+
+        /// <summary>Every <c>Teleport</c> - a dungeon's two doors. 38 over 19 prefabs in the run-6
+        /// dump: each has one entrance whose <c>m_enterText</c> is the caption the game shows on
+        /// walking in, and one exit whose <c>m_enterText</c> is empty. This is what names a
+        /// dungeon. See <see cref="TeleportDef"/>.</summary>
+        public TeleportDef[]? teleports;
+
+        /// <summary>False when the dumper did not capture <see cref="teleports"/> for this prefab (its
+        /// own walk threw), in which case the array is empty and means "not looked at", never "this
+        /// place has no door". Kept apart from <see cref="occupantsCaptured"/> on purpose, so a door
+        /// that could not be read costs that prefab its dungeon name and nothing else. True on all 186
+        /// entries of the run-6 dump.</summary>
+        public bool waymarksCaptured;
     }
 
     /// <summary>

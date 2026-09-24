@@ -114,10 +114,11 @@ namespace SeedLab.Dumper
 
             try
             {
-                // F4 is the one function key neither vanilla nor any mod in this install uses: vanilla
-                // holds F1 (mouse capture), F2 (connect panel), F3 (HUD), F5 (console), F9 (gamepad
-                // layout), F11 (screenshot); the installed mods hold F1, F6, F7, F8, F10; TomTom holds
-                // F11. Re-check with scripts\find-key-usage.ps1 -Plugins before changing it.
+                // F4 is a function key vanilla does not use: vanilla holds F1 (mouse capture), F2
+                // (connect panel), F3 (HUD), F5 (console), F9 (gamepad layout), F11 (screenshot). Other
+                // plugins bind keys too, so check the ones installed beside this before changing it;
+                // tools\decompile.ps1 reads vanilla's side (e.g. -Type ZInput -Assembly assembly_utils)
+                // and takes any plugin DLL as -Assembly.
                 DumpKey = Config.Bind("General", "DumpKey", KeyCode.F4,
                     "Runs the asset dump (mode 'assets'). Only does anything while the plugin is armed " +
                     "by a dumper.enable file, and only in a solo session you host.");

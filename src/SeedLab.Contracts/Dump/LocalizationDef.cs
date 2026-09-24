@@ -216,13 +216,25 @@ namespace SeedLab.Contracts.Dump
     /// One <c>Teleport</c> inside a location or room prefab - a dungeon's door in or out.
     ///
     /// <para><b>Why it is dumped (2026-09-24).</b> It is the game's own name for a DUNGEON, which
-    /// nothing else in this dump carries. <c>Teleport.Interact</c>, after a successful
-    /// <c>TeleportTo</c>, calls <c>MessageHud.instance.ShowBiomeFoundMsg(m_enterText, false)</c> when
-    /// <c>m_enterText</c> is non-empty - the large caption a player sees on walking into a crypt. The
-    /// tokens are not in code (<c>assembly_valheim</c> holds only <c>location_enter</c>, as the
-    /// constructor default of <c>m_hoverText</c>); they live on the prefabs in the SoftRef bundles, so
-    /// reading them needs the game's own loader. <b>Unverified:</b> which prefabs carry which token -
-    /// that is what the dump that first writes this type will say.</para>
+    /// for most dungeons nothing else in this dump carries. <c>Teleport.Interact</c>, after a
+    /// successful <c>TeleportTo</c>, calls <c>MessageHud.instance.ShowBiomeFoundMsg(m_enterText,
+    /// false)</c> when <c>m_enterText</c> is non-empty - the large caption a player sees on walking
+    /// into a crypt. The tokens are not in code (<c>assembly_valheim</c> holds only
+    /// <c>location_enter</c>, as the constructor default of <c>m_hoverText</c>); they live on the
+    /// prefabs in the SoftRef bundles, so reading them needs a loaded asset - the dumper reads them in
+    /// the running game, and a Unity editor of the game's exact version is an untried second
+    /// route.</para>
+    ///
+    /// <para><b>What the first dump that wrote it says</b> (run 6, 2026-09-24): 38 teleports, all in
+    /// location prefabs and none in any of the 358 room prefabs, two per prefab over 19 prefabs - an
+    /// entrance (<c>$location_enter</c>) with a caption and an exit (<c>$location_exit</c>) whose
+    /// <c>m_enterText</c> is empty, each targeting the other inside the same prefab. 18 entrances are
+    /// active: 17 name their prefab (Crypt2/3/4 share <c>$location_forestcrypt</c>, the Dvergr town
+    /// entrances <c>$location_dvergrtown</c>, MorgenHole1/2/3 <c>$location_morgenhole</c>) and
+    /// <c>Mistlands_DvergrBossEntrance1</c>'s ("Infested Citadel") is an alias of The Queen's place;
+    /// <c>DN_Bossroom</c>'s entrance (<c>$location_dnbossroomnew</c>, "The Prison") is inactive in
+    /// the prefab. Two <c>location_*</c> tokens of the English table are on no door either walk
+    /// found: <c>location_darkesthole</c> and <c>location_dnbossroom</c>.</para>
     ///
     /// <para><c>m_targetPoint</c> is a serialized <c>Teleport</c> reference that no code assigns
     /// (only <c>Teleport.Interact</c> reads it, decompiled 2026-09-24), so the door-to-door link is

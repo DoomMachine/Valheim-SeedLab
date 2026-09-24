@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using SeedLab.Contracts.Dump;
 using SeedLab.Data;
 using SeedLab.LocationOracle;
+using SeedLab.Search.Criteria;
+using SeedLab.Search.Evaluation;
 using SeedLab.Search.Locations;
 
 namespace SeedLab.SearchTests
@@ -21,6 +25,12 @@ namespace SeedLab.SearchTests
     /// rather than a discovery. (4) The display order folds case with <c>ToLowerInvariant</c> + ordinal
     /// rather than <c>OrdinalIgnoreCase</c>, and no pair among the 183 placed types happens to trip
     /// the difference - only the golden listing would catch a regression.</para>
+    ///
+    /// <para>(5) The entrance-door rule (2026-09-24) names seventeen dungeons from
+    /// <c>Teleport.m_enterText</c>, and three of its captions are shared by several prefabs. Its
+    /// checks pin the names, the source label, the two boss places where the door must NOT win, that
+    /// a shared caption resolves to none of its prefabs without a note, and - by placing the named
+    /// types against the game's own fresh-world goldens - that naming moved no instance.</para>
     /// </summary>
     public static class NameChecks
     {
@@ -58,6 +68,38 @@ namespace SeedLab.SearchTests
         private static readonly string[] ForbiddenNames =
             { "Runestone", "Sacrificial Stone", "A mysterious text" };
 
+        /// <summary>
+        /// Every place the entrance-door rule names, measured from the dump that first carried the
+        /// doors (dumper run 6, 2026-09-24): the <c>m_enterText</c> token on each prefab's one usable
+        /// captioned <c>Teleport</c> and what it resolves to in the dumped English table. Checked
+        /// against the Valheim wiki by prefab id the same day - the wiki agrees where it has a page
+        /// (Sunken Crypts = SunkenCrypt4, Infested Mine = both Dvergr town entrances, Smouldering Tomb
+        /// = Hildir_crypt, Tomb of Lord Reto = PlaceofMystery3, Putrid Hole = MorgenHole1/2/3,
+        /// Frost Caves = MountainCave02 through its point-of-interest table, Burial Chambers =
+        /// DG_ForestCrypt, the generator all three Crypt prefabs carry), and has no page at all for
+        /// the three Deep North captions or Bear Cave. The rule reads the dump, never this table.
+        /// </summary>
+        private static readonly (string Prefab, string Name, string Token)[] DoorGolden =
+        {
+            ("Crypt2", "Burial Chambers", "$location_forestcrypt"),
+            ("Crypt3", "Burial Chambers", "$location_forestcrypt"),
+            ("Crypt4", "Burial Chambers", "$location_forestcrypt"),
+            ("TrollCave02", "Troll Cave", "$location_forestcave"),
+            ("SunkenCrypt4", "Sunken Crypts", "$location_sunkencrypt"),
+            ("MountainCave02", "Frost Caves", "$location_mountaincave"),
+            ("Mistlands_DvergrTownEntrance1", "Infested Mine", "$location_dvergrtown"),
+            ("Mistlands_DvergrTownEntrance2", "Infested Mine", "$location_dvergrtown"),
+            ("Hildir_cave", "Howling Cavern", "$hud_pin_hildir2"),
+            ("Hildir_crypt", "Smouldering Tomb", "$hud_pin_hildir1"),
+            ("PlaceofMystery3", "Tomb of Lord Reto", "$location_mausoleum"),
+            ("MorgenHole1", "Putrid Hole", "$location_morgenhole"),
+            ("MorgenHole2", "Putrid Hole", "$location_morgenhole"),
+            ("MorgenHole3", "Putrid Hole", "$location_morgenhole"),
+            ("TheHole01", "Winding tunnels", "$location_thehole"),
+            ("MorkBorg", "Mörkhalla", "$location_morkhalla"),
+            ("BearCave", "Bear Cave", "$location_bearcave"),
+        };
+
         public static void Run(Action<bool, string, string> check)
         {
             ILocationOracle oracle = DumpedLocationOracle.Create(out string? problem);
@@ -85,6 +127,9 @@ namespace SeedLab.SearchTests
             CheckResolution(check, dumped);
             CheckWorldFeatures(check);
             CheckDropdownGolden(check, dumped);
+            CheckDoorNames(check, names);
+            CheckSharedDoorNames(check, dumped);
+            CheckDoorPlacement(check, dumped);
         }
 
         private static void CheckBossTable(Action<bool, string, string> check, LocationDisplayNames names)
@@ -293,7 +338,9 @@ namespace SeedLab.SearchTests
             string collision = "";
             foreach (string n in oracle.NameNotes)
             {
-                if (n.Contains("no longer resolves to either")) collision = n;
+                // The second phrase is the note for a real collision on a key the game already shares
+                // between several prefabs ("Burial Chambers"); the sharing itself says nothing.
+                if (n.Contains("no longer resolves to either") || n.Contains("now also means")) collision = n;
             }
 
             check(collision.Length == 0, "no name folds onto another prefab's key",
@@ -574,6 +621,212 @@ namespace SeedLab.SearchTests
 
             return rows;
         }
+
+        /// <summary>
+        /// The entrance-door rule: the seventeen names, their source label and token, and the two
+        /// places where the door is NOT the name - which is where a precedence mistake would show.
+        /// </summary>
+        private static void CheckDoorNames(Action<bool, string, string> check, LocationDisplayNames names)
+        {
+            bool allRight = true;
+            foreach ((string prefab, string name, string token) in DoorGolden)
+            {
+                LocationDisplayName n = names.For(prefab);
+                bool ok = n.Source == DisplayNameSource.TeleportEnterText
+                          && string.Equals(n.DisplayName, name, StringComparison.Ordinal)
+                          && string.Equals(n.NameToken, token, StringComparison.Ordinal)
+                          && n.Provenance.Contains("Teleport.m_enterText", StringComparison.Ordinal)
+                          && n.Aliases.Count >= 2
+                          && string.Equals(n.Aliases[1], name, StringComparison.Ordinal);
+                if (!ok) allRight = false;
+                check(ok, prefab + " is '" + name + "' from its entrance door (" + token + ")",
+                      (n.DisplayName ?? "(unnamed)") + ", source " + n.Source + ", token "
+                      + (n.NameToken ?? "-"));
+            }
+
+            // Exactly these seventeen and no others: a door rule that also fired somewhere else would
+            // be naming a place from a door this table has not looked at.
+            List<string> doorNamed = new List<string>();
+            foreach (LocationDisplayName n in names.All)
+            {
+                if (n.Source == DisplayNameSource.TeleportEnterText) doorNamed.Add(n.Prefab);
+            }
+
+            string[] expected = new string[DoorGolden.Length];
+            for (int i = 0; i < DoorGolden.Length; i++) expected[i] = DoorGolden[i].Prefab;
+            check(allRight && SetEquals(doorNamed, expected),
+                  "the door rule names exactly the 17 prefabs measured from dumper run 6",
+                  doorNamed.Count + " named by a door: " + string.Join(", ", doorNamed));
+
+            // Precedence, case 1: The Queen's entrance has a captioned door ("Infested Citadel"), and
+            // the boss rule must still win, or the boss group loses a member the moment doors exist.
+            // The caption survives as an alias, so it can still be typed.
+            LocationDisplayName queen = names.For("Mistlands_DvergrBossEntrance1");
+            bool citadel = false;
+            foreach (string a in queen.Aliases)
+            {
+                if (string.Equals(a, "Infested Citadel", StringComparison.Ordinal)) citadel = true;
+            }
+
+            check(queen.Source == DisplayNameSource.BossAltar
+                  && string.Equals(queen.DisplayName, "The Queen", StringComparison.Ordinal) && citadel,
+                  "Mistlands_DvergrBossEntrance1 stays 'The Queen' and answers to 'Infested Citadel'",
+                  string.Join(", ", queen.Aliases));
+
+            // Precedence, case 2: DN_Bossroom's only captioned door ("The Prison") is inactive in the
+            // prefab. The game cannot show that caption unless something outside the dump enables the
+            // door, so it is neither the name nor an alias - which also keeps the boss rule's answer.
+            LocationDisplayName dn = names.For("DN_Bossroom");
+            bool prison = false;
+            foreach (string a in dn.Aliases)
+            {
+                if (string.Equals(a, "The Prison", StringComparison.Ordinal)) prison = true;
+            }
+
+            check(dn.Source == DisplayNameSource.BossAltar && !prison,
+                  "DN_Bossroom's inactive door ('The Prison') is neither its name nor an alias",
+                  string.Join(", ", dn.Aliases));
+
+            // The discover label outranks a door. The only prefab carrying both in 1.0.15 is
+            // DN_Bossroom (checked above), so this pins the label rule's three names rather than an
+            // overlap.
+            check(names.For("Hildir_plainsfortress").Source == DisplayNameSource.DiscoverLabel
+                  && names.For("CharredFortress").Source == DisplayNameSource.DiscoverLabel
+                  && names.For("AncientUpgradeStation").Source == DisplayNameSource.DiscoverLabel,
+                  "the three discoverLabel names keep their source", "");
+
+            // A name that works raises no note: none of the seventeen may print anything when shown.
+            List<string> doorNotes = new List<string>(names.NotesFor(expected, includeTableWide: false));
+            check(doorNotes.Count == 0, "no door-named place carries a note",
+                  doorNotes.Count == 0 ? "none" : string.Join(" | ", doorNotes));
+
+            // Corroboration from a second surface of the game: Hildir's map table is a Vegvisir whose
+            // pins name her two dungeons with the very tokens their doors carry. Read from the file
+            // itself, because the naming layer deliberately does not load the Vegvisirs.
+            GameData data = GameData.Load();
+            string pinCrypt = "", pinCave = "";
+            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllBytes(
+                       Path.Combine(data.Directory, "locationchildren.json"))))
+            {
+                foreach (JsonElement loc in doc.RootElement.GetProperty("locations").EnumerateArray())
+                {
+                    if (!loc.TryGetProperty("vegvisirs", out JsonElement vegs)) continue;
+                    foreach (JsonElement v in vegs.EnumerateArray())
+                    {
+                        foreach (JsonElement pin in v.GetProperty("locations").EnumerateArray())
+                        {
+                            string target = pin.GetProperty("locationName").GetString() ?? "";
+                            string pinToken = pin.GetProperty("pinNameToken").GetString() ?? "";
+                            if (target == "Hildir_crypt") pinCrypt = pinToken;
+                            if (target == "Hildir_cave") pinCave = pinToken;
+                        }
+                    }
+                }
+            }
+
+            check(pinCrypt == names.For("Hildir_crypt").NameToken && pinCave == names.For("Hildir_cave").NameToken,
+                  "Hildir's map table pins her tomb and her cavern with the tokens their doors carry",
+                  "Hildir_crypt " + pinCrypt + ", Hildir_cave " + pinCave);
+        }
+
+        /// <summary>
+        /// Three captions are shared - the game names every variant of a dungeon alike - so typing one
+        /// must pick NONE of its prefabs, say nothing on every run, and refuse with the prefabs listed.
+        /// </summary>
+        private static void CheckSharedDoorNames(Action<bool, string, string> check, DumpedLocationOracle oracle)
+        {
+            foreach (string shared in new[] { "Burial Chambers", "burial chambers", "Infested Mine", "Putrid Hole" })
+            {
+                LocationNameMatch? m = oracle.ResolveLocationName(shared);
+                check(m == null, "'" + shared + "' is shared, so it resolves to no single prefab",
+                      m == null ? "(no match)" : m.Prefab + " by " + m.How);
+            }
+
+            Resolves(check, oracle, "Sunken Crypts", "SunkenCrypt4", "display name");
+            Resolves(check, oracle, "frost caves", "MountainCave02", "display name (case and spacing folded)");
+            Resolves(check, oracle, "Infested Citadel", "Mistlands_DvergrBossEntrance1", "display name");
+            Resolves(check, oracle, "Mörkhalla", "MorkBorg", "display name");
+
+            // A query that names a shared caption is refused, and the hint puts the three prefabs in
+            // front of the user - which is where the ambiguity has to be explained.
+            string hint = "";
+            bool refused = false;
+            try
+            {
+                CompiledQuery.Compile(QueryReader.Parse(
+                    "{\"version\":1,\"goals\":[{\"id\":\"g\",\"target\":\"location:Burial Chambers\","
+                    + "\"metric\":\"count\",\"test\":\"at_least\",\"value\":1,\"importance\":\"must\"}]}",
+                    "name-checks"), oracle);
+            }
+            catch (QueryException ex)
+            {
+                refused = true;
+                hint = ex.Hint ?? "";
+            }
+
+            check(refused && hint.Contains("Crypt2") && hint.Contains("Crypt3") && hint.Contains("Crypt4"),
+                  "location:Burial Chambers is refused and the hint lists Crypt2, Crypt3 and Crypt4", hint);
+        }
+
+        /// <summary>
+        /// Naming must not move a single instance. For every fresh-world golden this data folder
+        /// holds, the seventeen door-named types are placed through the oracle and compared, float bit
+        /// for float bit and in order, with the instances the game itself registered.
+        /// </summary>
+        private static void CheckDoorPlacement(Action<bool, string, string> check, DumpedLocationOracle oracle)
+        {
+            GameData data = GameData.Load();
+            List<string> prefabs = new List<string>();
+            foreach ((string prefab, _, _) in DoorGolden) prefabs.Add(prefab);
+            LocationPlan plan = oracle.Plan(prefabs, needSpawn: false);
+
+            int worlds = 0;
+            foreach (string seedHex in new[] { "0480A34C", "B83592B8" })
+            {
+                if (!data.Goldens.Has("goldens/locationinstances-" + seedHex + ".json")) continue;
+                worlds++;
+
+                LocationInstancesFile golden = data.Goldens.LocationInstances(seedHex);
+                LocationWorld world = oracle.Run(plan, golden.seed, 2, null);
+
+                int compared = 0, differing = 0;
+                string first = "";
+                foreach (string prefab in prefabs)
+                {
+                    List<string> want = new List<string>();
+                    foreach (LocationInstanceDef i in golden.instances ?? Array.Empty<LocationInstanceDef>())
+                    {
+                        if (i.prefabName == prefab) want.Add(Bits(i.x, i.z));
+                    }
+
+                    List<string> got = new List<string>();
+                    foreach (LocationHit h in world.Hits)
+                    {
+                        if (h.Prefab == prefab) got.Add(Bits(h.X, h.Z));
+                    }
+
+                    compared += want.Count;
+                    bool same = want.Count == got.Count;
+                    for (int k = 0; same && k < want.Count; k++) same = want[k] == got[k];
+                    if (same) continue;
+
+                    differing++;
+                    if (first.Length == 0) first = prefab + ": " + got.Count + " placed vs " + want.Count + " in the golden";
+                }
+
+                check(differing == 0 && compared > 0,
+                      "the door-named types place exactly as the game did in " + seedHex
+                      + " (" + (golden.worldName ?? "?") + ")",
+                      differing == 0 ? compared + " instances, bit-identical and in order"
+                                     : differing + " type(s) differ, first " + first);
+            }
+
+            check(worlds > 0, "a fresh-world golden was available for the placement comparison",
+                  worlds + " world(s) compared");
+        }
+
+        private static string Bits(float x, float z)
+            => BitConverter.SingleToInt32Bits(x).ToString("X8") + "/" + BitConverter.SingleToInt32Bits(z).ToString("X8");
 
         private static int CountOf(LocationDisplayNames names)
         {

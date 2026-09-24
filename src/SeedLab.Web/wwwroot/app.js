@@ -956,8 +956,8 @@ function placeSub(t) {
  * Where a name came from, in a sentence, keyed by the server's own DisplayNameSource spelling.
  *
  * <p>The provenance is not on the wire - only the source enum is - so the wording lives here. It is
- * worth a card row because these are not all the same kind of fact: three of them read a field the
- * dumper captured, and the fourth reads a naming convention that the dump does not actually join.
+ * worth a card row because these are not all the same kind of fact: four of them read a field the
+ * dumper captured, and the fifth reads a naming convention that the dump does not actually join.
  * That one says <em>unverified</em> in as many words, and it says it every time, because the card
  * is the only place a reader meets the claim.</p>
  */
@@ -976,6 +976,11 @@ function nameSourceText(t) {
       // The token is not repeated here: the "map-pin label" row below prints it beside what it
       // resolves to, which is the same fact told once.
       return 'Location.m_discoverLabel, the text the game writes on the map pin when you find it';
+    case 'TeleportEnterText':
+      // Several prefabs share one of these (three entrances are all "Burial Chambers"); the card's
+      // own prefab line is what tells them apart, so nothing here pretends the name is unique.
+      return 'the caption on this dungeon’s entrance door (Teleport.m_enterText), which the game shows '
+           + 'when you walk in' + (t.nameToken ? ' (' + t.nameToken + ')' : '');
     default:
       return t.displayNameSource || 'the game data';
   }

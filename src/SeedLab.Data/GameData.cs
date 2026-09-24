@@ -272,7 +272,7 @@ namespace SeedLab.Data
 
         /// <summary>
         /// The occupant slice of <c>locationchildren.json</c> - 186 entries, one per location prefab,
-        /// carrying only the four arrays a name can come out of. See
+        /// carrying only the five arrays a name can come out of. See
         /// <see cref="LocationOccupantsFile"/> for why this is a trimmed DTO and not the full one.
         /// </summary>
         public IReadOnlyList<LocationOccupantsDef> LocationOccupants => OccupantFile().locations!;
