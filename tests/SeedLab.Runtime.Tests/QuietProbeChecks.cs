@@ -188,6 +188,18 @@ namespace SeedLab.RuntimeTests
                       pingSeen ? string.Join("; ", reasons) : "excluded");
             }
 
+            // ---- an ended timing leg comes out of the whole-machine figure once, never twice -------------
+            // A made-up machine that is 200 core-seconds busier at every reading, and a leg reported as
+            // having used 100 core-seconds in all. Exactly one interval - the one it ended in - must read
+            // ~100 foreign core-seconds and every other ~200: taking the leg out again later would make a
+            // busy interval read 100, a false quiet. Once for a leg the listing never saw (a pid no process
+            // has), once for a real child the listing saw while it ran ('ping', its end reported with a
+            // stand-in total of 100 core-seconds).
+            check(LegOnce(null, out string ghostSeen), "an ended timing leg the process list never saw is taken out of the whole machine once",
+                  ghostSeen);
+            check(LegOnce(StartPing(2), out string realSeen), "an ended timing leg the process list saw while it ran is taken out once too, "
+                  + "in the interval it ended in, and never again", realSeen);
+
             // ---- time no sample covers is not quiet ----------------------------------------------------
             using (QuietMachineProbe probe = QuietMachineProbe.Start(TimeSpan.FromMilliseconds(200), watched: Array.Empty<(string, WatchedKind)>(),
                                                                      thresholds: new QuietThresholds { ForeignCoresMax = 1e6 },
@@ -273,7 +285,53 @@ namespace SeedLab.RuntimeTests
             return ticks.Count >= 2 ? ticks[ticks.Count - 1] : null;
         }
 
-        private static Process? StartPing()
+        /// <summary>
+        /// Runs a probe with a made-up machine that is 200 core-seconds busier at every reading while a
+        /// leg (<paramref name="child"/>, or a pid no process has when null) is excluded, then reported
+        /// ended with a total of 100 core-seconds. True when exactly one sample took the 100 out.
+        /// </summary>
+        private static bool LegOnce(Process? child, out string seen)
+        {
+            long reads = 0;
+            MachineCpuReader steady = () => TimeSpan.FromSeconds(200.0 * Interlocked.Increment(ref reads));
+            List<string> values = new List<string>();
+            int reduced = 0, full = 0, other = 0;
+            double sum = 0;
+            int count;
+            using (QuietMachineProbe probe = QuietMachineProbe.Start(TimeSpan.FromMilliseconds(250), watched: Array.Empty<(string, WatchedKind)>(),
+                                                                     machine: steady))
+            {
+                int pid = child?.Id ?? 0x7FFFFFF0;
+                probe.Exclude(pid);
+                if (child != null)
+                {
+                    child.WaitForExit();
+                    child.Dispose();
+                }
+
+                probe.ChildExited(pid, TimeSpan.FromSeconds(100));
+                Thread.Sleep(1300);
+                probe.Stop();
+                IReadOnlyList<ProbeTick> ticks = probe.Ticks;
+                count = ticks.Count;
+                foreach (ProbeTick t in ticks)
+                {
+                    double m = t.MachineCoreSeconds ?? double.NaN;
+                    sum += m;
+                    values.Add(m.ToString("F1"));
+                    if (m > 95 && m <= 100.5) reduced++;
+                    else if (m > 195 && m <= 200.5) full++;
+                    else other++;
+                }
+            }
+
+            seen = count + " samples, machine core-s per sample: " + string.Join(", ", values);
+            return count >= 3 && reduced == 1 && other == 0 && Math.Abs(sum - (200.0 * count - 100)) < 2 * count;
+        }
+
+        private static Process? StartPing() => StartPing(5);
+
+        private static Process? StartPing(int count)
         {
             ProcessStartInfo psi = new ProcessStartInfo
             {
@@ -283,7 +341,7 @@ namespace SeedLab.RuntimeTests
                 CreateNoWindow = true,
             };
             psi.ArgumentList.Add(OperatingSystem.IsWindows() ? "-n" : "-c");
-            psi.ArgumentList.Add("5");
+            psi.ArgumentList.Add(count.ToString(System.Globalization.CultureInfo.InvariantCulture));
             psi.ArgumentList.Add("127.0.0.1");
             try
             {

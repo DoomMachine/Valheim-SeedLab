@@ -257,7 +257,7 @@ namespace SeedLab.Runtime.Execution
             Baseline = baseline;
             // A first reading that fails leaves an empty one: every process then counts its whole life in
             // the first sample, which can only taint.
-            _last = Read(_machine) ?? new Reading(DateTime.UtcNow, null, null, TimeSpan.Zero);
+            _last = Read(_machine, NoPids, NoTimes, null) ?? new Reading(DateTime.UtcNow, null, null, TimeSpan.Zero, null);
             StartedUtc = _last.Utc;
             _thread = new Thread(Loop) { IsBackground = true, Name = "quiet-machine-probe", Priority = ThreadPriority.AboveNormal };
             _thread.Start();
@@ -306,9 +306,9 @@ namespace SeedLab.Runtime.Execution
             QuietThresholds th = thresholds ?? QuietThresholds.Default;
             MachineCpuReader? m = machine ?? MachineCpuTime.Default;
             DateTime t0 = DateTime.UtcNow;
-            Reading? a = Read(m);
+            Reading? a = Read(m, NoPids, NoTimes, null);
             if (duration > TimeSpan.Zero) Thread.Sleep(duration);
-            Reading? b = Read(m);
+            Reading? b = Read(m, NoPids, NoTimes, a);
             DateTime t1 = DateTime.UtcNow;
             if (a == null || b == null)
             {
@@ -316,8 +316,11 @@ namespace SeedLab.Runtime.Execution
                                                        new[] { NotObserved }, Limit(0, th)));
             }
 
-            return new QuietBaseline(Judge(a, b, new HashSet<int>(), new Dictionary<int, TimeSpan>(), w, 0, th));
+            return new QuietBaseline(Judge(a, b, NoPids, w, 0, th));
         }
+
+        private static readonly HashSet<int> NoPids = new HashSet<int>();
+        private static readonly Dictionary<int, TimeSpan> NoTimes = new Dictionary<int, TimeSpan>();
 
         /// <summary>Leaves process <paramref name="pid"/> out of every later sample (a child this process started).</summary>
         public void Exclude(int pid)
@@ -326,9 +329,11 @@ namespace SeedLab.Runtime.Execution
         }
 
         /// <summary>
-        /// An excluded child has ended, having used <paramref name="totalCpu"/> in all. The next sample
-        /// takes that time out of the whole-machine figure; once no reading the probe still judges from
-        /// lists the pid, it is forgotten, so a later process that is given the same pid is watched again.
+        /// An excluded child has ended, having used <paramref name="totalCpu"/> in all. The next reading
+        /// records that total as the child's time, so the interval it ended in takes out exactly what it
+        /// used there and no later interval takes it out again; once the total is in a reading and the
+        /// pid is gone from two listings in a row, the pid is forgotten, so a later process that is given
+        /// the same pid is watched again.
         /// </summary>
         public void ChildExited(int pid, TimeSpan totalCpu)
         {
@@ -428,11 +433,6 @@ namespace SeedLab.Runtime.Execution
         {
             try
             {
-                Reading? now = Read(_machine);
-                // The process list could not be read: a gap, not a quiet sample. The previous reading
-                // stays, so the next sample that works covers the gap and judges all of it.
-                if (now == null) return;
-
                 HashSet<int> excluded;
                 Dictionary<int, TimeSpan> exited;
                 lock (_gate)
@@ -440,6 +440,11 @@ namespace SeedLab.Runtime.Execution
                     excluded = new HashSet<int>(_excluded);
                     exited = new Dictionary<int, TimeSpan>(_exitedCpu);
                 }
+
+                Reading? now = Read(_machine, excluded, exited, _last);
+                // The process list could not be read: a gap, not a quiet sample. The previous reading
+                // stays, so the next sample that works covers the gap and judges all of it.
+                if (now == null) return;
 
                 ProbeTick tick;
                 lock (_gate)
@@ -451,24 +456,25 @@ namespace SeedLab.Runtime.Execution
                     {
                         // Judged over [the previous sample's start, now]; the previous sample stays too,
                         // so nothing it found is lost. The merged sample replaces only the short tail.
-                        ProbeTick merged = Judge(_beforeLast!, now, excluded, exited, _watched, _baselineCores, _thresholds);
-                        ProbeTick own = Judge(_last, now, excluded, exited, _watched, _baselineCores, _thresholds);
+                        ProbeTick merged = Judge(_beforeLast!, now, excluded, _watched, _baselineCores, _thresholds);
+                        ProbeTick own = Judge(_last, now, excluded, _watched, _baselineCores, _thresholds);
                         tick = new ProbeTick(_last.Utc, now.Utc, own.ProcessCoreSeconds, own.MachineCoreSeconds, own.Processes,
                                              own.Unreadable, own.Top, own.Watched, WithoutRates(own.Reasons, merged.Reasons), own.LimitCores);
                     }
                     else
                     {
-                        tick = Judge(_last, now, excluded, exited, _watched, _baselineCores, _thresholds);
+                        tick = Judge(_last, now, excluded, _watched, _baselineCores, _thresholds);
                     }
 
                     _ticks.Add(tick);
 
-                    // A child whose end was reported and is gone from the list has been accounted for -
-                    // once it is gone from the reading before this one too, so that a short last sample,
-                    // judged from that earlier reading, still takes its time out.
+                    // A child whose end was reported is forgotten once its total is in a reading and it is
+                    // gone from this listing and the one before: every window judged from here on either
+                    // starts after its end or already has its total at both ends.
                     foreach (KeyValuePair<int, TimeSpan> kv in exited)
                     {
                         if (now.Processes.ContainsKey(kv.Key) || _last.Processes.ContainsKey(kv.Key)) continue;
+                        if (!now.Children.TryGetValue(kv.Key, out TimeSpan recorded) || recorded != kv.Value) continue;
                         _excluded.Remove(kv.Key);
                         _exitedCpu.Remove(kv.Key);
                     }
@@ -514,16 +520,30 @@ namespace SeedLab.Runtime.Execution
 
         // ---- readings -------------------------------------------------------------------------------
 
-        /// <summary>One look at the machine: every process by pid, the machine's busy time, this process's CPU.</summary>
+        /// <summary>
+        /// One look at the machine: every process by pid, the machine's busy time, this process's CPU, and
+        /// each excluded child's CPU as known at this moment.
+        /// </summary>
         private sealed class Reading
         {
-            public Reading(DateTime utc, Dictionary<int, (string Name, TimeSpan? Cpu)>? processes, TimeSpan? machineBusy, TimeSpan selfCpu)
+            public Reading(DateTime utc, Dictionary<int, (string Name, TimeSpan? Cpu)>? processes, TimeSpan? machineBusy, TimeSpan selfCpu,
+                           Dictionary<int, TimeSpan>? children)
             {
                 Utc = utc;
                 Processes = processes ?? new Dictionary<int, (string, TimeSpan?)>();
                 MachineBusy = machineBusy;
                 SelfCpu = selfCpu;
+                Children = children ?? new Dictionary<int, TimeSpan>();
             }
+
+            /// <summary>
+            /// Each excluded child's cumulative CPU time as known when this reading was taken: from the list
+            /// while it runs, its reported total once it has ended, and otherwise the value the reading
+            /// before had (no news is no progress, so its load then reads as foreign - a false taint, never
+            /// a false quiet). A window's children are the difference between its two readings, so no
+            /// child's time is ever taken out twice.
+            /// </summary>
+            public Dictionary<int, TimeSpan> Children { get; }
 
             public DateTime Utc { get; }
 
@@ -535,10 +555,18 @@ namespace SeedLab.Runtime.Execution
         }
 
         /// <summary>A reading now, or null when the process list itself could not be read.</summary>
-        private static Reading? Read(MachineCpuReader? machine)
+        private static Reading? Read(MachineCpuReader? machine, HashSet<int> excluded, Dictionary<int, TimeSpan> exited, Reading? previous)
         {
             Dictionary<int, (string Name, TimeSpan? Cpu)>? processes = Snapshot();
             if (processes == null) return null;
+            Dictionary<int, TimeSpan> children = new Dictionary<int, TimeSpan>();
+            foreach (int pid in excluded)
+            {
+                if (processes.TryGetValue(pid, out (string Name, TimeSpan? Cpu) listed) && listed.Cpu.HasValue) children[pid] = listed.Cpu.Value;
+                else if (exited.TryGetValue(pid, out TimeSpan total)) children[pid] = total;
+                else if (previous != null && previous.Children.TryGetValue(pid, out TimeSpan known)) children[pid] = known;
+            }
+
             TimeSpan? busy = null;
             try { busy = machine?.Invoke(); }
             catch (Exception) { busy = null; }
@@ -552,7 +580,7 @@ namespace SeedLab.Runtime.Execution
                 busy = null;
             }
 
-            return new Reading(DateTime.UtcNow, processes, busy, self);
+            return new Reading(DateTime.UtcNow, processes, busy, self, children);
         }
 
         /// <summary>
@@ -609,7 +637,7 @@ namespace SeedLab.Runtime.Execution
         }
 
         /// <summary>The verdict on the interval between two readings.</summary>
-        private static ProbeTick Judge(Reading before, Reading after, HashSet<int> excluded, Dictionary<int, TimeSpan> exitedCpu,
+        private static ProbeTick Judge(Reading before, Reading after, HashSet<int> excluded,
                                        IReadOnlyList<(string Name, WatchedKind Kind)> watched, double baselineCores,
                                        QuietThresholds thresholds)
         {
@@ -639,19 +667,15 @@ namespace SeedLab.Runtime.Execution
             double? machine = null;
             if (before.MachineBusy.HasValue && after.MachineBusy.HasValue)
             {
-                // The children's time over the interval: from the list while they run, from the reported
-                // total once they have ended. A child whose time is known neither way is left in, so its
-                // load reads as foreign - a false taint, never a false quiet.
+                // The children's time over the interval: what the later reading knew of each, less what
+                // the earlier one did (nothing, for a child that started inside the interval). A child the
+                // later reading no longer carries has been forgotten after its end was in both - it used
+                // nothing here.
                 double children = 0;
-                foreach (int pid in excluded)
+                foreach (KeyValuePair<int, TimeSpan> kv in after.Children)
                 {
-                    TimeSpan? now = after.Processes.TryGetValue(pid, out (string Name, TimeSpan? Cpu) a) ? a.Cpu : null;
-                    if (!now.HasValue && exitedCpu.TryGetValue(pid, out TimeSpan final)) now = final;
-                    if (!now.HasValue) continue;
-                    TimeSpan then = before.Processes.TryGetValue(pid, out (string Name, TimeSpan? Cpu) p) && p.Cpu.HasValue
-                        ? p.Cpu.Value
-                        : TimeSpan.Zero;
-                    children += Math.Max(0, (now.Value - then).TotalSeconds);
+                    TimeSpan then = before.Children.TryGetValue(kv.Key, out TimeSpan t) ? t : TimeSpan.Zero;
+                    children += Math.Max(0, (kv.Value - then).TotalSeconds);
                 }
 
                 double busy = (after.MachineBusy.Value - before.MachineBusy.Value).TotalSeconds;
