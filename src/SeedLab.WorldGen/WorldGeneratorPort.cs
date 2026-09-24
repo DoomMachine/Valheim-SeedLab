@@ -344,6 +344,40 @@ namespace SeedLab.WorldGen
         /// <summary>Runs the deferred pregeneration now, so a later query cannot pay for it unexpectedly.</summary>
         public void ForcePregeneration() => EnsurePregenerated();
 
+        /// <summary>
+        /// True when the single-entry river cache holds an array that is no longer the river-point grid's
+        /// array for its cell - the stale state RenderRivers can leave behind, because the game never
+        /// invalidates the cache after rendering (see RenderRivers and <see cref="Fork"/>). Precisely: the
+        /// cell is in the grid and the cached array is not that entry (a null cache included), or the cell
+        /// is not in the grid and the cache is not null.
+        ///
+        /// <para>Read-only, and it never triggers pre-generation: on a handle whose pre-generation is
+        /// still pending the cache is in its initial state and this is false. It is meaningful straight
+        /// after pre-generation, before the first height query - which is when a caller that wants to
+        /// know whether a fresh handle's first river read could differ from a warm one's should ask. On
+        /// about 1e-5 of worlds it is true (01-worldgen-core.md 4.7).</para>
+        /// </summary>
+        public bool RiverCacheIsStale
+        {
+            get
+            {
+                return m_riverPoints.TryGetValue(m_cachedRiverGrid, out RiverPoint[]? current)
+                    ? !ReferenceEquals(current, m_cachedRiverPoints)
+                    : m_cachedRiverPoints != null;
+            }
+        }
+
+        /// <summary>
+        /// The cell the single-entry river cache currently points at: (-999999, -999999) before any river
+        /// read. Diagnostics only, like <see cref="RiverCacheIsStale"/> - it is how a world fingerprint
+        /// records the state pre-generation leaves behind.
+        /// </summary>
+        public Vec2i RiverCacheCell => m_cachedRiverGrid;
+
+        /// <summary>A copy of the array the river cache holds (null when it holds none). Diagnostics only.</summary>
+        public RiverPoint[]? CopyRiverCachePoints()
+            => m_cachedRiverPoints == null ? null : (RiverPoint[])m_cachedRiverPoints.Clone();
+
         /// <summary>Private copy ctor used by <see cref="Fork"/>: shares everything immutable.</summary>
         private WorldGeneratorPort(WorldGeneratorPort other, bool inheritRiverCache)
         {
