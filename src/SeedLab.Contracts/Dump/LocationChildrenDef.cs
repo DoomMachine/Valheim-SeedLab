@@ -88,8 +88,9 @@ namespace SeedLab.Contracts.Dump
         /// the first as the second would say "this world has no bosses".</summary>
         public bool occupantsCaptured;
 
-        /// <summary>Every <c>Teleport</c> - a dungeon's doors, and the only place the game keeps a
-        /// dungeon's player-facing name (<c>m_enterText</c>). See <see cref="TeleportDef"/>.</summary>
+        /// <summary>Every <c>Teleport</c> - a dungeon's doors, and for most dungeons the only place
+        /// the game keeps their player-facing name (<c>m_enterText</c>). See
+        /// <see cref="TeleportDef"/>.</summary>
         public TeleportDef[]? teleports;
 
         /// <summary>Every <c>Vegvisir</c>. Like a runestone it names the places it REVEALS, not its

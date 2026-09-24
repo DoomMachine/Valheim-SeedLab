@@ -15,8 +15,9 @@ namespace SeedLab.Dumper
     ///
     /// <para>Reflection rather than a direct cast so the plugin needs no reference to
     /// gui_framework.dll or Unity.TextMeshPro.dll: the field's declared type is
-    /// GUIFramework.GuiInputField, which derives from TMPro.TMP_InputField (api-surface.ps1,
-    /// gui_framework.dll, this build).</para>
+    /// GUIFramework.GuiInputField, which derives from TMPro.TMP_InputField (gui_framework.dll of this
+    /// build; <c>tools\decompile.ps1 -Type GUIFramework.GuiInputField -Assembly gui_framework</c> shows
+    /// the declaration).</para>
     /// </summary>
     internal static class ModeSeedInput
     {

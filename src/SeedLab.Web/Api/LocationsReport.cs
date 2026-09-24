@@ -123,9 +123,10 @@ namespace SeedLab.Web.Api
         /// prefabs carry one and all four are unresolved <c>$</c> tokens. Until 2026-09-24 the page
         /// fell back to the prefab for all 183 placed types, because <c>placeName()</c> rejected any
         /// label starting with <c>$</c>; that guard is gone and the page now reads
-        /// <see cref="DisplayName"/>, which resolves those tokens properly and names 14 of 183. This
-        /// field is kept as the raw evidence behind three of those names - read it to see WHERE a
-        /// name came from, never as the name itself.</para>
+        /// <see cref="DisplayName"/>, which resolves those tokens properly and named 14 of 183 - 31
+        /// since the dungeon doors were dumped (2026-09-24). This field is kept as the raw evidence
+        /// behind three of those names - read it to see WHERE a name came from, never as the name
+        /// itself.</para>
         /// </summary>
         public string? Label { get; set; }
 
@@ -144,10 +145,11 @@ namespace SeedLab.Web.Api
 
         /// <summary>
         /// Which rule produced <see cref="DisplayName"/> - <c>BossAltar</c>, <c>Trader</c>,
-        /// <c>TraderNpcTokenConvention</c> or <c>DiscoverLabel</c>; null exactly when the name is
-        /// null. The card shows it as a "name from" row, because a name derived by convention
-        /// (<c>TraderNpcTokenConvention</c>, the Bog Witch, the one join the dump does not make
-        /// itself) must not look like one the game states outright.
+        /// <c>TraderNpcTokenConvention</c>, <c>DiscoverLabel</c> or <c>TeleportEnterText</c> (a
+        /// dungeon's entrance-door caption); null exactly when the name is null. The card shows it as
+        /// a "name from" row, because a name derived by convention (<c>TraderNpcTokenConvention</c>,
+        /// the Bog Witch, the one join the dump does not make itself) must not look like one the game
+        /// states outright.
         /// </summary>
         public string? DisplayNameSource { get; set; }
 

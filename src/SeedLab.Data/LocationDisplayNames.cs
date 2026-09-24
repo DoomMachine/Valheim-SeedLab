@@ -30,6 +30,16 @@ namespace SeedLab.Data
         /// <summary><c>Location.m_discoverLabel</c>, resolved through the dumped localization table.
         /// 4 of 186 prefabs carry one, so this is a narrow rule, not a general naming source.</summary>
         DiscoverLabel = 4,
+
+        /// <summary>
+        /// <c>Teleport.m_enterText</c> on the place's entrance door, resolved through the dumped
+        /// localization table: the caption <c>Teleport.Interact</c> hands to
+        /// <c>MessageHud.ShowBiomeFoundMsg</c> when a player walks into the dungeon. It names 17 of
+        /// 186 prefabs in the dump that first carried doors (run 6, 2026-09-24) - "Burial Chambers",
+        /// "Sunken Crypts", "Infested Mine" and the rest - and several prefabs share one caption,
+        /// because the game gives every variant of a dungeon the same name.
+        /// </summary>
+        TeleportEnterText = 5,
     }
 
     /// <summary>One location prefab's name, where it came from, and everything else it answers to.</summary>
@@ -76,8 +86,8 @@ namespace SeedLab.Data
         /// <summary>
         /// Every spelling that means this prefab: the prefab itself first, then the display name, then
         /// the other names the game itself supplies for the same place (a resolved
-        /// <c>m_discoverLabel</c>, a self-referencing runestone's map-pin caption). De-duplicated,
-        /// ordinal.
+        /// <c>m_discoverLabel</c>, an entrance door's caption, a self-referencing runestone's map-pin
+        /// caption). De-duplicated, ordinal.
         ///
         /// <para>These are for INPUT and for "also called" secondary text. An alias is never the
         /// caption: a name that is only nearly right fails to find something, whereas a caption that is
@@ -155,8 +165,36 @@ namespace SeedLab.Data
     /// <item><b>Trader</b> - a <c>Trader</c> component whose <c>m_name</c> resolves. Haldor, Hildir.</item>
     /// <item><b>DiscoverLabel</b> - <c>Location.m_discoverLabel</c> resolved. Forge of Potential,
     /// Sealed Tower, Charred Fortress. An unresolved token is NOT a name and emits a Note.</item>
+    /// <item><b>TeleportEnterText</b> - the <c>m_enterText</c> of the place's entrance door, resolved:
+    /// the caption the game shows on walking into a dungeon. Burial Chambers, Troll Cave, Sunken
+    /// Crypts, Frost Caves, Infested Mine, Howling Cavern, Smouldering Tomb, Tomb of Lord Reto,
+    /// Putrid Hole, Winding tunnels, Mörkhalla, Bear Cave. Only a door the game can actually use
+    /// counts - active in the prefab, with a target, with a non-empty caption - and two doors with
+    /// different captions name nothing.</item>
     /// <item><b>Prefab</b> - no name. <see cref="LocationDisplayName.DisplayName"/> is null.</item>
     /// </list>
+    ///
+    /// <para><b>Why the door comes after the other three</b> (decided 2026-09-24, when the first dump
+    /// with doors arrived). In that dump the door rule and the earlier rules overlap on exactly two
+    /// prefabs, and both are boss places: <c>Mistlands_DvergrBossEntrance1</c>, whose door says
+    /// "Infested Citadel" and whose boss is The Queen, and <c>DN_Bossroom</c>, whose door is inactive.
+    /// The boss must win there, because the boss and trader GROUPS are derived from the name's source
+    /// - a door that outranked the altar would drop The Queen out of the boss list the moment the
+    /// dump learned about doors. The discover label goes first for a different reason: it is a field
+    /// of the <c>Location</c> component, a statement about the place as a whole that the game writes
+    /// on discovery, where a door's caption belongs to one door and is shown only to someone walking
+    /// through it. The only prefab carrying both in 1.0.15 is <c>DN_Bossroom</c>, a boss place whose
+    /// door is inactive, so the order is a rule for the next build, not a ruling on this one. And last
+    /// is the regression-safe place for a new rule: it can only name a
+    /// place that had no name, never rename one. The caption the door would have given still becomes
+    /// an ALIAS whatever rule names the place, so "Infested Citadel" finds The Queen's entrance.</para>
+    ///
+    /// <para><b>A caption several prefabs share names each of them, and resolves to none.</b>
+    /// Crypt2/3/4 are all "Burial Chambers", MorgenHole1/2/3 all "Putrid Hole", the two Dvergr town
+    /// entrances both "Infested Mine" - the game's own names for three variants of one dungeon. Every
+    /// surface shows the prefab beside the name, so the listing stays unambiguous; typing the shared
+    /// name is refused with the list of prefabs it means rather than answered with one of them (see
+    /// <c>DumpedLocationOracle.NameIndex</c>).</para>
     ///
     /// <para><b>Rules that were tried and rejected, so they are not re-litigated.</b> A
     /// <c>RuneStone</c>'s <c>m_name</c> / <c>m_label</c> name the OBJECT, not the place: the 27 stones
@@ -252,6 +290,13 @@ namespace SeedLab.Data
         private const int ExpectedBossAltars = 8;
 
         private const int ExpectedTraders = 3;
+
+        /// <summary>How many prefabs the door rule names in the dump that first carried doors (run 6,
+        /// 2026-09-24). A door read as inactive by a later dump - the dumper reads shared prefab assets
+        /// that the session may already have changed, which is what locationchildren.json's per-prefab
+        /// 'warnings' are about - would cost one dungeon its name and nothing else would notice, so a
+        /// different count is said out loud.</summary>
+        private const int ExpectedDoorNames = 17;
 
         private readonly Dictionary<string, LocationDisplayName> _byPrefab;
         private readonly List<LocationDisplayName> _all;
@@ -444,6 +489,7 @@ namespace SeedLab.Data
             List<string> traderPrefabs = new List<string>();
             List<int> bossOrders = new List<int>();
             int discoverLabelNames = 0;
+            int doorNames = 0;
 
             foreach (LocationOccupantsDef d in data.LocationOccupants)
             {
@@ -452,7 +498,8 @@ namespace SeedLab.Data
                 List<string> aliases = new List<string> { prefab };
 
                 // Aliases the game supplies for this place whatever rule ends up naming it: the
-                // discover label, and a runestone that names its OWN host (never another location).
+                // discover label, the entrance door's caption, and a runestone that names its OWN host
+                // (never another location).
                 string? labelToken = discoverLabelToken.TryGetValue(prefab, out string? lt) ? lt : null;
                 string? labelText = labelToken == null ? null : data.Localize(labelToken);
                 if (labelToken != null && labelText == null)
@@ -461,7 +508,10 @@ namespace SeedLab.Data
                               + "the dumped localization table, so it is not a name; the prefab stands.");
                 }
 
+                DoorCaption door = ReadEntranceDoor(data, d);
+
                 AddAlias(aliases, labelText);
+                AddAlias(aliases, door.Text);
                 AddSelfReferencingPinNames(d, prefab, aliases);
 
                 // ---- rule 1: the offering bowl, over locations UNION the theme-joined room ---------
@@ -600,17 +650,36 @@ namespace SeedLab.Data
                     continue;
                 }
 
-                // ---- rule 4: nothing names it -----------------------------------------------------
+                // ---- rule 4: the entrance door ----------------------------------------------------
+                // Its problems are said only here, where the door is what would have named the place.
+                // A boss place whose door could not be read has lost an alias, not its name, and a
+                // note repeated where it changes nothing is how a reader learns to skip notes.
+                if (door.Text != null)
+                {
+                    AddDisplayAlias(aliases, door.Text);
+                    all.Add(new LocationDisplayName(
+                        prefab, door.Text, DisplayNameSource.TeleportEnterText,
+                        "named by the Teleport.m_enterText of its entrance door '" + door.Path + "' ("
+                        + door.Token + "), the caption the game shows when you walk in.",
+                        door.Token, Freeze(aliases), -1));
+                    doorNames++;
+                    continue;
+                }
+
+                if (door.Problem != null) notes.AddFor(prefab, prefab + ": " + door.Problem);
+
+                // ---- rule 5: nothing names it -----------------------------------------------------
                 all.Add(new LocationDisplayName(
                     prefab, null, DisplayNameSource.Prefab,
                     "nothing in this dump names it: no OfferingBowl with a boss, no Trader, no "
-                    + "Location.m_discoverLabel. The prefab name is what it is called.",
+                    + "Location.m_discoverLabel, no captioned entrance door. The prefab name is what it "
+                    + "is called.",
                     null, Freeze(aliases), -1));
             }
 
-            NoteEmptyRules(notes, bossPrefabs.Count, traderPrefabs.Count, discoverLabelNames);
+            NoteEmptyRules(notes, bossPrefabs.Count, traderPrefabs.Count, discoverLabelNames, doorNames);
             NoteBossOrders(notes, bossOrders);
-            NoteCounts(notes, bossPrefabs.Count, traderPrefabs.Count);
+            NoteCounts(notes, bossPrefabs.Count, traderPrefabs.Count, doorNames);
 
             return new LocationDisplayNames(loc.language ?? "", all, notes.Items, bossPrefabs, traderPrefabs);
         }
@@ -738,6 +807,95 @@ namespace SeedLab.Data
             return outp;
         }
 
+        /// <summary>What a place's entrance door says, or why it says nothing.</summary>
+        private readonly struct DoorCaption
+        {
+            public DoorCaption(string? text, string? token, string? path, string? problem)
+            {
+                Text = text;
+                Token = token;
+                Path = path;
+                Problem = problem;
+            }
+
+            /// <summary>The caption resolved - "Burial Chambers" - or null when the door names nothing.</summary>
+            public string? Text { get; }
+
+            /// <summary>The <c>m_enterText</c> token it came from, <c>$location_forestcrypt</c>.</summary>
+            public string? Token { get; }
+
+            /// <summary>The door's transform path from the prefab root, as evidence.</summary>
+            public string? Path { get; }
+
+            /// <summary>Why a door that exists names nothing, in a sentence; null when there is no door
+            /// with a caption at all, which is the ordinary case and not worth a note.</summary>
+            public string? Problem { get; }
+        }
+
+        /// <summary>
+        /// The caption of the place's entrance door: the <c>m_enterText</c> of a <c>Teleport</c> the game
+        /// can actually use. <c>Teleport.Interact</c> shows it only after a successful
+        /// <c>TeleportTo</c>, which needs <c>m_targetPoint</c>; an inactive door has no collider to
+        /// walk into and nothing to interact with; and an empty <c>m_enterText</c> shows nothing - which
+        /// is what every EXIT door in the dump has. So a door counts when it is enabled in the
+        /// hierarchy, has a target and has a caption. <c>DN_Bossroom</c>'s door ("The Prison") is the
+        /// one captioned door in the run-6 dump that is inactive in the prefab; whatever activates it at
+        /// run time is not in the dump, so it is not taken as a name or an alias.
+        /// </summary>
+        private static DoorCaption ReadEntranceDoor(GameData data, LocationOccupantsDef d)
+        {
+            if (!d.waymarksCaptured)
+            {
+                return new DoorCaption(null, null, null,
+                    "the dump did not capture its Teleport doors (waymarksCaptured is false), so it "
+                    + "cannot be named from them; the prefab stands.");
+            }
+
+            TeleportDef? chosen = null;
+            string? inactiveToken = null;
+            List<string> tokens = new List<string>();
+            foreach (TeleportDef t in d.teleports ?? Array.Empty<TeleportDef>())
+            {
+                if (string.IsNullOrEmpty(t.enterTextToken)) continue;
+                if (!t.enabledInHierarchy || !t.hasTarget)
+                {
+                    inactiveToken ??= t.enterTextToken;
+                    continue;
+                }
+
+                if (!tokens.Contains(t.enterTextToken!)) tokens.Add(t.enterTextToken!);
+                chosen ??= t;
+            }
+
+            if (tokens.Count > 1)
+            {
+                return new DoorCaption(null, null, null,
+                    tokens.Count.ToString(CultureInfo.InvariantCulture) + " usable doors carry different "
+                    + "captions (" + string.Join(", ", tokens) + "), so no one of them is the place's "
+                    + "name; the prefab stands.");
+            }
+
+            if (chosen == null)
+            {
+                return inactiveToken == null
+                    ? default
+                    : new DoorCaption(null, null, null,
+                        "its only captioned door (" + inactiveToken + ") is inactive in the prefab or has "
+                        + "no target, so the game cannot show that caption unless something outside the "
+                        + "dump enables it; the prefab stands.");
+            }
+
+            string? text = data.Localize(chosen.enterTextToken);
+            if (text == null)
+            {
+                return new DoorCaption(null, null, null,
+                    "its entrance door's Teleport.m_enterText '" + chosen.enterTextToken + "' has no "
+                    + "entry in the dumped localization table, so it is not a name; the prefab stands.");
+            }
+
+            return new DoorCaption(text, chosen.enterTextToken, chosen.path ?? "?", null);
+        }
+
         /// <summary>
         /// A runestone's map-pin caption, but only where the stone names its OWN host. A stone names
         /// the location it makes the game DISCOVER, so <c>StartTemple</c>'s five <c>BossStone_*</c>
@@ -799,13 +957,19 @@ namespace SeedLab.Data
 
         /// <summary>A rule that matched nothing at all is the failure mode that looks like success:
         /// every place keeps a name of some sort, so nobody notices the boss rule died.</summary>
-        private static void NoteEmptyRules(NoteList notes, int bosses, int traders, int labels)
+        private static void NoteEmptyRules(NoteList notes, int bosses, int traders, int labels, int doors)
         {
             if (bosses == 0) notes.Add("no location prefab produced a boss-altar name in this dump.");
             if (traders == 0) notes.Add("no location prefab produced a trader name in this dump.");
             if (labels == 0)
             {
                 notes.Add("no location prefab produced a Location.m_discoverLabel name in this dump.");
+            }
+
+            if (doors == 0)
+            {
+                notes.Add("no location prefab produced a name from its entrance door's Teleport.m_enterText "
+                          + "in this dump, so no dungeon is named.");
             }
         }
 
@@ -826,8 +990,18 @@ namespace SeedLab.Data
             }
         }
 
-        private static void NoteCounts(NoteList notes, int bosses, int traders)
+        private static void NoteCounts(NoteList notes, int bosses, int traders, int doors)
         {
+            // Zero is NoteEmptyRules' sentence; this one is for a count that moved without vanishing.
+            if (doors != ExpectedDoorNames && doors != 0)
+            {
+                notes.Add("this build names " + doors.ToString(CultureInfo.InvariantCulture)
+                          + " places from their entrance door where "
+                          + ExpectedDoorNames.ToString(CultureInfo.InvariantCulture)
+                          + " were verified on 2026-09-24; re-check the doors in locationchildren.json "
+                          + "before trusting a dungeon's name.");
+            }
+
             if (bosses != ExpectedBossAltars)
             {
                 notes.Add("this build derives " + bosses.ToString(CultureInfo.InvariantCulture)

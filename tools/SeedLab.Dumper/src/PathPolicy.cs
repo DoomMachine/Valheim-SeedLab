@@ -6,7 +6,8 @@ namespace SeedLab.Dumper
     /// <summary>
     /// Which paths the dumper may write to. Deliberately dependency-free - no Unity, no BepInEx, no
     /// game types - so it can be linked into a plain test harness and the refusal can be PROVEN to
-    /// fire rather than assumed (pitfalls.md: "test the tripwire, not just the code").
+    /// fire rather than assumed: a tripwire nobody has seen fire is a suggestion, not a guard (the
+    /// same rule as "Prove the tripwires" in this plugin's README.md).
     ///
     /// The rule this enforces: the game's save folders and the Steam Cloud folders are read-only,
     /// always. The user plays multiplayer with a Cartography Table and Steam Cloud syncs the world

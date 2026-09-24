@@ -12,6 +12,14 @@
 # showed their prefabs because it was written before that ruling. DN_Bossroom is the fourth
 # discoverLabel prefab; it is captioned by its boss and keeps 'Aesir Passage' as an alias only.
 #
+# Re-measured on 2026-09-24 from the dump that first carried the dungeon doors (dumper run 6).
+# SEVENTEEN rows changed and nothing else did: each is named by the Teleport.m_enterText of its
+# entrance door - Burial Chambers (Crypt2/3/4), Troll Cave, Sunken Crypts, Frost Caves, Infested
+# Mine (both Dvergr town entrances), Howling Cavern, Smouldering Tomb, Tomb of Lord Reto, Putrid
+# Hole (MorgenHole1/2/3), Winding tunnels, Mörkhalla, Bear Cave - and sorts under its new name.
+# Rows that share a name are ordered by prefab. Mistlands_DvergrBossEntrance1's door says
+# 'Infested Citadel', but the boss rule comes first, so it stays 'The Queen'.
+#
 --- [0] Bosses  (8)
   Bonemass                       (Bonemass)                       q=5    oi=4    Swamp                        prioritized
   Eikthyr                        (Eikthyrnir)                     q=3    oi=1    Meadows                      prioritized
@@ -49,17 +57,17 @@
   WoodVillage1                   (WoodVillage1)                   q=15   oi=60   Meadows                      dungeon x1
   WoodVillage2                   (WoodVillage2)                   q=15   oi=167  Meadows                      dungeon x1,alt:Dark Meadows
 --- [3] Black Forest  (23)
-  BearCave                       (BearCave)                       q=50   oi=166  Black Forest                 
+  Bear Cave                      (BearCave)                       q=50   oi=166  Black Forest                 
   BigRockClearing                (BigRockClearing)                q=10   oi=102  Black Forest                 unique
-  Crypt2                         (Crypt2)                         q=200  oi=31   Black Forest                 dungeon x1
-  Crypt3                         (Crypt3)                         q=200  oi=65   Black Forest                 dungeon x1
-  Crypt4                         (Crypt4)                         q=200  oi=66   Black Forest                 dungeon x1
+  Burial Chambers                (Crypt2)                         q=200  oi=31   Black Forest                 dungeon x1
+  Burial Chambers                (Crypt3)                         q=200  oi=65   Black Forest                 dungeon x1
+  Burial Chambers                (Crypt4)                         q=200  oi=66   Black Forest                 dungeon x1
   Greydwarf_camp1                (Greydwarf_camp1)                q=300  oi=24   Black Forest                 
-  Hildir_crypt                   (Hildir_crypt)                   q=3    oi=14   Black Forest                 dungeon x1,prioritized
   Ruin1                          (Ruin1)                          q=200  oi=32   Black Forest                 
   Ruin2                          (Ruin2)                          q=200  oi=33   Black Forest                 
   Runestone_BlackForest          (Runestone_BlackForest)          q=50   oi=99   Black Forest                 
   Runestone_Greydwarfs           (Runestone_Greydwarfs)           q=25   oi=25   Black Forest                 
+  Smouldering Tomb               (Hildir_crypt)                   q=3    oi=14   Black Forest                 dungeon x1,prioritized
   StoneHouse3                    (StoneHouse3)                    q=200  oi=34   Black Forest                 
   StoneHouse4                    (StoneHouse4)                    q=200  oi=35   Black Forest                 
   StoneTowerRuins03              (StoneTowerRuins03)              q=80   oi=76   Black Forest                 
@@ -71,14 +79,14 @@
   StoneTowerRuins09_sunk         (StoneTowerRuins09_sunk)         q=10   oi=170  Black Forest                 alt:Ruin Black Forest
   StoneTowerRuins10              (StoneTowerRuins10)              q=80   oi=80   Black Forest                 
   StoneTowerRuins10_sunk         (StoneTowerRuins10_sunk)         q=10   oi=171  Black Forest                 alt:Ruin Black Forest
-  TrollCave02                    (TrollCave02)                    q=200  oi=61   Black Forest                 
+  Troll Cave                     (TrollCave02)                    q=200  oi=61   Black Forest                 
 --- [4] Swamp  (17)
   FireHole                       (FireHole)                       q=75   oi=29   Swamp                        
   Grave1                         (Grave1)                         q=200  oi=26   Swamp                        
   InfestedTree01                 (InfestedTree01)                 q=700  oi=67   Swamp                        
   Runestone_Draugr               (Runestone_Draugr)               q=50   oi=30   Swamp                        
   Runestone_Swamps               (Runestone_Swamps)               q=100  oi=97   Swamp                        
-  SunkenCrypt4                   (SunkenCrypt4)                   q=175  oi=5    Swamp                        dungeon x1,prioritized
+  Sunken Crypts                  (SunkenCrypt4)                   q=175  oi=5    Swamp                        dungeon x1,prioritized
   SwampHut1                      (SwampHut1)                      q=50   oi=68   Swamp                        
   SwampHut1_1                    (SwampHut1_1)                    q=50   oi=172  Swamp                        alt:Hut Swamp
   SwampHut2                      (SwampHut2)                      q=50   oi=69   Swamp                        
@@ -97,8 +105,8 @@
   DrakeLorestone                 (DrakeLorestone)                 q=50   oi=89   Mountain                     
   DrakeNest01                    (DrakeNest01)                    q=200  oi=82   Mountain                     
   Forge of Potential             (AncientUpgradeStation)          q=10   oi=8    Mountain                     unique,prioritized
-  Hildir_cave                    (Hildir_cave)                    q=3    oi=12   Mountain                     dungeon x1,prioritized
-  MountainCave02                 (MountainCave02)                 q=120  oi=106  Mountain                     dungeon x1
+  Frost Caves                    (MountainCave02)                 q=120  oi=106  Mountain                     dungeon x1
+  Howling Cavern                 (Hildir_cave)                    q=3    oi=12   Mountain                     dungeon x1,prioritized
   MountainGrave01                (MountainGrave01)                q=100  oi=88   Mountain                     
   MountainWell1                  (MountainWell1)                  q=25   oi=90   Mountain                     
   Runestone_Mountains            (Runestone_Mountains)            q=100  oi=98   Mountain                     
@@ -131,8 +139,8 @@
   TarPit3                        (TarPit3)                        q=100  oi=105  Plains                       
   TarPit3_1                      (TarPit3_1)                      q=100  oi=182  Plains                       alt:Death Plains
 --- [7] Mistlands  (26)
-  Mistlands_DvergrTownEntrance1  (Mistlands_DvergrTownEntrance1)  q=120  oi=9    Mistlands                    dungeon x1,prioritized
-  Mistlands_DvergrTownEntrance2  (Mistlands_DvergrTownEntrance2)  q=120  oi=10   Mistlands                    dungeon x1,prioritized
+  Infested Mine                  (Mistlands_DvergrTownEntrance1)  q=120  oi=9    Mistlands                    dungeon x1,prioritized
+  Infested Mine                  (Mistlands_DvergrTownEntrance2)  q=120  oi=10   Mistlands                    dungeon x1,prioritized
   Mistlands_Excavation1          (Mistlands_Excavation1)          q=40   oi=114  Mistlands                    
   Mistlands_Excavation2          (Mistlands_Excavation2)          q=40   oi=115  Mistlands                    
   Mistlands_Excavation3          (Mistlands_Excavation3)          q=40   oi=116  Mistlands                    
@@ -171,14 +179,14 @@
   CharredTowerRuins3             (CharredTowerRuins3)             q=30   oi=141  Ashlands                     
   FortressRuins                  (FortressRuins)                  q=100  oi=131  Ashlands                     dungeon x1
   LeviathanLava                  (LeviathanLava)                  q=100  oi=134  Ashlands                     
-  MorgenHole1                    (MorgenHole1)                    q=40   oi=143  Ashlands                     
-  MorgenHole2                    (MorgenHole2)                    q=40   oi=144  Ashlands                     
-  MorgenHole3                    (MorgenHole3)                    q=40   oi=145  Ashlands                     
   PlaceofMystery1                (PlaceofMystery1)                q=1    oi=17   Ashlands                     unique,prioritized
   PlaceofMystery2                (PlaceofMystery2)                q=1    oi=18   Ashlands                     unique,prioritized
-  PlaceofMystery3                (PlaceofMystery3)                q=1    oi=19   Ashlands                     unique,prioritized
+  Putrid Hole                    (MorgenHole1)                    q=40   oi=143  Ashlands                     
+  Putrid Hole                    (MorgenHole2)                    q=40   oi=144  Ashlands                     
+  Putrid Hole                    (MorgenHole3)                    q=40   oi=145  Ashlands                     
   Runestone_Ashlands             (Runestone_Ashlands)             q=70   oi=133  Ashlands                     
   SulfurArch                     (SulfurArch)                     q=100  oi=135  Ashlands                     
+  Tomb of Lord Reto              (PlaceofMystery3)                q=1    oi=19   Ashlands                     unique,prioritized
   VoltureNest                    (VoltureNest)                    q=350  oi=137  Ashlands                     
 --- [9] Deep North  (17)
   DN_gammeltrollFrac01           (DN_gammeltrollFrac01)           q=30   oi=164  Deep North                   
@@ -189,7 +197,7 @@
   FrozenShip03_DN                (FrozenShip03_DN)                q=50   oi=155  Deep North                   
   IcePond1                       (IcePond1)                       q=40   oi=156  Deep North                   
   LumberCamp                     (LumberCamp)                     q=50   oi=160  Deep North                   
-  MorkBorg                       (MorkBorg)                       q=40   oi=151  Deep North                   dungeon x1
+  Mörkhalla                      (MorkBorg)                       q=40   oi=151  Deep North                   dungeon x1
   NorthMemorialPlace             (NorthMemorialPlace)             q=15   oi=152  Deep North                   
   NorthVillage                   (NorthVillage)                   q=135  oi=150  Deep North                   dungeon x1
   Runestone_DeepNorth            (Runestone_DeepNorth)            q=70   oi=163  Deep North                   
@@ -197,7 +205,7 @@
   ShipSetting03                  (ShipSetting03)                  q=50   oi=159  Deep North                   
   ShipWreck01_DN                 (ShipWreck01_DN)                 q=170  oi=161  Deep North                   
   ShipWreck02_DN                 (ShipWreck02_DN)                 q=120  oi=162  Deep North                   
-  TheHole01                      (TheHole01)                      q=40   oi=149  Deep North                   dungeon x1
+  Winding tunnels                (TheHole01)                      q=40   oi=149  Deep North                   dungeon x1
 --- Ocean  (0 members - OMITTED)
 --- [11] Several biomes  (7)
   Dolmen01                       (Dolmen01)                       q=100  oi=62   Meadows/Black Forest         

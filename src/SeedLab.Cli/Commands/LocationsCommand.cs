@@ -147,6 +147,34 @@ Examples:
 
                 if (unknown.Count > 0)
                 {
+                    // A name the game gives to several places does not resolve, by design - Crypt2,
+                    // Crypt3 and Crypt4 are all "Burial Chambers" - and "no location called Burial
+                    // Chambers" would then be false. Say which prefabs carry it instead, and how to ask
+                    // for them; listing all of them silently would make --name and a query's
+                    // location: disagree about what one name means.
+                    List<string> sharedSentences = new List<string>();
+                    List<string> sharedPrefabs = new List<string>();
+                    foreach (string u in unknown)
+                    {
+                        List<string> carriers = PrefabsCalled(oracle, u);
+                        if (carriers.Count < 2) continue;
+                        sharedSentences.Add("'" + u + "' is the name the game gives to "
+                                            + string.Join(", ", carriers.ToArray()));
+                        foreach (string c in carriers)
+                        {
+                            if (!sharedPrefabs.Contains(c)) sharedPrefabs.Add(c);
+                        }
+                    }
+
+                    if (sharedSentences.Count == unknown.Count)
+                    {
+                        throw new CliException(
+                            string.Join("; ", sharedSentences.ToArray()) + ", so it does not pick one place.",
+                            ExitCodes.NotFound,
+                            "--name takes their prefabs, comma-separated: --name "
+                            + string.Join(",", sharedPrefabs.ToArray()));
+                    }
+
                     throw new CliException(
                         "this build has no location called " + string.Join(", ", unknown.ToArray()) + ".",
                         ExitCodes.NotFound,
@@ -354,6 +382,32 @@ Examples:
             foreach (LocationTypeResult t in res.Types)
                 if (string.Equals(t.Location.PrefabName, prefab, StringComparison.Ordinal)) return t;
             return null;
+        }
+
+        /// <summary>
+        /// Every prefab whose DISPLAY name is <paramref name="typed"/> under the resolver's own folds
+        /// (case and spacing, then a leading "the"). Used only to explain a name that did not resolve:
+        /// two or more hits mean the game gives that name to several places, which the resolver
+        /// refuses to pick between.
+        /// </summary>
+        private static List<string> PrefabsCalled(ILocationOracle oracle, string typed)
+        {
+            List<string> hits = new List<string>();
+            if (!oracle.Available) return hits;
+
+            string folded = LocationNameKey.Fold(typed);
+            string article = LocationNameKey.FoldDroppingArticle(typed);
+            foreach ((string prefab, string? display) in oracle.LocationNames)
+            {
+                if (display == null) continue;
+                if (LocationNameKey.Fold(display) == folded
+                    || LocationNameKey.FoldDroppingArticle(display) == article)
+                {
+                    hits.Add(prefab);
+                }
+            }
+
+            return hits;
         }
 
         /// <summary>
