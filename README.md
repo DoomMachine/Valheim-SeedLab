@@ -181,6 +181,7 @@ options work on either side of the command name:
 | `--ignore-running-game` | do not drop to `background` when Valheim is running. |
 | `--skip-self-test` | do not check this machine against the recorded goldens. `seed`, `at`, `map`, `locations` and `search` then say `warning: the machine self-test was turned off: SeedLab's bit-exactness is UNVERIFIED on this run` (commands that do not build a world stay quiet). |
 | `--accept-unverified-platform` | proceed on an architecture the gates have never run on (see [`docs\limits.md`](docs/limits.md)). |
+| `--simd auto\|scalar\|avx2\|avx512` | the widest vector path the generator may use. **Default `auto`**: the widest this CPU and the .NET runtime allow (AVX2 today; AVX-512 is detected but has no kernel yet). Every path is proved to give the same bits, so this changes only speed - `scalar` can be faster on CPUs with slow gathers. See [`docs\cpu-compatibility.md`](docs/cpu-compatibility.md). |
 
 **Auto-throttle.** If Valheim is running when a command starts, SeedLab drops to background mode by
 itself and prints one line saying so and how to override it:
@@ -196,7 +197,8 @@ recorded native values — and **fails closed**: one divergent value and the com
 the platform, the suite, the first failing case with both numbers, and what to do. Demonstrated by
 altering one recorded hash by 1 in a copy of `groundtruth\natives`, which made `vseed seed 12345`
 exit 1 with `seedlab/natives: 263779/263780 exact`. A pass writes a stamp in `<cache root>\selftest`
-and costs nothing again.
+and costs nothing again - until the processor, the vector path, a .NET runtime switch or the C
+runtime's `ucrtbase.dll` changes, each of which is part of the stamp and re-runs the test.
 
 **`vseed clean`** reports what SeedLab is holding on disk, per category, with the volume's free
 space, and removes the caches with `--yes` (`--what checkpoints,maps,tiles,scratch,runs,selftest,logs,all`).
@@ -403,8 +405,13 @@ folder or to Steam Cloud.**
 ### `vseed data`, `vseed selftest`, `vseed bench`
 
 `data` reports the shipped game data and whether it matches your install. `selftest` re-checks this
-build against the ground truth. `bench` measures each stage on your machine, so any throughput
-estimate is anchored to a number you watched being produced:
+build against the ground truth. `selftest --report` is the **machine report** - the processor, its
+instruction sets, the vector path SeedLab chose and why, the C runtime's version, the machine
+self-test run there and then, and world fingerprints of 8 seeds compared with the reference machine's.
+It needs neither `groundtruth\` nor `data\`, contains no machine name, user name or path, and is what
+to send when SeedLab runs on a CPU it has not been tested on ([`docs\cpu-compatibility.md`](docs/cpu-compatibility.md)).
+`bench` measures each stage on your machine, so any throughput estimate is anchored to a number you
+watched being produced:
 
 ```
 $ vseed bench --no-map

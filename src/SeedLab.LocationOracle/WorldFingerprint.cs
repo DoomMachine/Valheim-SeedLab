@@ -114,6 +114,31 @@ namespace SeedLab.LocationOracle
     }
 
     /// <summary>
+    /// L1-L3 of a <see cref="WorldFingerprint"/>: the layers a machine without game data can compute
+    /// and compare (<see cref="WorldFingerprinter.ComputeTerrain"/>).
+    /// </summary>
+    public sealed class TerrainFingerprint
+    {
+        internal TerrainFingerprint(int seed, string[] layers, bool riverCacheStale, bool deferredMatchesEager)
+        {
+            Seed = seed;
+            _layers = layers;
+            RiverCacheStale = riverCacheStale;
+            DeferredMatchesEager = deferredMatchesEager;
+        }
+
+        private readonly string[] _layers;
+
+        public int Seed { get; }
+
+        /// <summary>The digest of layer <paramref name="index"/> (0 = L1, 2 = L3), lower-case hex.</summary>
+        public string Layer(int index) => _layers[index];
+
+        public bool RiverCacheStale { get; }
+        public bool DeferredMatchesEager { get; }
+    }
+
+    /// <summary>
     /// Computes <see cref="WorldFingerprint"/>s. Opens the shipped game data once (the location table
     /// and the alt-biome definitions, failing closed like the oracle does); <see cref="Compute"/> is
     /// safe to call from several threads at once - each thread keeps its own 20 MB of grid buffers and
@@ -190,6 +215,88 @@ namespace SeedLab.LocationOracle
         /// <summary>All five layers of one world. Several threads may call this at once.</summary>
         public WorldFingerprint Compute(int seed) => _workers.Value!.Compute(seed, _table, _oracle, _plan);
 
+        [ThreadStatic] private static byte[]? t_biomes;
+        [ThreadStatic] private static float[]? t_heights;
+
+        /// <summary>
+        /// L1-L3 of one world - the layers that need only the seed, so no game data is opened. This is
+        /// what a machine without <c>data\</c> (a clone of the public repository, a tester on another
+        /// CPU) can still compare with the reference: the same code computes these three layers inside
+        /// <see cref="Compute"/>, so the digests are the same by construction, not by copy. Several
+        /// threads may call it at once; each keeps its own 20 MB of grid buffers.
+        /// </summary>
+        public static TerrainFingerprint ComputeTerrain(int seed)
+        {
+            byte[] biomes = t_biomes ??= new byte[BiomeGrid.PointCount];
+            float[] heights = t_heights ??= new float[BiomeGrid.PointCount];
+            Terrain t = TerrainLayers(seed, biomes, heights);
+            return new TerrainFingerprint(seed, new[] { t.L1, t.L2, t.L3 }, t.Stale, t.Same);
+        }
+
+        /// <summary>L1-L3 and what L4 and L5 go on to use: the eager generator and its point grid.</summary>
+        private readonly struct Terrain
+        {
+            public Terrain(string l1, string l2, string l3, bool stale, bool same, WorldGeneratorPort gen, BiomeGrid grid)
+            {
+                L1 = l1; L2 = l2; L3 = l3; Stale = stale; Same = same; Gen = gen; Grid = grid;
+            }
+
+            public string L1 { get; }
+            public string L2 { get; }
+            public string L3 { get; }
+            public bool Stale { get; }
+            public bool Same { get; }
+            public WorldGeneratorPort Gen { get; }
+            public BiomeGrid Grid { get; }
+        }
+
+        private static Terrain TerrainLayers(int seed, byte[] biomes, float[] heights)
+        {
+            string l1, l2, l3;
+
+            // ---- L1: biome and base height on a handle that never pre-generates ----------------------
+            WorldGeneratorPort lattice = new WorldGeneratorPort(seed, WorldGenVersion, menu: false,
+                                                                deferPregeneration: true);
+            using (Digest d = new Digest())
+            {
+                for (int i = 0; i < 1024; i++)
+                {
+                    float z = (float)((i - 512) * 24 + 12);
+                    for (int j = 0; j < 1024; j++)
+                    {
+                        float x = (float)((j - 512) * 24 + 12);
+                        d.U16((ushort)lattice.GetBiome(x, z));
+                        d.F32(lattice.GetBaseHeightPublic(x, z));
+                    }
+                }
+
+                d.Bool(lattice.PregenerationPending);
+                l1 = d.Hex();
+            }
+
+            // ---- L2: pre-generation, eager and deferred ----------------------------------------------
+            WorldGeneratorPort gen = new WorldGeneratorPort(seed, WorldGenVersion, menu: false);
+            bool stale = gen.RiverCacheIsStale;
+            l2 = Worker.PregenDigest(gen);
+
+            WorldGeneratorPort deferred = new WorldGeneratorPort(seed, WorldGenVersion, menu: false,
+                                                                 deferPregeneration: true);
+            deferred.ForcePregeneration();
+            bool same = string.Equals(Worker.PregenDigest(deferred), l2, StringComparison.Ordinal);
+
+            // ---- L3: the oracle's point grid --------------------------------------------------------
+            BiomeGrid grid = BiomeGrid.Build(gen, 1, biomes, heights);
+            using (Digest d = new Digest())
+            {
+                d.Bytes(grid.PointBiomes);
+                d.Bytes(MemoryMarshal.AsBytes(grid.PointHeights.AsSpan()));
+                d.I64(grid.CutoffRingPoints);
+                l3 = d.Hex();
+            }
+
+            return new Terrain(l1, l2, l3, stale, same, gen, grid);
+        }
+
         public void Dispose()
         {
             _workers.Dispose();
@@ -212,45 +319,15 @@ namespace SeedLab.LocationOracle
             {
                 string[] layers = new string[5];
 
-                // ---- L1: biome and base height on a handle that never pre-generates ------------------
-                WorldGeneratorPort lattice = new WorldGeneratorPort(seed, WorldGenVersion, menu: false,
-                                                                    deferPregeneration: true);
-                using (Digest d = new Digest())
-                {
-                    for (int i = 0; i < 1024; i++)
-                    {
-                        float z = (float)((i - 512) * 24 + 12);
-                        for (int j = 0; j < 1024; j++)
-                        {
-                            float x = (float)((j - 512) * 24 + 12);
-                            d.U16((ushort)lattice.GetBiome(x, z));
-                            d.F32(lattice.GetBaseHeightPublic(x, z));
-                        }
-                    }
-
-                    d.Bool(lattice.PregenerationPending);
-                    layers[0] = d.Hex();
-                }
-
-                // ---- L2: pre-generation, eager and deferred ------------------------------------------
-                WorldGeneratorPort gen = new WorldGeneratorPort(seed, WorldGenVersion, menu: false);
-                bool stale = gen.RiverCacheIsStale;
-                layers[1] = PregenDigest(gen);
-
-                WorldGeneratorPort deferred = new WorldGeneratorPort(seed, WorldGenVersion, menu: false,
-                                                                     deferPregeneration: true);
-                deferred.ForcePregeneration();
-                bool same = string.Equals(PregenDigest(deferred), layers[1], StringComparison.Ordinal);
-
-                // ---- L3: the oracle's point grid ----------------------------------------------------
-                BiomeGrid grid = BiomeGrid.Build(gen, 1, _biomes, _heights);
-                using (Digest d = new Digest())
-                {
-                    d.Bytes(grid.PointBiomes);
-                    d.Bytes(MemoryMarshal.AsBytes(grid.PointHeights.AsSpan()));
-                    d.I64(grid.CutoffRingPoints);
-                    layers[2] = d.Hex();
-                }
+                // ---- L1-L3: the terrain layers, shared with ComputeTerrain ---------------------------
+                Terrain t = TerrainLayers(seed, _biomes, _heights);
+                layers[0] = t.L1;
+                layers[1] = t.L2;
+                layers[2] = t.L3;
+                bool stale = t.Stale;
+                bool same = t.Same;
+                WorldGeneratorPort gen = t.Gen;
+                BiomeGrid grid = t.Grid;
 
                 // ---- L4: every ordered entry, straight through the engine ---------------------------
                 BiomeField field = BiomeField.Build(grid);
@@ -300,7 +377,7 @@ namespace SeedLab.LocationOracle
                 return new WorldFingerprint(seed, layers, stale, same, res.Instances.Count, world.Hits.Count);
             }
 
-            private static string PregenDigest(WorldGeneratorPort g)
+            internal static string PregenDigest(WorldGeneratorPort g)
             {
                 using Digest d = new Digest();
                 d.F32(g.Offset0);

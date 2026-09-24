@@ -25,7 +25,8 @@ namespace SeedLab.Runtime.Hardware
             long totalMemoryBytes, long availableMemoryBytes, string memorySource, bool memoryIsProcessLimit,
             Architecture processArchitecture, Architecture osArchitecture,
             string runtimeIdentifier, string osDescription, string frameworkDescription,
-            CpuFeatures features, DateTime probedUtc)
+            CpuFeatures features, DateTime probedUtc,
+            CpuIdentity cpu, string ucrtVersion, string? simdKey, string? simdSummary)
         {
             LogicalCores = logicalCores;
             PhysicalCores = physicalCores;
@@ -41,6 +42,10 @@ namespace SeedLab.Runtime.Hardware
             FrameworkDescription = frameworkDescription;
             Features = features;
             ProbedUtc = probedUtc;
+            Cpu = cpu;
+            UcrtVersion = ucrtVersion;
+            SimdKey = simdKey;
+            SimdSummary = simdSummary;
         }
 
         /// <summary>Hardware threads visible to this process, honouring affinity and container limits.</summary>
@@ -90,6 +95,25 @@ namespace SeedLab.Runtime.Hardware
 
         public DateTime ProbedUtc { get; }
 
+        /// <summary>Which processor this is (vendor, family, model, stepping, brand), from CPUID.</summary>
+        public CpuIdentity Cpu { get; }
+
+        /// <summary>
+        /// The version of the C runtime's <c>ucrtbase.dll</c> whose math functions <c>Math.Sin</c> and its
+        /// kin are on Windows; "n/a" elsewhere. See <see cref="CpuIdentity.UcrtVersion"/>.
+        /// </summary>
+        public string UcrtVersion { get; }
+
+        /// <summary>
+        /// The generator's vector dispatch as the host reported it (<see cref="HardwareProbe.ReportDispatch"/>):
+        /// "simd=avx2/none hw=avx512/vbmi req=auto". Null when no host reported one. This layer cannot
+        /// see the generator, so it carries what the generator decided rather than deciding again.
+        /// </summary>
+        public string? SimdKey { get; }
+
+        /// <summary>The same, in words for a machine block: "avx2 (hardware avx512/vbmi, request auto)".</summary>
+        public string? SimdSummary { get; }
+
         /// <summary>True when the machine can run the AVX2 batched Perlin path.</summary>
         public bool Avx2 => Features.Avx2;
 
@@ -98,6 +122,16 @@ namespace SeedLab.Runtime.Hardware
 
         /// <summary>Re-reads only the memory figures; cores and ISA cannot change under us.</summary>
         public HardwareInfo WithFreshMemory() => HardwareProbe.Probe(HardwareProbeOptions.Default);
+
+        /// <summary>
+        /// Everything the self-test stamp is filed under besides the runtime and the vectors: the ISA
+        /// flags, the processor, the C runtime's version and the vector path in use. A knob that changes
+        /// an ISA flag, a moved disk, a Windows update that replaces ucrtbase.dll or a different
+        /// <c>--simd</c> each give a different key, so the self-test runs again rather than trusting a
+        /// pass earned under other conditions.
+        /// </summary>
+        public string StampKey =>
+            Features.Key + " " + Cpu.Key + " ucrt=" + UcrtVersion + " " + (SimdKey ?? "simd=unreported");
 
         /// <summary>A stable one-line identity of the execution environment, for the self-test stamp.</summary>
         public string PlatformKey =>
@@ -118,8 +152,10 @@ namespace SeedLab.Runtime.Hardware
                 "platform    " + RuntimeIdentifier + ", " + OSDescription,
                 "runtime     " + FrameworkDescription + ", process " + ProcessArchitecture
                     + " on " + OSArchitecture,
-                "simd        " + Features.Describe()
+                "simd        " + Features.Describe(),
+                "cpu         " + Cpu.Describe() + "; C runtime ucrtbase " + UcrtVersion,
             };
+            if (SimdSummary != null) l.Add("simd path   " + SimdSummary);
             return l;
         }
 
@@ -143,9 +179,11 @@ namespace SeedLab.Runtime.Hardware
     public sealed class CpuFeatures
     {
         public CpuFeatures(bool sse2, bool avx, bool avx2, bool avx512F, bool fma, bool advSimd,
-                           int vectorByteWidth, bool vector256Accelerated, bool vector512Accelerated)
+                           int vectorByteWidth, bool vector256Accelerated, bool vector512Accelerated,
+                           bool avx512BW = false, bool avx512Vbmi = false)
         {
             Sse2 = sse2; Avx = avx; Avx2 = avx2; Avx512F = avx512F; Fma = fma; AdvSimd = advSimd;
+            Avx512BW = avx512BW; Avx512Vbmi = avx512Vbmi;
             VectorByteWidth = vectorByteWidth;
             Vector256Accelerated = vector256Accelerated;
             Vector512Accelerated = vector512Accelerated;
@@ -155,6 +193,12 @@ namespace SeedLab.Runtime.Hardware
         public bool Avx { get; }
         public bool Avx2 { get; }
         public bool Avx512F { get; }
+
+        /// <summary>AVX-512 byte/word: with F, what the generator's dispatch calls AVX-512.</summary>
+        public bool Avx512BW { get; }
+
+        /// <summary>AVX-512 VBMI (byte permutes): which 16-lane Perlin lookup a future kernel would take.</summary>
+        public bool Avx512Vbmi { get; }
 
         /// <summary>Present on the CPU. SeedLab must never emit an FMA in generator arithmetic.</summary>
         public bool Fma { get; }
@@ -166,10 +210,16 @@ namespace SeedLab.Runtime.Hardware
         public bool Vector256Accelerated { get; }
         public bool Vector512Accelerated { get; }
 
+        /// <summary>
+        /// "sse2 avx avx2 avx512f avx512bw avx512vbmi fma v32 v512acc". The runtime's speed opinion
+        /// (v512acc) is in it because the dispatch reads it: a runtime that stops accelerating 512-bit
+        /// vectors may run another path, and the stamp must not vouch for that path unproved.
+        /// </summary>
         public string Key =>
             (Sse2 ? "sse2 " : "") + (Avx ? "avx " : "") + (Avx2 ? "avx2 " : "")
-            + (Avx512F ? "avx512f " : "") + (Fma ? "fma " : "") + (AdvSimd ? "advsimd " : "")
-            + "v" + VectorByteWidth;
+            + (Avx512F ? "avx512f " : "") + (Avx512BW ? "avx512bw " : "") + (Avx512Vbmi ? "avx512vbmi " : "")
+            + (Fma ? "fma " : "") + (AdvSimd ? "advsimd " : "")
+            + "v" + VectorByteWidth + (Vector512Accelerated ? " v512acc" : "");
 
         public string Describe()
         {
@@ -178,10 +228,13 @@ namespace SeedLab.Runtime.Hardware
             if (Avx) have.Add("AVX");
             if (Avx2) have.Add("AVX2");
             if (Avx512F) have.Add("AVX-512F");
+            if (Avx512BW) have.Add("AVX-512BW");
+            if (Avx512Vbmi) have.Add("AVX-512VBMI");
             if (Fma) have.Add("FMA (present, never used: it would change the last bit)");
             if (AdvSimd) have.Add("AdvSIMD");
             string s = have.Count == 0 ? "no vector ISA detected" : string.Join(", ", have);
-            return s + "; Vector<byte> is " + VectorByteWidth + " bytes wide";
+            return s + "; Vector<byte> is " + VectorByteWidth + " bytes wide"
+                   + (Avx512F ? (Vector512Accelerated ? "; 512-bit vectors accelerated" : "; 512-bit vectors NOT accelerated by the runtime") : "");
         }
     }
 }

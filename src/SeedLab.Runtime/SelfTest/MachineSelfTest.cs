@@ -28,12 +28,21 @@ namespace SeedLab.Runtime.SelfTest
         private readonly CacheRoot? _cache;
         private readonly List<ISelfTestSuite> _suites = new List<ISelfTestSuite>();
         private readonly NumericVectors _numerics;
+        private readonly int _builtIn;
 
+        /// <summary>
+        /// The built-in suites need nothing but this assembly: the recorded numeric goldens, the dense
+        /// sweep of the C runtime's math at the generator's call sites (<see cref="LibmDense"/>) and the
+        /// subnormal probe (<see cref="DenormalProbe"/>). The host registers the generator-level ones.
+        /// </summary>
         public MachineSelfTest(CacheRoot? cache = null, NumericVectors? numerics = null)
         {
             _cache = cache;
             _numerics = numerics ?? NumericVectors.Embedded();
             _suites.Add(_numerics);
+            _suites.Add(new LibmDense());
+            _suites.Add(new DenormalProbe());
+            _builtIn = _suites.Count;
         }
 
         /// <summary>Architectures whose bit-exactness SeedLab's own gates have demonstrated.</summary>
@@ -71,8 +80,8 @@ namespace SeedLab.Runtime.SelfTest
             _suites.Add(suite);
         }
 
-        /// <summary>True when some suite beyond the built-in numerics is registered.</summary>
-        public bool HasGeneratorSuite => _suites.Count > 1;
+        /// <summary>True when some suite beyond the built-in ones is registered.</summary>
+        public bool HasGeneratorSuite => _suites.Count > _builtIn;
 
         public static bool IsVerifiedArchitecture(Architecture a)
         {
@@ -81,8 +90,11 @@ namespace SeedLab.Runtime.SelfTest
         }
 
         /// <summary>
-        /// The identity a stamp is filed under: platform, runtime, ISA, vector set and suite list. Any
-        /// change to any of them means the previous pass no longer says anything about this run.
+        /// The identity a stamp is filed under: platform, runtime, ISA, processor, the C runtime's
+        /// version, the generator's vector path, the vector set and the suite list. Any change to any of
+        /// them means the previous pass no longer says anything about this run - a runtime knob that
+        /// switches an ISA off, a disk moved to another CPU, a Windows update that replaces ucrtbase.dll
+        /// and a different <c>--simd</c> all re-run the self-test (<see cref="HardwareInfo.StampKey"/>).
         /// </summary>
         public string Fingerprint(HardwareInfo hw)
         {
@@ -95,7 +107,7 @@ namespace SeedLab.Runtime.SelfTest
                 hw.RuntimeIdentifier,
                 hw.ProcessArchitecture.ToString(),
                 hw.FrameworkDescription,
-                hw.Features.Key,
+                hw.StampKey,
                 _numerics.VectorsHash,
                 string.Join(",", names),
                 typeof(MachineSelfTest).Assembly.GetName().Version?.ToString() ?? "0"
@@ -236,6 +248,9 @@ namespace SeedLab.Runtime.SelfTest
                 sb.Append("platform=").Append(hw.RuntimeIdentifier).Append(' ').Append(hw.ProcessArchitecture).Append('\n');
                 sb.Append("runtime=").Append(hw.FrameworkDescription).Append('\n');
                 sb.Append("isa=").Append(hw.Features.Key).Append('\n');
+                sb.Append("cpu=").Append(hw.Cpu.Key.Substring("cpu=".Length)).Append('\n');
+                sb.Append("ucrt=").Append(hw.UcrtVersion).Append('\n');
+                sb.Append(hw.SimdKey ?? "simd=unreported").Append('\n');
                 sb.Append("vectors=").Append(_numerics.VectorsHash).Append('\n');
                 foreach (SelfTestSuiteResult r in results)
                     sb.Append("suite=").Append(r.Name).Append(' ').Append(r.Checks).Append('\n');

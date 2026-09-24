@@ -42,6 +42,10 @@ namespace SeedLabTests
             // dotnet run --project tests\SeedLab.Tests -c Release -- profile-tripwire
             if (args.Length > 0 && args[0] == "profile-tripwire") return ProfileTripwire.Run(args);
 
+            // ST1: no API that could change a last bit is referenced by the generator; no P/Invoke:
+            // dotnet run -c Release --project tests\SeedLab.Tests -- numerics-tripwire
+            if (args.Length > 0 && args[0] == "numerics-tripwire") return NumericsTripwire.Run(args);
+
             string world = (args.Length > 0 && !args[0].StartsWith("-")) ? args[0] : "asdasdasd";
             int seed = world switch
             {

@@ -44,7 +44,7 @@ namespace SeedLabAcceptanceTests
     {
         public const string ReferenceFile = "WorldFingerprintReference.json";
 
-        private sealed class Outcome
+        internal sealed class Outcome
         {
             public List<WorldFingerprint> Prints = new List<WorldFingerprint>();
             public List<string> TreeFailures = new List<string>();
@@ -114,7 +114,7 @@ namespace SeedLabAcceptanceTests
             return failures == 0 ? 0 : 1;
         }
 
-        private static int Compare(string leg, Outcome o, List<(int Seed, string[] Layers, bool Stale)> reference)
+        internal static int Compare(string leg, Outcome o, List<(int Seed, string[] Layers, bool Stale)> reference)
         {
             int bad = 0;
             for (int i = 0; i < reference.Count; i++)
@@ -343,7 +343,7 @@ namespace SeedLabAcceptanceTests
 
         // ---- the work -------------------------------------------------------------------------------
 
-        private static Outcome Compute(WorldFingerprinter fp, int[] seeds, int threads, bool withSinks)
+        internal static Outcome Compute(WorldFingerprinter fp, int[] seeds, int threads, bool withSinks)
         {
             Outcome o = new Outcome();
             WorldFingerprint?[] prints = new WorldFingerprint?[seeds.Length];
@@ -455,7 +455,7 @@ namespace SeedLabAcceptanceTests
 
         // ---- JSON -----------------------------------------------------------------------------------
 
-        private static void WriteJson(Utf8JsonWriter j, WorldFingerprint f, string? source)
+        internal static void WriteJson(Utf8JsonWriter j, WorldFingerprint f, string? source)
         {
             j.WriteStartObject();
             j.WriteNumber("seed", f.Seed);
@@ -468,7 +468,7 @@ namespace SeedLabAcceptanceTests
             j.WriteEndObject();
         }
 
-        private static WorldFingerprint FromJson(JsonElement r)
+        internal static WorldFingerprint FromJson(JsonElement r)
         {
             string[] layers = new string[5];
             for (int l = 0; l < 5; l++) layers[l] = r.GetProperty(WorldFingerprint.LayerNames[l]).GetString() ?? "";
@@ -479,7 +479,7 @@ namespace SeedLabAcceptanceTests
                                                r.GetProperty("oracle_hits").GetInt32());
         }
 
-        private static List<(int Seed, string[] Layers, bool Stale)> ReadReference(string path, out string stamp)
+        internal static List<(int Seed, string[] Layers, bool Stale)> ReadReference(string path, out string stamp)
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllBytes(path));
             JsonElement root = doc.RootElement;
@@ -500,7 +500,7 @@ namespace SeedLabAcceptanceTests
             return list;
         }
 
-        private static int IntArg(string[] args, string name, int fallback)
+        internal static int IntArg(string[] args, string name, int fallback)
         {
             for (int i = 0; i < args.Length - 1; i++)
             {

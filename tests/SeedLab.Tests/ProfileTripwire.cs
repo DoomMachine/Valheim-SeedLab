@@ -184,7 +184,7 @@ namespace SeedLabTests
                     methods++;
                     string method = FullTypeName(md, th) + "::" + md.GetString(m.Name);
                     MethodBodyBlock body = pe.GetMethodBody(m.RelativeVirtualAddress);
-                    foreach (string target in Targets(md, body.GetILBytes()))
+                    foreach (string target in Targets(md, body.GetILBytes() ?? Array.Empty<byte>()))
                     {
                         bool sink = target.StartsWith(SinkType + "::", StringComparison.Ordinal);
                         bool clock = target.StartsWith(ClockType + "::", StringComparison.Ordinal);
@@ -205,7 +205,7 @@ namespace SeedLabTests
         private static Dictionary<short, OperandType>? s_operands;
 
         /// <summary>Opcode value -> operand type, from the BCL's own table of opcodes.</summary>
-        private static Dictionary<short, OperandType> Operands()
+        internal static Dictionary<short, OperandType> Operands()
         {
             if (s_operands != null) return s_operands;
             Dictionary<short, OperandType> d = new Dictionary<short, OperandType>();
@@ -218,7 +218,20 @@ namespace SeedLabTests
         }
 
         /// <summary>Every method or field an IL body references (call, callvirt, newobj, ld/st(s)fld(a), ldftn, ldtoken).</summary>
-        private static IEnumerable<string> Targets(MetadataReader md, byte[] il)
+        internal static IEnumerable<string> Targets(MetadataReader md, byte[] il)
+        {
+            foreach (int token in Tokens(il))
+            {
+                string? t = Resolve(md, token);
+                if (t != null) yield return t;
+            }
+        }
+
+        /// <summary>
+        /// The metadata token of every method, field or type an IL body references, in order. The numerics
+        /// tripwire uses the tokens themselves, because it also needs the referenced member's signature.
+        /// </summary>
+        internal static IEnumerable<int> Tokens(byte[] il)
         {
             Dictionary<short, OperandType> ops = Operands();
             int i = 0;
@@ -256,8 +269,7 @@ namespace SeedLabTests
                     case OperandType.InlineTok:
                         int token = BitConverter.ToInt32(il, i);
                         i += 4;
-                        string? t = Resolve(md, token);
-                        if (t != null) yield return t;
+                        yield return token;
                         break;
                     default:
                         i += 4;
@@ -266,7 +278,7 @@ namespace SeedLabTests
             }
         }
 
-        private static string? Resolve(MetadataReader md, int token)
+        internal static string? Resolve(MetadataReader md, int token)
         {
             EntityHandle h = MetadataTokens.EntityHandle(token);
             switch (h.Kind)
@@ -302,7 +314,7 @@ namespace SeedLabTests
             }
         }
 
-        private static string RefName(MetadataReader md, TypeReferenceHandle h)
+        internal static string RefName(MetadataReader md, TypeReferenceHandle h)
         {
             TypeReference r = md.GetTypeReference(h);
             string name = md.GetString(r.Name);
@@ -311,7 +323,7 @@ namespace SeedLabTests
             return ns.Length == 0 ? name : ns + "." + name;
         }
 
-        private static string FullTypeName(MetadataReader md, TypeDefinitionHandle h)
+        internal static string FullTypeName(MetadataReader md, TypeDefinitionHandle h)
         {
             TypeDefinition t = md.GetTypeDefinition(h);
             string name = md.GetString(t.Name);
@@ -322,7 +334,7 @@ namespace SeedLabTests
         }
 
         /// <summary>The top-level type a (possibly nested, possibly compiler-generated) type lives in.</summary>
-        private static string OutermostName(MetadataReader md, TypeDefinitionHandle h)
+        internal static string OutermostName(MetadataReader md, TypeDefinitionHandle h)
         {
             TypeDefinition t = md.GetTypeDefinition(h);
             while (!t.GetDeclaringType().IsNil)

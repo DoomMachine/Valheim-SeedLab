@@ -462,7 +462,7 @@ namespace SeedLab.Cli.Analysis
         public static Dictionary<string, object?> Machine(CliRuntime rt)
         {
             Dictionary<string, object?> m = new Dictionary<string, object?>();
-            m["cpu"] = CpuIdentity();
+            m["cpu"] = CpuIdentity(rt.Context.Hardware.Cpu);
             m["isa"] = new Dictionary<string, object?>
             {
                 ["sse42"] = Sse42.IsSupported,
@@ -481,32 +481,26 @@ namespace SeedLab.Cli.Analysis
             };
             m["simd"] = new Dictionary<string, object?>
             {
+                ["active"] = SeedLab.WorldGen.Simd.SimdDispatch.Name(SeedLab.WorldGen.Simd.SimdDispatch.Active),
+                ["hardware"] = SeedLab.WorldGen.Simd.SimdDispatch.Name(SeedLab.WorldGen.Simd.SimdDispatch.Hardware),
+                ["requested"] = SeedLab.WorldGen.Simd.SimdDispatch.Name(SeedLab.WorldGen.Simd.SimdDispatch.Requested),
+                ["key"] = SeedLab.WorldGen.Simd.SimdDispatch.Key,
+                ["reason"] = SeedLab.WorldGen.Simd.SimdDispatch.Reason,
                 ["perlin_8wide"] = PerlinFast.Use8Wide,
-                ["note"] = "one vector path today: the 8-wide AVX2 Perlin when the runtime supports AVX2, else scalar",
             };
             Dictionary<string, object?> knobs = new Dictionary<string, object?>();
             foreach (string k in new[] { "DOTNET_EnableHWIntrinsic", "DOTNET_EnableAVX2", "DOTNET_EnableAVX512", "DOTNET_EnableAVX512v2",
                                          "DOTNET_EnableAVX512v3", "DOTNET_EnableAVX10v1", "DOTNET_PreferredVectorBitWidth",
                                          "DOTNET_TieredPGO", "DOTNET_TieredCompilation", "DOTNET_TC_QuickJitForLoops", "DOTNET_ReadyToRun",
-                                         "DOTNET_gcServer", "DOTNET_GCgen0size", PhaseClock.EnvironmentVariable })
+                                         "DOTNET_gcServer", "DOTNET_GCgen0size", PhaseClock.EnvironmentVariable,
+                                         SeedLab.WorldGen.Simd.SimdDispatch.EnvironmentVariable })
             {
                 string? v = Environment.GetEnvironmentVariable(k);
                 if (v != null) knobs[k] = v;
             }
 
             m["knobs_set"] = knobs;
-            if (OperatingSystem.IsWindows())
-            {
-                try
-                {
-                    string ucrt = Path.Combine(Environment.SystemDirectory, "ucrtbase.dll");
-                    if (File.Exists(ucrt)) m["ucrtbase"] = FileVersionInfo.GetVersionInfo(ucrt).FileVersion;
-                }
-                catch (Exception)
-                {
-                    // Left out, never guessed.
-                }
-            }
+            m["ucrtbase"] = rt.Context.Hardware.UcrtVersion;
 
             m["logical_cores"] = Environment.ProcessorCount;
             m["memory_bytes"] = rt.Context.Hardware.TotalMemoryBytes;
@@ -524,62 +518,20 @@ namespace SeedLab.Cli.Analysis
             return m;
         }
 
-        private static Dictionary<string, object?>? CpuIdentity()
+        /// <summary>The runtime layer's CPUID reading, as the profile schema's fields. Null when none was possible.</summary>
+        private static Dictionary<string, object?>? CpuIdentity(SeedLab.Runtime.Hardware.CpuIdentity cpu)
         {
-            if (!X86Base.IsSupported) return null;
-            try
+            if (cpu.Source == "unavailable") return null;
+            return new Dictionary<string, object?>
             {
-                (int maxLeaf, int b0, int c0, int d0) = X86Base.CpuId(0, 0);
-                byte[] v = new byte[12];
-                BitConverter.TryWriteBytes(v.AsSpan(0), b0);
-                BitConverter.TryWriteBytes(v.AsSpan(4), d0);
-                BitConverter.TryWriteBytes(v.AsSpan(8), c0);
-                (int eax1, _, _, _) = X86Base.CpuId(1, 0);
-                int stepping = eax1 & 0xF;
-                int model = (eax1 >> 4) & 0xF;
-                int family = (eax1 >> 8) & 0xF;
-                int extModel = (eax1 >> 16) & 0xF;
-                int extFamily = (eax1 >> 20) & 0xFF;
-                int dispFamily = family == 0xF ? family + extFamily : family;
-                int dispModel = family == 0x6 || family == 0xF ? (extModel << 4) + model : model;
-                bool hybrid = false;
-                if (maxLeaf >= 7)
-                {
-                    (_, _, _, int edx7) = X86Base.CpuId(7, 0);
-                    hybrid = (edx7 & (1 << 15)) != 0;
-                }
-
-                string? brand = null;
-                (int maxExt, _, _, _) = X86Base.CpuId(unchecked((int)0x80000000), 0);
-                if ((uint)maxExt >= 0x80000004u)
-                {
-                    byte[] bb = new byte[48];
-                    for (int i = 0; i < 3; i++)
-                    {
-                        (int a, int b, int c, int d) = X86Base.CpuId(unchecked((int)(0x80000002u + (uint)i)), 0);
-                        BitConverter.TryWriteBytes(bb.AsSpan(i * 16), a);
-                        BitConverter.TryWriteBytes(bb.AsSpan(i * 16 + 4), b);
-                        BitConverter.TryWriteBytes(bb.AsSpan(i * 16 + 8), c);
-                        BitConverter.TryWriteBytes(bb.AsSpan(i * 16 + 12), d);
-                    }
-
-                    brand = Encoding.ASCII.GetString(bb).TrimEnd('\0').Trim();
-                }
-
-                return new Dictionary<string, object?>
-                {
-                    ["vendor"] = Encoding.ASCII.GetString(v),
-                    ["family"] = dispFamily,
-                    ["model"] = dispModel,
-                    ["stepping"] = stepping,
-                    ["brand"] = brand,
-                    ["hybrid"] = hybrid,
-                };
-            }
-            catch (Exception)
-            {
-                return null;
-            }
+                ["vendor"] = cpu.Vendor,
+                ["family"] = cpu.Family,
+                ["model"] = cpu.Model,
+                ["stepping"] = cpu.Stepping,
+                ["brand"] = cpu.Brand.Length > 0 ? cpu.Brand : null,
+                ["hybrid"] = cpu.Hybrid,
+                ["source"] = cpu.Source,
+            };
         }
 
         /// <summary>What one <see cref="Stopwatch.GetTimestamp"/> costs here, in ns, over a warmed loop.</summary>
