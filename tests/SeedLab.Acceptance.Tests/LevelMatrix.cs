@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using SeedLab.LocationOracle;
+using SeedLab.Runtime.Hardware;
 using SeedLab.WorldGen.Simd;
 using SeedLab.WorldGen.Unity;
 
@@ -16,17 +17,24 @@ namespace SeedLabAcceptanceTests
     /// The same worlds at every vector level this machine can reach (design 12.5, the fingerprint half
     /// of ST8).
     ///
-    ///   dotnet run -c Release --project tests\SeedLab.Acceptance.Tests -- --level-matrix [--seeds N] [--threads N] [--levels K0,K3,K6,K7,K8]
+    ///   dotnet run -c Release --project tests\SeedLab.Acceptance.Tests -- --level-matrix [--seeds N] [--threads N] [--levels K0,K3,K6,K7,K8,K10]
     ///
     /// <para>Each level is a CHILD process of this test's own executable, started with one runtime knob
     /// or request in its environment: K0 none, K3 <c>DOTNET_EnableAVX512=0</c>, K6
-    /// <c>DOTNET_EnableAVX2=0</c>, K7 <c>DOTNET_EnableHWIntrinsic=0</c>, K8 <c>SEEDLAB_SIMD=scalar</c>. The
+    /// <c>DOTNET_EnableAVX2=0</c>, K7 <c>DOTNET_EnableHWIntrinsic=0</c>, K8 <c>SEEDLAB_SIMD=scalar</c>,
+    /// K10 <c>DOTNET_EnableAVX=0</c> (the shape of a CPU without AVX: SSE4.2 and 128-bit vectors). The
     /// knobs are read once at runtime start-up, which is why each level needs its own process. The child
     /// proves the knob took effect twice over: <c>SEEDLAB_SIMD_EXPECT</c> is set to what the level must
     /// look like, so the WorldGen module initialiser refuses to load if it does not; and the child prints
     /// its ISA facts, which this parent checks again. It then computes the five-layer fingerprints of
     /// the reference seeds with no profiler attached, and every digest must equal
     /// <c>WorldFingerprintReference.json</c>, recorded at the default level.</para>
+    ///
+    /// <para><b>This process is K0</b>, and which levels exist is derived from its flags - so it refuses to
+    /// run while any runtime code-generation switch is set in its environment (<c>DOTNET_</c> or
+    /// <c>COMPlus_</c>, <see cref="RuntimeKnobs"/>), compares its flags with the processor's CPUID bits
+    /// (<see cref="CpuIdFeatures"/>), and takes every such switch out of each child's environment before
+    /// setting the one its level names.</para>
     ///
     /// <para>What a level changes is not only the Perlin path. The JIT also compiles ordinary scalar code
     /// differently with AVX-512 on or off (EVEX encodings, the saturating float-to-integer sequences)
@@ -61,14 +69,21 @@ namespace SeedLabAcceptanceTests
                 return 2;
             }
 
-            foreach (string k in new[] { "DOTNET_EnableAVX512", "DOTNET_EnableAVX2", "DOTNET_EnableHWIntrinsic",
-                                         "DOTNET_EnableAVX512v2", "DOTNET_PreferredVectorBitWidth", SimdDispatch.EnvironmentVariable })
+            List<string> leaked = new List<string>();
+            foreach ((string name, string value) in RuntimeKnobs.Set()) leaked.Add(name + "=" + value);
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(SimdDispatch.EnvironmentVariable)))
             {
-                if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(k)))
+                leaked.Add(SimdDispatch.EnvironmentVariable + "=" + Environment.GetEnvironmentVariable(SimdDispatch.EnvironmentVariable));
+            }
+
+            if (leaked.Count > 0)
+            {
+                foreach (string k in leaked)
                 {
                     Console.WriteLine("FAIL  " + k + " is set in the parent; the parent is the default level and must run without knobs.");
-                    return 1;
                 }
+
+                return 1;
             }
 
             List<(int Seed, string[] Layers, bool Stale)> reference = ProfileNeutrality.ReadReference(refPath, out string stamp);
@@ -78,6 +93,23 @@ namespace SeedLabAcceptanceTests
             Console.WriteLine("  threads        " + threads + " per child");
             Console.WriteLine("  this process   " + SimdDispatch.Summary);
 
+            // Independent of the runtime: what this processor's CPUID bits say an unswitched runtime reports.
+            CpuIdFeatures? cpuid = CpuIdFeatures.Read();
+            if (cpuid == null)
+            {
+                Console.WriteLine("FAIL  the processor's CPUID bits cannot be read here, so K0 cannot be shown to be the default level");
+                return 1;
+            }
+
+            List<string> off = cpuid.Disagreements(k0);
+            if (off.Count > 0)
+            {
+                foreach (string d in off) Console.WriteLine("FAIL  K0 is not the default level: " + d);
+                return 1;
+            }
+
+            Console.WriteLine("  K0 = default   the runtime's flags are what the CPUID bits imply");
+
             int failures = 0, ran = 0, notApplicable = 0;
             foreach (Level lv in Levels(k0))
             {
@@ -86,7 +118,8 @@ namespace SeedLabAcceptanceTests
                 if (!lv.Applicable)
                 {
                     notApplicable++;
-                    Console.WriteLine("n/a   " + label + " this CPU lacks what the knob turns off, so the level is the default one");
+                    Console.WriteLine("n/a   " + label + " this CPU lacks what the knob turns off (the runtime and the CPUID "
+                                      + "bits agree), so the level is the default one");
                     continue;
                 }
 
@@ -104,7 +137,7 @@ namespace SeedLabAcceptanceTests
 
         private static IEnumerable<Level> Levels(Dictionary<string, string> k0)
         {
-            bool has2 = k0["avx2"] == "1", has512 = k0["avx512f"] == "1", x86 = k0["x86base"] == "1";
+            bool has2 = k0["avx2"] == "1", has512 = k0["avx512f"] == "1", x86 = k0["x86base"] == "1", hasAvx = k0["avx"] == "1";
             yield return new Level
             {
                 Id = "K0",
@@ -130,6 +163,15 @@ namespace SeedLabAcceptanceTests
                 Id = "K8", Knob = SimdDispatch.EnvironmentVariable, Value = "scalar", Applicable = has2,
                 Expect = { ["avx2"] = k0["avx2"], ["requested"] = "scalar", ["active"] = "scalar" },
             };
+            yield return new Level
+            {
+                Id = "K10", Knob = "DOTNET_EnableAVX", Value = "0", Applicable = hasAvx,
+                Expect =
+                {
+                    ["avx"] = "0", ["avx2"] = "0", ["fma"] = "0", ["sse42"] = k0["sse42"], ["v128acc"] = "1",
+                    ["vector_bytes"] = "16", ["active"] = "scalar",
+                },
+            };
         }
 
         private static int RunLevel(Level lv, string label, List<(int Seed, string[] Layers, bool Stale)> reference, int threads)
@@ -152,6 +194,8 @@ namespace SeedLabAcceptanceTests
             psi.ArgumentList.Add(reference.Count.ToString(CultureInfo.InvariantCulture));
             psi.ArgumentList.Add("--threads");
             psi.ArgumentList.Add(threads.ToString(CultureInfo.InvariantCulture));
+            foreach (string k in RuntimeKnobs.In(psi.Environment)) psi.Environment.Remove(k);
+            psi.Environment.Remove(SimdDispatch.EnvironmentVariable);
             if (lv.Knob.Length > 0) psi.Environment[lv.Knob] = lv.Value;
 
             List<string> expect = new List<string>();

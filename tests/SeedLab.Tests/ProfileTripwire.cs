@@ -20,10 +20,13 @@ namespace SeedLabTests
     /// <c>SeedLab.LocationOracle</c> and the <c>SeedLab.Search.Evaluation</c> namespace at IL level
     /// (<c>System.Reflection.Metadata</c>, in the BCL) and fails on:</para>
     /// <list type="bullet">
-    /// <item>any member of <see cref="PhaseSink"/> other than <c>Current</c>'s getter, <c>Begin</c> and
-    /// <c>End</c> - so no <c>Snapshot</c>, <c>Reset</c>, setter or constructor;</item>
-    /// <item>any member of <see cref="PhaseClock"/> other than <c>CountersOn</c>, <c>Count</c> and
-    /// <c>Add</c>;</item>
+    /// <item>any member of <see cref="PhaseSink"/> other than the static <c>BeginCurrent</c> and
+    /// <c>EndCurrent</c> - so no <c>Current</c> (neither its getter nor its setter), no instance
+    /// <c>Begin</c>/<c>End</c>, <c>Snapshot</c>, <c>Reset</c> or constructor. Reading <c>Current</c> would
+    /// let generator code branch on whether it is being profiled;</item>
+    /// <item>any member of <see cref="PhaseClock"/> other than <c>Count</c> and <c>Add</c> - so not
+    /// <c>CountersOn</c> either, for the same reason: the counter sites need only the two writes, whose
+    /// own bodies test the switch;</item>
     /// <item>any use of <see cref="Stopwatch"/> outside the types that already timed themselves before
     /// the profiler existed and only record what they measured (<c>BuildMilliseconds</c> and the
     /// search evaluator's cost totals), named one by one below.</item>
@@ -39,8 +42,8 @@ namespace SeedLabTests
         private const string ClockType = "SeedLab.WorldGen.Diagnostics.PhaseClock";
         private const string StopwatchType = "System.Diagnostics.Stopwatch";
 
-        private static readonly HashSet<string> SinkAllowed = new HashSet<string>(StringComparer.Ordinal) { "get_Current", "Begin", "End" };
-        private static readonly HashSet<string> ClockAllowed = new HashSet<string>(StringComparer.Ordinal) { "CountersOn", "Count", "Add" };
+        private static readonly HashSet<string> SinkAllowed = new HashSet<string>(StringComparer.Ordinal) { "BeginCurrent", "EndCurrent" };
+        private static readonly HashSet<string> ClockAllowed = new HashSet<string>(StringComparer.Ordinal) { "Count", "Add" };
 
         /// <summary>Types that timed themselves before the profiler existed, and only record the result.</summary>
         private static readonly HashSet<string> StopwatchAllowed = new HashSet<string>(StringComparer.Ordinal)
@@ -100,9 +103,9 @@ namespace SeedLabTests
             }
 
             // ---- sensitivity: it sees what is there ----------------------------------------------------
-            fail += Expect(all, "SeedLab.WorldGen.WorldGeneratorPort", SinkType + "::Begin", "the generator's phase boundaries");
+            fail += Expect(all, "SeedLab.WorldGen.WorldGeneratorPort", SinkType + "::BeginCurrent", "the generator's phase boundaries");
             fail += Expect(all, "SeedLab.WorldGen.WorldGeneratorPort", ClockType + "::Count", "the generator's counter sites");
-            fail += Expect(all, "SeedLab.LocationOracle.DumpedLocationOracle", SinkType + "::Begin", "the oracle's t5 boundaries");
+            fail += Expect(all, "SeedLab.LocationOracle.DumpedLocationOracle", SinkType + "::BeginCurrent", "the oracle's t5 boundaries");
             fail += Expect(all, "SeedLab.Locations.BiomeGrid", StopwatchType + "::", "an allowed pre-existing Stopwatch");
 
             // ---- sensitivity: it flags a read ----------------------------------------------------------
@@ -112,7 +115,8 @@ namespace SeedLabTests
             foreach (Finding x in planted) if (x.Violation) flagged.Add(x.Target);
             string[] expected =
             {
-                SinkType + "::Snapshot", SinkType + "::set_Current", ClockType + "::SnapshotCounters", StopwatchType + "::GetTimestamp",
+                SinkType + "::Snapshot", SinkType + "::set_Current", SinkType + "::get_Current", SinkType + "::Begin",
+                ClockType + "::SnapshotCounters", ClockType + "::CountersOn", StopwatchType + "::GetTimestamp",
             };
             int missed = 0;
             foreach (string e in expected)
@@ -352,7 +356,8 @@ namespace SeedLabTests.Planted
 {
     /// <summary>
     /// Reads the profiler the way generator code must never do. Never called: it exists so that the
-    /// tripwire has to find it, which is how the tripwire proves it is not blind.
+    /// tripwire has to find it, which is how the tripwire proves it is not blind. The two branches at
+    /// the end are the quiet kind of read: asking whether anything is recording.
     /// </summary>
     internal static class TripwirePlant
     {
@@ -363,7 +368,11 @@ namespace SeedLabTests.Planted
             PhaseSink.Current = null;
             Span<long> c = stackalloc long[PhaseClock.Capacity];
             PhaseClock.SnapshotCounters(c);
-            return s[0] + c[0] + Stopwatch.GetTimestamp();
+            long r = s[0] + c[0] + Stopwatch.GetTimestamp();
+            PhaseSink? sink = PhaseSink.Current;
+            if (sink != null) { sink.Begin(Phase.Construct); r++; }
+            if (PhaseClock.CountersOn) r++;
+            return r;
         }
     }
 }

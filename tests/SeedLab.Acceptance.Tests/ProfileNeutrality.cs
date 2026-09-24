@@ -24,7 +24,8 @@ namespace SeedLabAcceptanceTests
     /// <c>WorldFingerprintReference.json</c>. This check recomputes them three ways and requires every
     /// digest to equal the recording:</para>
     /// <list type="number">
-    /// <item><b>off</b> - no sink on any thread: the generator's boundaries see null;</item>
+    /// <item><b>off</b> - no sink on any worker thread: the generator's boundaries see null. A sink set
+    /// on the calling thread meanwhile must record nothing, which proves the sink is per thread;</item>
     /// <item><b>phases</b> - a <see cref="PhaseSink"/> on every worker thread, so every boundary records;</item>
     /// <item><b>phases + counters</b> - the same in a CHILD process started with
     /// <c>SEEDLAB_PROFILE_COUNTERS=1</c>. It has to be a second process: the counter switch is a
@@ -90,13 +91,37 @@ namespace SeedLabAcceptanceTests
                 return 1;
             }
 
-            // 1. off
-            Outcome off = Compute(fp, seeds, threads, withSinks: false);
-            failures += Compare("off", off, reference);
-            if (off.PregenEntries != 0)
+            // 1. off. The workers never touch PhaseSink.Current, so they see a new thread's default. A
+            // sink set on THIS thread meanwhile must record nothing: if Current were ever shared between
+            // threads rather than thread-static, every worker's boundaries would land in it, and "off"
+            // would not be off.
+            PhaseSink spy = new PhaseSink();
+            PhaseSink.Current = spy;
+            Outcome off;
+            try
             {
-                Console.WriteLine("FAIL  off: a sink recorded " + off.PregenEntries + " pre-generations with no sink set");
+                off = Compute(fp, seeds, threads, withSinks: false);
+            }
+            finally
+            {
+                PhaseSink.Current = null;
+            }
+
+            failures += Compare("off", off, reference);
+            long[] spied = new long[PhaseSink.SnapshotLength];
+            spy.Snapshot(spied);
+            long spiedEntries = 0;
+            for (int i = PhaseSink.EntriesOffset; i < PhaseSink.AllocOffset; i++) spiedEntries += spied[i];
+            if (spiedEntries != 0)
+            {
+                Console.WriteLine("FAIL  off: a sink set on the calling thread recorded " + spiedEntries
+                                  + " boundaries from the workers - PhaseSink.Current is not per thread");
                 failures++;
+            }
+            else
+            {
+                Console.WriteLine("PASS  off: a sink set on the calling thread recorded nothing from the " + threads
+                                  + " worker thread(s) (Current is per thread)");
             }
 
             // 2. phases on
@@ -360,8 +385,10 @@ namespace SeedLabAcceptanceTests
             {
                 workers[w] = new Thread(() =>
                 {
+                    // With sinks off, Current is left exactly as a new thread has it: the off leg proves
+                    // that default, rather than a null this code wrote itself.
                     PhaseSink? sink = withSinks ? new PhaseSink() : null;
-                    PhaseSink.Current = sink;
+                    if (withSinks) PhaseSink.Current = sink;
                     PhaseClock.ResetCounters();
                     long[] before = new long[PhaseSink.SnapshotLength];
                     long[] after = new long[PhaseSink.SnapshotLength];
@@ -396,7 +423,7 @@ namespace SeedLabAcceptanceTests
                     }
                     finally
                     {
-                        PhaseSink.Current = null;
+                        if (withSinks) PhaseSink.Current = null;
                     }
                 })
                 {

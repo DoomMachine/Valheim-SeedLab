@@ -370,6 +370,14 @@ namespace SeedLab.WorldGen.Simd
         public bool Avx512Vbmi { get; private set; }
         public bool Avx10v1 { get; private set; }
         public bool Avx10v1V512 { get; private set; }
+
+        /// <summary>
+        /// AVX10.2 (Nova Lake, Diamond Rapids and later). No kernel uses it; it is read because the JIT may
+        /// compile ordinary code with its instructions (the saturating float-to-integer conversions, for
+        /// one), so a report and the self-test stamp must be able to say it was there.
+        /// </summary>
+        public bool Avx10v2 { get; private set; }
+        public bool Avx10v2V512 { get; private set; }
         public bool AdvSimd { get; private set; }
         public bool Vector128Accelerated { get; private set; }
         public bool Vector256Accelerated { get; private set; }
@@ -394,6 +402,8 @@ namespace SeedLab.WorldGen.Simd
             s.Avx512Vbmi = Ask(() => System.Runtime.Intrinsics.X86.Avx512Vbmi.IsSupported);
             s.Avx10v1 = Ask(() => System.Runtime.Intrinsics.X86.Avx10v1.IsSupported);
             s.Avx10v1V512 = Ask(() => System.Runtime.Intrinsics.X86.Avx10v1.V512.IsSupported);
+            s.Avx10v2 = Ask(() => System.Runtime.Intrinsics.X86.Avx10v2.IsSupported);
+            s.Avx10v2V512 = Ask(() => System.Runtime.Intrinsics.X86.Avx10v2.V512.IsSupported);
             s.AdvSimd = Ask(() => System.Runtime.Intrinsics.Arm.AdvSimd.IsSupported);
             s.Vector128Accelerated = Ask(() => Vector128.IsHardwareAccelerated);
             s.Vector256Accelerated = Ask(() => Vector256.IsHardwareAccelerated);
@@ -421,6 +431,8 @@ namespace SeedLab.WorldGen.Simd
             yield return ("avx512vbmi", Avx512Vbmi);
             yield return ("avx10v1", Avx10v1);
             yield return ("avx10v1_v512", Avx10v1V512);
+            yield return ("avx10v2", Avx10v2);
+            yield return ("avx10v2_v512", Avx10v2V512);
             yield return ("advsimd", AdvSimd);
             yield return ("v128acc", Vector128Accelerated);
             yield return ("v256acc", Vector256Accelerated);

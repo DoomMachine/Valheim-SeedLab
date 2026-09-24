@@ -182,10 +182,13 @@ one. Until then the refusal stands.
 
 **Vector paths.** Every CPU runs the same arithmetic; only the vector path differs (AVX2 or scalar
 today; AVX-512 is detected but has no kernel of its own). Each path has been proved against the game's
-output on one machine at every level the .NET runtime's own switches reach - which proves SeedLab's and
+output on one machine at the levels the .NET runtime's own switches reach there that matter most - AVX-512
+off, AVX2 off, AVX off, every intrinsic off, and the scalar path by request - which proves SeedLab's and
 the JIT's code paths, not another CPU's maths library. Which path each CPU family from 2015 on gets,
 the traps, what is tested and what needs other hardware: [`cpu-compatibility.md`](cpu-compatibility.md).
-`vseed selftest --report` is the report to run, and send, from a CPU nobody has tested.
+`vseed selftest --report` is the report to run, and send, from a CPU nobody has tested; where SeedLab
+refuses to start because its AVX2 path differs there, `vseed --simd scalar selftest --report` runs on the
+scalar path (still bit-exact) and shows where the AVX2 path differs.
 
 ## Not implemented
 

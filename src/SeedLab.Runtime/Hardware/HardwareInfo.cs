@@ -180,10 +180,10 @@ namespace SeedLab.Runtime.Hardware
     {
         public CpuFeatures(bool sse2, bool avx, bool avx2, bool avx512F, bool fma, bool advSimd,
                            int vectorByteWidth, bool vector256Accelerated, bool vector512Accelerated,
-                           bool avx512BW = false, bool avx512Vbmi = false)
+                           bool avx512BW = false, bool avx512Vbmi = false, bool avx10v1 = false, bool avx10v2 = false)
         {
             Sse2 = sse2; Avx = avx; Avx2 = avx2; Avx512F = avx512F; Fma = fma; AdvSimd = advSimd;
-            Avx512BW = avx512BW; Avx512Vbmi = avx512Vbmi;
+            Avx512BW = avx512BW; Avx512Vbmi = avx512Vbmi; Avx10v1 = avx10v1; Avx10v2 = avx10v2;
             VectorByteWidth = vectorByteWidth;
             Vector256Accelerated = vector256Accelerated;
             Vector512Accelerated = vector512Accelerated;
@@ -200,6 +200,15 @@ namespace SeedLab.Runtime.Hardware
         /// <summary>AVX-512 VBMI (byte permutes): which 16-lane Perlin lookup a future kernel would take.</summary>
         public bool Avx512Vbmi { get; }
 
+        /// <summary>
+        /// AVX10.1 and AVX10.2 as the runtime reports them. No SeedLab kernel uses either, but the JIT may
+        /// compile ordinary code with their instructions (AVX10.2's saturating float-to-integer
+        /// conversions, for one), so they are in the key: a CPU or a switch that turns them on or off
+        /// re-runs the self-test.
+        /// </summary>
+        public bool Avx10v1 { get; }
+        public bool Avx10v2 { get; }
+
         /// <summary>Present on the CPU. SeedLab must never emit an FMA in generator arithmetic.</summary>
         public bool Fma { get; }
 
@@ -211,13 +220,15 @@ namespace SeedLab.Runtime.Hardware
         public bool Vector512Accelerated { get; }
 
         /// <summary>
-        /// "sse2 avx avx2 avx512f avx512bw avx512vbmi fma v32 v512acc". The runtime's speed opinion
+        /// "sse2 avx avx2 avx512f avx512bw avx512vbmi fma v32 v512acc" (with avx10v1 / avx10v2 after
+        /// avx512vbmi where the runtime reports them). The runtime's speed opinion
         /// (v512acc) is in it because the dispatch reads it: a runtime that stops accelerating 512-bit
         /// vectors may run another path, and the stamp must not vouch for that path unproved.
         /// </summary>
         public string Key =>
             (Sse2 ? "sse2 " : "") + (Avx ? "avx " : "") + (Avx2 ? "avx2 " : "")
             + (Avx512F ? "avx512f " : "") + (Avx512BW ? "avx512bw " : "") + (Avx512Vbmi ? "avx512vbmi " : "")
+            + (Avx10v1 ? "avx10v1 " : "") + (Avx10v2 ? "avx10v2 " : "")
             + (Fma ? "fma " : "") + (AdvSimd ? "advsimd " : "")
             + "v" + VectorByteWidth + (Vector512Accelerated ? " v512acc" : "");
 
@@ -230,6 +241,8 @@ namespace SeedLab.Runtime.Hardware
             if (Avx512F) have.Add("AVX-512F");
             if (Avx512BW) have.Add("AVX-512BW");
             if (Avx512Vbmi) have.Add("AVX-512VBMI");
+            if (Avx10v1) have.Add("AVX10.1");
+            if (Avx10v2) have.Add("AVX10.2");
             if (Fma) have.Add("FMA (present, never used: it would change the last bit)");
             if (AdvSimd) have.Add("AdvSIMD");
             string s = have.Count == 0 ? "no vector ISA detected" : string.Join(", ", have);

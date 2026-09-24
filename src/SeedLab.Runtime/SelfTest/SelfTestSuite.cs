@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 
 namespace SeedLab.Runtime.SelfTest
@@ -27,13 +28,29 @@ namespace SeedLab.Runtime.SelfTest
 
     public sealed class SelfTestSuiteResult
     {
-        public SelfTestSuiteResult(string name, int checks, int failures, string firstFailure, TimeSpan elapsed)
+        public SelfTestSuiteResult(string name, int checks, int failures, string firstFailure, TimeSpan elapsed,
+                                   string? shareableFailure = null)
         {
             Name = name;
             Checks = checks;
             Failures = failures;
             FirstFailure = firstFailure ?? "";
+            ShareableFailure = shareableFailure ?? FirstFailure;
             Elapsed = elapsed;
+        }
+
+        /// <summary>
+        /// A suite that threw: the full message for this machine's own output, and for anything meant to
+        /// be sent elsewhere only the exception's type and, when it names one, the file's name - an I/O
+        /// exception's message carries the full path, which can name the user.
+        /// </summary>
+        public static SelfTestSuiteResult Threw(string name, Exception ex, string what = "the suite threw")
+        {
+            string file = ex is FileNotFoundException fnf && !string.IsNullOrEmpty(fnf.FileName)
+                ? " (" + Path.GetFileName(fnf.FileName) + ")"
+                : "";
+            return new SelfTestSuiteResult(name, 1, 1, what + " " + ex.GetType().Name + ": " + ex.Message, TimeSpan.Zero,
+                                           what + " " + ex.GetType().Name + file);
         }
 
         public string Name { get; }
@@ -42,6 +59,13 @@ namespace SeedLab.Runtime.SelfTest
 
         /// <summary>The first mismatch, with both bit patterns - the only detail worth printing.</summary>
         public string FirstFailure { get; }
+
+        /// <summary>
+        /// <see cref="FirstFailure"/> without anything that could name this machine or its user (no
+        /// exception message, no path): what a machine report prints. For a golden that did not
+        /// reproduce it is the same text - numbers and bit patterns only.
+        /// </summary>
+        public string ShareableFailure { get; }
 
         public TimeSpan Elapsed { get; }
         public bool Passed => Failures == 0 && Checks > 0;

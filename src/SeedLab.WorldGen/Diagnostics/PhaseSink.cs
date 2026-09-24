@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace SeedLab.WorldGen.Diagnostics
 {
@@ -7,20 +8,23 @@ namespace SeedLab.WorldGen.Diagnostics
     /// One thread's phase clock: the ticks, entries and allocated bytes of every <see cref="Phase"/>
     /// that thread has entered since the last <see cref="Reset"/>.
     ///
-    /// <para><b>How the generator reaches it.</b> Through <see cref="Current"/>, a thread-static that is
-    /// null unless a profiler set it on this thread. Nothing is passed down through a constructor or an
+    /// <para><b>How the generator reaches it.</b> Through <see cref="BeginCurrent"/> and
+    /// <see cref="EndCurrent"/>, which write into <see cref="Current"/>, a thread-static that is null
+    /// unless a profiler set it on this thread. Nothing is passed down through a constructor or an
     /// interface, so switching profiling on changes no signature and no call path; a generator handle a
     /// worker built on another thread (every <c>Fork</c> handed to a <c>Parallel.For</c>) sees that
     /// thread's null and records nothing, which is right - its time is not this thread's time. When
     /// profiling is off, a phase boundary costs one thread-static read and one null test, and there are
     /// a few dozen boundaries per seed.</para>
     ///
-    /// <para><b>Write-only from generator code.</b> The world-building code calls <see cref="Begin"/> and
-    /// <see cref="End"/> and nothing else. The numbers are private and leave only through
-    /// <see cref="Snapshot"/>, which only a recorder calls (a profiler, a test); an IL tripwire in the
-    /// test suite fails if any generator assembly references it. So no value the generator computes can
-    /// depend on how long anything took - which is what makes "profiling on" and "profiling off" the
-    /// same world, bit for bit, and the tests prove that on real seeds as well.</para>
+    /// <para><b>Write-only from generator code.</b> The world-building code calls the two static
+    /// methods <see cref="BeginCurrent"/> and <see cref="EndCurrent"/> and nothing else - not even
+    /// <see cref="Current"/>'s getter, so it cannot branch on whether anything is recording. The numbers
+    /// are private and leave only through <see cref="Snapshot"/>, which only a recorder calls (a
+    /// profiler, a test); an IL tripwire in the test suite fails if any generator assembly references
+    /// any other member. So no value the generator computes can depend on how long anything took, or on
+    /// whether it was being timed - which is what makes "profiling on" and "profiling off" the same
+    /// world, bit for bit, and the tests prove that on real seeds as well.</para>
     ///
     /// <para><b>Timestamps only at boundaries.</b> <see cref="Stopwatch.GetTimestamp"/> costs tens of
     /// nanoseconds, more than one base height; timing per point would measure the clock. Per-point work is
@@ -44,13 +48,28 @@ namespace SeedLab.WorldGen.Diagnostics
 
         /// <summary>
         /// This thread's sink, or null (the default on every thread) when nothing is recording. A profiler
-        /// sets it on its own worker threads before the first seed and clears it after the last.
+        /// sets it on its own worker threads before the first seed and clears it after the last. For
+        /// recorders only: generator code reaches the sink through <see cref="BeginCurrent"/> and
+        /// <see cref="EndCurrent"/>, never through this getter.
         /// </summary>
         public static PhaseSink? Current
         {
             get => t_current;
             set => t_current = value;
         }
+
+        /// <summary>
+        /// A phase boundary as generator code writes it: opens <paramref name="phase"/> in this thread's
+        /// sink when one is set, and is one thread-static read and one null test when none is. Static,
+        /// and returning nothing, so the code that calls it learns nothing - not even whether it was
+        /// recorded.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void BeginCurrent(Phase phase) => t_current?.Begin(phase);
+
+        /// <summary>The closing boundary: <see cref="End"/> on this thread's sink when one is set.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void EndCurrent(Phase phase) => t_current?.End(phase);
 
         /// <summary>
         /// Length of the span <see cref="Snapshot"/> fills: ticks, then entries, then allocated bytes, each

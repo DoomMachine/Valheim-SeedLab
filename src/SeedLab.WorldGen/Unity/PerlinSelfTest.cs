@@ -113,7 +113,7 @@ namespace SeedLab.WorldGen.Unity
                     float a = (UnityPerlin.Noise(x, y) + UnityPerlin.NormAdd) / UnityPerlin.NormDiv;
                     float b = PerlinFast.PerlinNoise(x, y);
                     scalarChecked++;
-                    if (Bits(a) != Bits(b)) throw Diverged("O3 byte-table scalar", x, y, a, b);
+                    if (Bits(a) != Bits(b)) throw Diverged("O3 byte-table scalar", false, x, y, a, b);
                 }
             }
 
@@ -147,7 +147,7 @@ namespace SeedLab.WorldGen.Unity
                             float want = (UnityPerlin.Noise(xs[k], ys[k]) + UnityPerlin.NormAdd) / UnityPerlin.NormDiv;
                             vectorChecked++;
                             if (Bits(want) != Bits(got[k]))
-                                throw Diverged("O5 AVX2 8-wide (lane " + k + ")", xs[k], ys[k], want, got[k]);
+                                throw Diverged("O5 AVX2 8-wide (lane " + k + ")", true, xs[k], ys[k], want, got[k]);
                         }
                     }
                 }
@@ -179,14 +179,30 @@ namespace SeedLab.WorldGen.Unity
             return sb.ToString();
         }
 
-        private static InvalidOperationException Diverged(string which, float x, float y, float want, float got)
-            => new InvalidOperationException(
-                "SeedLab: the " + which + " Perlin path does not agree with the reference transcription on "
-                + "this machine, so world generation here would NOT be bit-exact. "
-                + "PerlinNoise(" + R(x) + ", " + R(y) + ") = " + R(want) + " (0x" + Bits(want).ToString("X8") + ")"
-                + " reference, " + R(got) + " (0x" + Bits(got).ToString("X8") + ") fast. "
-                + "This is a hard failure on purpose: refusing to run is correct, producing a different "
-                + "world silently is not. Report the machine's CPU and .NET version.");
+        private static InvalidOperationException Diverged(string which, bool vectorPath, float x, float y, float want, float got)
+            => new InvalidOperationException(DivergenceMessage(which, vectorPath, x, y, want, got));
+
+        /// <summary>
+        /// The sentence a divergence stops the process with. A VECTOR path that differs leaves the
+        /// scalar reference path, which the check has just passed, so the sentence names the way to keep
+        /// working bit-exactly (<c>--simd scalar</c>) and the report to send, which under that switch
+        /// starts, proves the vector path separately and prints where it differs. The byte-table scalar
+        /// differing leaves nothing to fall back to. Public so the tests can read what a user would.
+        /// </summary>
+        public static string DivergenceMessage(string which, bool vectorPath, float x, float y, float want, float got)
+            => "SeedLab: the " + which + " Perlin path does not agree with the reference transcription on "
+               + "this machine, so world generation here would NOT be bit-exact. "
+               + "PerlinNoise(" + R(x) + ", " + R(y) + ") = " + R(want) + " (0x" + Bits(want).ToString("X8") + ")"
+               + " reference, " + R(got) + " (0x" + Bits(got).ToString("X8") + ") fast. "
+               + "This is a hard failure on purpose: refusing to run is correct, producing a different "
+               + "world silently is not. "
+               + (vectorPath
+                   ? "SeedLab still runs bit-exactly here on the scalar path: add --simd scalar to the vseed command "
+                     + "(or set " + SimdDispatch.EnvironmentVariable + "=scalar for the other tools). Please send the output of "
+                     + "'vseed --simd scalar selftest --report', which proves the vector path separately and prints where it "
+                     + "differs, with the machine's CPU and .NET version."
+                   : "The scalar path is the reference itself, so there is no path to fall back to. Report the machine's "
+                     + "CPU and .NET version.");
 
         private static string R(float f) => f.ToString("R", CultureInfo.InvariantCulture);
 

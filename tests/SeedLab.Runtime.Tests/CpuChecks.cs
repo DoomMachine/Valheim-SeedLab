@@ -141,6 +141,90 @@ namespace SeedLab.RuntimeTests
             check(DenormalProbe.CheckCurrentThread() == null, "this thread produces and reads subnormals as IEEE-754 says", "");
             SelfTestSuiteResult dn = new DenormalProbe().Run(CancellationToken.None);
             check(dn.Passed && dn.Checks == 8, "the denormal suite passes on the calling thread and on a new one", dn.ToString());
+
+            // ---- a suite that threw: what a machine report may print --------------------------------------
+            string secret = Path.Combine(Path.GetTempPath(), "someone", "groundtruth", "natives", "natives-libm.json");
+            SelfTestSuiteResult threw = SelfTestSuiteResult.Threw("x", new FileNotFoundException("Could not find file '" + secret + "'.", secret));
+            SelfTestSuiteResult denied = SelfTestSuiteResult.Threw("y", new UnauthorizedAccessException("Access to the path '" + secret + "' is denied."));
+            check(threw.FirstFailure.Contains(secret, StringComparison.Ordinal)
+                  && !threw.ShareableFailure.Contains("someone", StringComparison.Ordinal)
+                  && threw.ShareableFailure.Contains("natives-libm.json", StringComparison.Ordinal)
+                  && !denied.ShareableFailure.Contains("someone", StringComparison.Ordinal)
+                  && denied.ShareableFailure.Contains("UnauthorizedAccessException", StringComparison.Ordinal),
+                  "a suite that threw keeps the whole message for this machine, and only the exception type and the file's "
+                  + "name for a report sent elsewhere (an I/O message names the full path)",
+                  threw.ShareableFailure + " | " + denied.ShareableFailure);
+            SelfTestSuiteResult numbersOnly = new SelfTestSuiteResult("z", 3, 1, "Math.Sin(1) gave 0x1, recorded 0x2", TimeSpan.Zero);
+            check(numbersOnly.ShareableFailure == numbersOnly.FirstFailure, "a golden that did not reproduce shares its line as it is (numbers only)",
+                  numbersOnly.ShareableFailure);
+
+            // ---- the runtime's switches, both prefixes ------------------------------------------------------
+            bool knobs = RuntimeKnobs.IsIsaKnob("DOTNET_EnableAVX512") && RuntimeKnobs.IsIsaKnob("COMPlus_EnableAVX512")
+                         && RuntimeKnobs.IsIsaKnob("complus_enableavx2") && RuntimeKnobs.IsIsaKnob("DOTNET_EnableAVX")
+                         && RuntimeKnobs.IsIsaKnob("DOTNET_EnableSSE42") && RuntimeKnobs.IsIsaKnob("DOTNET_EnableAVX10v2")
+                         && RuntimeKnobs.IsIsaKnob("DOTNET_EnableAPX") && RuntimeKnobs.IsIsaKnob("COMPlus_EnableEmbeddedBroadcast")
+                         && RuntimeKnobs.IsIsaKnob("DOTNET_PreferredVectorBitWidth") && RuntimeKnobs.IsIsaKnob("COMPlus_MaxVectorTBitWidth")
+                         && !RuntimeKnobs.IsIsaKnob("DOTNET_EnableDiagnostics") && !RuntimeKnobs.IsIsaKnob("DOTNET_EnableEventPipe")
+                         && !RuntimeKnobs.IsIsaKnob("COMPlus_EnableWriteXorExecute") && !RuntimeKnobs.IsIsaKnob("DOTNET_gcServer")
+                         && !RuntimeKnobs.IsIsaKnob("SEEDLAB_SIMD") && !RuntimeKnobs.IsIsaKnob("EnableAVX2");
+            check(knobs, "every code-generation switch is recognised under both prefixes, any case, and the diagnostics ones are not",
+                  "DOTNET_/COMPlus_ Enable*, PreferredVectorBitWidth, MaxVectorTBitWidth");
+            Dictionary<string, string?> childEnv = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["COMPlus_EnableAVX512"] = "0", ["DOTNET_EnableHWIntrinsic"] = "0", ["PATH"] = "x", ["DOTNET_EnableDiagnostics"] = "0",
+            };
+            List<string> strip = RuntimeKnobs.In(childEnv);
+            check(strip.Count == 2 && strip.Contains("COMPlus_EnableAVX512") && strip.Contains("DOTNET_EnableHWIntrinsic"),
+                  "a child's environment gives up exactly its code-generation switches", string.Join(", ", strip));
+            IReadOnlyList<(string Name, string Value)> set = RuntimeKnobs.Set();
+            check(set.Count == 0, "no code-generation switch is set in this test's own environment (the matrices would refuse)",
+                  set.Count == 0 ? "none" : set[0].Name + "=" + set[0].Value);
+
+            // ---- CPUID against the runtime ------------------------------------------------------------------
+            CpuIdFeatures? cf = CpuIdFeatures.Read();
+            if (cf == null)
+            {
+                check(!System.Runtime.Intrinsics.X86.X86Base.IsSupported, "CPUID cannot be read only where x86 intrinsics are off", "");
+            }
+            else
+            {
+                Dictionary<string, string> runtime = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["avx"] = Flag(System.Runtime.Intrinsics.X86.Avx.IsSupported),
+                    ["fma"] = Flag(System.Runtime.Intrinsics.X86.Fma.IsSupported),
+                    ["avx2"] = Flag(System.Runtime.Intrinsics.X86.Avx2.IsSupported),
+                    ["avx512f"] = Flag(System.Runtime.Intrinsics.X86.Avx512F.IsSupported),
+                    ["avx512bw"] = Flag(System.Runtime.Intrinsics.X86.Avx512BW.IsSupported),
+                    ["avx512vbmi"] = Flag(System.Runtime.Intrinsics.X86.Avx512Vbmi.IsSupported),
+                };
+                List<string> off = cf.Disagreements(runtime);
+                List<string> on = new List<string>();
+                foreach ((string name, bool value) in cf.Bits()) if (value) on.Add(name);
+                check(off.Count == 0, "this unswitched runtime reports exactly what the processor's CPUID bits imply",
+                      off.Count == 0 ? string.Join(" ", on) : string.Join("; ", off));
+
+                if (cf.ExpectedFacts()["avx512f"] == "1")
+                {
+                    Dictionary<string, string> masked = new Dictionary<string, string>(runtime) { ["avx512f"] = "0", ["avx512bw"] = "0", ["avx512vbmi"] = "0" };
+                    List<string> caught = cf.Disagreements(masked);
+                    check(caught.Count >= 2 && caught[0].Contains("switch", StringComparison.Ordinal),
+                          "a runtime with AVX-512 switched off (as COMPlus_EnableAVX512=0 left in a shell does) disagrees with CPUID, naming the cause",
+                          caught.Count > 0 ? caught[0] : "not caught");
+                }
+                else
+                {
+                    check(true, "the masked-AVX-512 comparison needs an AVX-512 CPU; not applicable here", "");
+                }
+            }
+
+            // ---- AVX10 in the stamp key -------------------------------------------------------------------------
+            CpuFeatures plain = new CpuFeatures(true, true, true, false, true, false, 32, true, false);
+            CpuFeatures ten2 = new CpuFeatures(true, true, true, false, true, false, 32, true, false, avx10v1: true, avx10v2: true);
+            check(plain.Key == "sse2 avx avx2 fma v32" && ten2.Key == "sse2 avx avx2 avx10v1 avx10v2 fma v32",
+                  "AVX10.1 and AVX10.2 are in the stamp key where the runtime reports them, and a key without them is unchanged",
+                  plain.Key + " | " + ten2.Key);
         }
+
+        private static string Flag(bool b) => b ? "1" : "0";
     }
 }

@@ -235,10 +235,9 @@ namespace SeedLab.WorldGen
         public WorldGeneratorPort(int seed, int worldGenVersion = 2, bool menu = false,
                                   bool deferPregeneration = false)
         {
-            // Profiling: one null test when nothing records (PhaseSink.Current is null on every thread a
-            // profiler has not set up). Write-only - no value below depends on it.
-            PhaseSink? sink = PhaseSink.Current;
-            sink?.Begin(Phase.Construct);
+            // Profiling: one null test per boundary when nothing records (PhaseSink.Current is null on every
+            // thread a profiler has not set up). Write-only - no value below depends on it.
+            PhaseSink.BeginCurrent(Phase.Construct);
 
             m_seed = seed;
             m_version = worldGenVersion;
@@ -273,7 +272,7 @@ namespace SeedLab.WorldGen
             m_riverSeed = rnd.Range(int.MinValue, int.MaxValue);
             m_streamSeed = rnd.Range(int.MinValue, int.MaxValue);
             m_offset4 = (float)rnd.Range(-10000, 10000);
-            sink?.End(Phase.Construct);
+            PhaseSink.EndCurrent(Phase.Construct);
 
             if (!m_menu && !deferPregeneration)
             {
@@ -305,8 +304,7 @@ namespace SeedLab.WorldGen
         [MemberNotNull(nameof(m_riversView), nameof(m_streamsView), nameof(m_riverPointsView))]
         private void Pregenerate(UnityRandom rnd)
         {
-            PhaseSink? sink = PhaseSink.Current;
-            sink?.Begin(Phase.Pregen);
+            PhaseSink.BeginCurrent(Phase.Pregen);
             FindLakes();
             m_rivers = PlaceRivers(rnd);
             m_streams = PlaceStreams(rnd, isDN: false);
@@ -325,10 +323,10 @@ namespace SeedLab.WorldGen
             // 0.89 against 0 rather than last-bit noise. No radius bound can cover that, because the
             // cell is wherever a random draw put it.
 
-            sink?.Begin(Phase.PregenViews);
+            PhaseSink.BeginCurrent(Phase.PregenViews);
             BuildViews();
-            sink?.End(Phase.PregenViews);
-            sink?.End(Phase.Pregen);
+            PhaseSink.EndCurrent(Phase.PregenViews);
+            PhaseSink.EndCurrent(Phase.Pregen);
         }
 
         /// <summary>
@@ -580,8 +578,7 @@ namespace SeedLab.WorldGen
             // Presized: the loops test exactly 157 x 157 = 24,649 candidates and roughly a third pass,
             // so the default List growth would reallocate and copy a dozen times for nothing. Capacity
             // is not observable - it changes no value and no order.
-            PhaseSink? sink = PhaseSink.Current;
-            sink?.Begin(Phase.PregenLakesScan);
+            PhaseSink.BeginCurrent(Phase.PregenLakesScan);
             List<Vec2> list = new List<Vec2>(1 << 13);
             for (float z = -10000f; z <= 10000f; z = (float)((double)z + 128.0))
             {
@@ -593,10 +590,10 @@ namespace SeedLab.WorldGen
                     }
                 }
             }
-            sink?.End(Phase.PregenLakesScan);
-            sink?.Begin(Phase.PregenLakesMerge);
+            PhaseSink.EndCurrent(Phase.PregenLakesScan);
+            PhaseSink.BeginCurrent(Phase.PregenLakesMerge);
             m_lakes = MergePoints(list, 800f);
-            sink?.End(Phase.PregenLakesMerge);
+            PhaseSink.EndCurrent(Phase.PregenLakesMerge);
         }
 
         /// <summary>
@@ -801,8 +798,7 @@ namespace SeedLab.WorldGen
         /// </summary>
         private List<River> PlaceRivers(UnityRandom rnd)
         {
-            PhaseSink? sink = PhaseSink.Current;
-            sink?.Begin(Phase.PregenRiversSearch);
+            PhaseSink.BeginCurrent(Phase.PregenRiversSearch);
             (int, int, int, int) saved = rnd.GetState();
             rnd.InitState(m_riverSeed);
             List<River> list = new List<River>();
@@ -834,10 +830,10 @@ namespace SeedLab.WorldGen
                     work.RemoveAt(0);
                 }
             }
-            sink?.End(Phase.PregenRiversSearch);
-            sink?.Begin(Phase.PregenRiversRender);
+            PhaseSink.EndCurrent(Phase.PregenRiversSearch);
+            PhaseSink.BeginCurrent(Phase.PregenRiversRender);
             RenderRivers(rnd, list);
-            sink?.End(Phase.PregenRiversRender);
+            PhaseSink.EndCurrent(Phase.PregenRiversRender);
             rnd.SetState(saved);
             return list;
         }
@@ -918,10 +914,9 @@ namespace SeedLab.WorldGen
         /// </summary>
         private List<River> PlaceStreams(UnityRandom rnd, bool isDN)
         {
-            PhaseSink? sink = PhaseSink.Current;
             Phase search = isDN ? Phase.PregenStreams2Search : Phase.PregenStreams1Search;
             Phase render = isDN ? Phase.PregenStreams2Render : Phase.PregenStreams1Render;
-            sink?.Begin(search);
+            PhaseSink.BeginCurrent(search);
             (int, int, int, int) saved = rnd.GetState();
             rnd.InitState(m_streamSeed);
             List<River> list = new List<River>();
@@ -947,10 +942,10 @@ namespace SeedLab.WorldGen
                     }
                 }
             }
-            sink?.End(search);
-            sink?.Begin(render);
+            PhaseSink.EndCurrent(search);
+            PhaseSink.BeginCurrent(render);
             RenderRivers(rnd, list, isDN ? RiverAdd.OnlyDeepNorth : RiverAdd.SkipDeepNorth);
-            sink?.End(render);
+            PhaseSink.EndCurrent(render);
             rnd.SetState(saved);
             return list;
         }

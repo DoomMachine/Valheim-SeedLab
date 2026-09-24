@@ -410,6 +410,10 @@ instruction sets, the vector path SeedLab chose and why, the C runtime's version
 self-test run there and then, and world fingerprints of 8 seeds compared with the reference machine's.
 It needs neither `groundtruth\` nor `data\`, contains no machine name, user name or path, and is what
 to send when SeedLab runs on a CPU it has not been tested on ([`docs\cpu-compatibility.md`](docs/cpu-compatibility.md)).
+If SeedLab stops at start-up because its AVX2 path disagrees with the reference on your CPU, it still
+runs bit-exactly on the scalar path: send `vseed --simd scalar selftest --report` instead, which then
+starts, proves the AVX2 path separately and prints where it differs. `--report` runs the self-test
+even when `--skip-self-test` is given.
 `bench` measures each stage on your machine, so any throughput estimate is anchored to a number you
 watched being produced:
 
@@ -440,11 +444,16 @@ angles, river lookups), and `--out profile.json` keeps the result (`seedlab-prof
   of 64 seeds - every biome, height, river point and placed location - are bit-identical with the
   profiler off, on, and on with counters.
 - **It says when its numbers are not measurements.** It watches the machine for 30 s first and the
-  whole time it runs; another `vseed`, a running Valheim, a busy build or a heavy background load
-  marks the run **TAINTED**, naming what it saw. A tainted profile is a smoke test, not a figure to
-  quote - `docs\measurements.md` stays the only source of throughput numbers.
+  whole time it runs; another `vseed` or SeedLab test, a running Valheim, a busy build or a heavy
+  background load marks the run **TAINTED**, naming what it saw. The load is judged on the whole
+  machine, so a protected process whose own CPU time Windows will not show (an antivirus scan, the
+  search indexer, an update) counts too, and a baseline that was itself busy does not raise the limit.
+  A tainted profile is a smoke test, not a figure to quote - `docs\measurements.md` stays the only
+  source of throughput numbers.
 - `--overhead` measures what the profiler itself costs (and, with `--baseline <another vseed.exe>`,
-  what this build costs with the profiler off against another build).
+  what this build costs with the profiler off against another build). It times the counters itself, so
+  it refuses `--counters` and a `SEEDLAB_PROFILE_COUNTERS=1` left in the environment; every other
+  command prints a warning when that variable is set, because it slows every world.
 
 ---
 

@@ -116,12 +116,18 @@ namespace SeedLab.Cli.Infra
         {
             System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
             int checks = 0, failures = 0;
-            string first = "";
+            string first = "", firstShareable = "";
 
-            void Note(string line)
+            // shareable: the same line without an exception message, which can carry a full path (the
+            // machine report prints this one; the ordinary self-test output keeps the whole line).
+            void Note(string line, string? shareable = null)
             {
                 failures++;
-                if (first.Length == 0) first = line;
+                if (first.Length == 0)
+                {
+                    first = line;
+                    firstShareable = shareable ?? line;
+                }
             }
 
             // ---- 1. Mathf.PerlinNoise, the single largest body of recorded values -----------------
@@ -168,7 +174,8 @@ namespace SeedLab.Cli.Infra
             catch (Exception ex)
             {
                 checks++;
-                Note("the Perlin goldens could not be read: " + ex.GetType().Name + ": " + ex.Message);
+                Note("the Perlin goldens could not be read: " + ex.GetType().Name + ": " + ex.Message,
+                     "the Perlin goldens (natives-perlin.*) could not be read: " + ex.GetType().Name);
             }
 
             // ---- 2. libm, as Mono produced it, plus the WorldAngle composite ----------------------
@@ -216,7 +223,8 @@ namespace SeedLab.Cli.Infra
             catch (Exception ex)
             {
                 checks++;
-                Note("the libm goldens could not be read: " + ex.GetType().Name + ": " + ex.Message);
+                Note("the libm goldens could not be read: " + ex.GetType().Name + ": " + ex.Message,
+                     "the libm goldens (natives-libm.json) could not be read: " + ex.GetType().Name);
             }
 
             // ---- 3. GetStableHashCode over every prefab name and seed text ------------------------
@@ -250,11 +258,12 @@ namespace SeedLab.Cli.Infra
             catch (Exception ex)
             {
                 checks++;
-                Note("the hash goldens could not be read: " + ex.GetType().Name + ": " + ex.Message);
+                Note("the hash goldens could not be read: " + ex.GetType().Name + ": " + ex.Message,
+                     "the hash goldens (natives-hash.json) could not be read: " + ex.GetType().Name);
             }
 
             sw.Stop();
-            return new SelfTestSuiteResult(Name, checks, failures, first, sw.Elapsed);
+            return new SelfTestSuiteResult(Name, checks, failures, first, sw.Elapsed, firstShareable);
         }
 
         // The goldens carry both a decimal and a "bits" form; the bits are authoritative (DumpFormat:

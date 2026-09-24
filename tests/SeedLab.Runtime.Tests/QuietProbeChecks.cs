@@ -9,7 +9,8 @@ namespace SeedLab.RuntimeTests
     /// <summary>
     /// The quiet-machine probe: the verdict rule on made-up processes (exact), then the live probe on
     /// this machine - it must never throw, must leave itself out, and must see a process it was told to
-    /// watch while that process runs.
+    /// watch while that process runs. A made-up whole-machine reader drives the parts that depend on
+    /// load the probe cannot attribute to a readable process.
     /// </summary>
     public static class QuietProbeChecks
     {
@@ -32,7 +33,7 @@ namespace SeedLab.RuntimeTests
             {
                 new ProcessCpu("vseed", 12, 0.0, WatchedKind.SeedLab),
             }, 1, 0, 0, th);
-            check(vseed.Tainted && vseed.Reasons[0].Contains("another vseed"),
+            check(vseed.Tainted && vseed.Reasons[0].Contains("another SeedLab program"),
                   "another vseed taints by being there, even idle", string.Join("; ", vseed.Reasons));
 
             ProbeTick game = QuietMachineProbe.Evaluate(t0, t1, new[]
@@ -60,7 +61,7 @@ namespace SeedLab.RuntimeTests
             {
                 new ProcessCpu("chrome", 15, 7.0, WatchedKind.None),
             }, 1, 0, 0.6, th);
-            check(!noisyDesk.Tainted, "the limit rises to 3x a recorded baseline (1.4 cores < 3 x 0.6)",
+            check(!noisyDesk.Tainted, "the limit rises to 3x a quiet recorded baseline (1.4 cores < 3 x 0.6)",
                   noisyDesk.Tainted ? string.Join("; ", noisyDesk.Reasons) : "quiet against its own baseline");
 
             ProbeTick twice = QuietMachineProbe.Evaluate(t0, t1, new[]
@@ -76,6 +77,61 @@ namespace SeedLab.RuntimeTests
                   && QuietMachineProbe.Classify("notepad") == WatchedKind.None,
                   "process names are matched case-insensitively", "vseed, valheim, dotnet, VBCSCompiler, MSBuild");
 
+            // ---- SeedLab's own gates and tests are SeedLab programs -------------------------------------
+            bool gates = true;
+            foreach (string n in new[] { "SeedLab.Acceptance.Tests", "SeedLab.Tests", "SeedLab.Runtime.Tests", "SeedLab.Search.Tests",
+                                         "SeedLab.Search.Safety.Tests", "SeedLab.GoldenCheck", "SeedLab.LocationLab", "seedlab.goldencheck" })
+            {
+                if (QuietMachineProbe.Classify(n) != WatchedKind.SeedLab) gates = false;
+            }
+
+            check(gates && QuietMachineProbe.Classify("SeedLabX") == WatchedKind.None && QuietMachineProbe.Classify("MySeedLab.Tests") == WatchedKind.None,
+                  "the repository's gate and test executables (SeedLab.*) are watched like vseed; a name that only resembles them is not",
+                  "SeedLab.Search.Tests, SeedLab.GoldenCheck, SeedLab.LocationLab, ...");
+            ProbeTick gateTick = QuietMachineProbe.Evaluate(t0, t1, new[]
+            {
+                new ProcessCpu("SeedLab.Search.Tests", 3048, 0.9 * 5, QuietMachineProbe.Classify("SeedLab.Search.Tests")),
+            }, 1, 0, 0, th);
+            check(gateTick.Tainted && gateTick.Reasons[0].Contains("SeedLab.Search.Tests"),
+                  "a single-threaded SeedLab test at 0.9 cores taints by being there, although it is under the 1-core limit",
+                  string.Join("; ", gateTick.Reasons));
+
+            // ---- processes whose CPU time cannot be read ------------------------------------------------
+            ProbeTick hiddenGame = QuietMachineProbe.Evaluate(t0, t1, new[]
+            {
+                new ProcessCpu("valheim", 20, 0, WatchedKind.Game, measured: false),
+            }, 1, 1, 0, th, machineForeignCoreSeconds: 0.1);
+            check(hiddenGame.Tainted && hiddenGame.Reasons[0].Contains("Valheim"),
+                  "a watched process whose CPU time is not readable still taints by being there (its name is kept)",
+                  string.Join("; ", hiddenGame.Reasons));
+
+            ProbeTick unknown = QuietMachineProbe.Evaluate(t0, t1, new[]
+            {
+                new ProcessCpu("explorer", 10, 0.2, WatchedKind.None),
+                new ProcessCpu("MsMpEng", 21, 0, WatchedKind.None, measured: false),
+            }, 2, 1, 0, th, machineForeignCoreSeconds: null);
+            check(unknown.Tainted && unknown.Reasons[0].Contains("could not be measured"),
+                  "unreadable processes with no whole-machine figure: the load is unknown, which taints - never 'quiet'",
+                  string.Join("; ", unknown.Reasons));
+
+            ProbeTick protectedBusy = QuietMachineProbe.Evaluate(t0, t1, new[]
+            {
+                new ProcessCpu("explorer", 10, 0.2, WatchedKind.None),
+                new ProcessCpu("MsMpEng", 21, 0, WatchedKind.None, measured: false),
+            }, 2, 1, 0, th, machineForeignCoreSeconds: 6.0);
+            check(protectedBusy.Tainted && protectedBusy.Reasons[0].StartsWith("the machine as a whole", StringComparison.Ordinal)
+                  && Math.Abs(protectedBusy.ForeignCores - 1.2) < 1e-9,
+                  "an antivirus scan the process list cannot read (1.2 cores of whole-machine load, 0.04 readable) taints",
+                  string.Join("; ", protectedBusy.Reasons));
+
+            ProbeTick protectedIdle = QuietMachineProbe.Evaluate(t0, t1, new[]
+            {
+                new ProcessCpu("explorer", 10, 0.2, WatchedKind.None),
+                new ProcessCpu("MsMpEng", 21, 0, WatchedKind.None, measured: false),
+            }, 2, 1, 0, th, machineForeignCoreSeconds: 0.6);
+            check(!protectedIdle.Tainted, "unreadable processes are no fault when the whole machine was under the limit",
+                  protectedIdle.Tainted ? string.Join("; ", protectedIdle.Reasons) : "0.12 cores, whole machine");
+
             // ---- live ------------------------------------------------------------------------------
             QuietBaseline b = QuietMachineProbe.TakeBaseline(TimeSpan.FromMilliseconds(500));
             check(b.Tick.Processes > 0 && b.ForeignCoreSeconds >= 0,
@@ -84,7 +140,8 @@ namespace SeedLab.RuntimeTests
                   + b.ForeignCoreSeconds.ToString("F2") + " foreign core-s in " + b.Seconds.ToString("F2") + " s");
             bool self = false;
             foreach (ProcessCpu p in b.Tick.Top) if (p.Pid == Environment.ProcessId) self = true;
-            check(!self, "the probe leaves its own process out", "pid " + Environment.ProcessId);
+            foreach (ProcessCpu p in b.Tick.Watched) if (p.Pid == Environment.ProcessId) self = true;
+            check(!self, "the probe leaves its own process out (this test is itself a SeedLab.* program)", "pid " + Environment.ProcessId);
 
             // A process it is told to watch, started while it runs: 'ping' stands in for a foreign vseed.
             IReadOnlyList<(string, WatchedKind)> watch = new[] { ("PING", WatchedKind.SeedLab) };
@@ -99,9 +156,11 @@ namespace SeedLab.RuntimeTests
 
                 probe.Stop();
                 bool tainted = probe.TaintedBetween(a, DateTime.UtcNow, out IReadOnlyList<string> reasons);
-                check(tainted && reasons.Count > 0 && reasons[0].Contains("ping", StringComparison.OrdinalIgnoreCase),
+                bool pingSeen = false;
+                foreach (string r in reasons) if (r.Contains("ping", StringComparison.OrdinalIgnoreCase)) pingSeen = true;
+                check(tainted && pingSeen,
                       "a watched process running during the probe marks that time tainted, by name",
-                      tainted ? reasons[0] : "not seen in " + probe.Ticks.Count + " samples");
+                      tainted ? string.Join("; ", reasons) : "not seen in " + probe.Ticks.Count + " samples");
                 check(probe.Ticks.Count >= 3, "the probe samples on its interval and once more on Stop",
                       probe.Ticks.Count + " samples in ~1 s at 200 ms");
             }
@@ -114,6 +173,11 @@ namespace SeedLab.RuntimeTests
                     if (ping != null) probe.Exclude(ping.Id);
                     Thread.Sleep(900);
                     if (ping != null && !ping.HasExited) ping.Kill();
+                    if (ping != null)
+                    {
+                        ping.WaitForExit();
+                        probe.ChildExited(ping.Id, ping.TotalProcessorTime);
+                    }
                 }
 
                 probe.Stop();
@@ -123,6 +187,90 @@ namespace SeedLab.RuntimeTests
                 check(!pingSeen, "a child the caller excluded does not taint the run (its own timing legs)",
                       pingSeen ? string.Join("; ", reasons) : "excluded");
             }
+
+            // ---- time no sample covers is not quiet ----------------------------------------------------
+            using (QuietMachineProbe probe = QuietMachineProbe.Start(TimeSpan.FromMilliseconds(200), watched: Array.Empty<(string, WatchedKind)>(),
+                                                                     thresholds: new QuietThresholds { ForeignCoresMax = 1e6 },
+                                                                     machine: () => TimeSpan.Zero))
+            {
+                Thread.Sleep(450);
+                probe.Stop();
+                probe.TaintedBetween(probe.StartedUtc, DateTime.UtcNow, out IReadOnlyList<string> covered);
+                probe.TaintedBetween(probe.StartedUtc.AddSeconds(-5), DateTime.UtcNow, out IReadOnlyList<string> before);
+                check(!new List<string>(covered).Contains(QuietMachineProbe.NotObserved) && new List<string>(before).Contains(QuietMachineProbe.NotObserved),
+                      "time before the probe started (or a sample that failed) is reported as not observed, never as quiet",
+                      "watched span: " + (covered.Count == 0 ? "clean" : string.Join("; ", covered)) + "; with 5 s before: "
+                      + string.Join("; ", before));
+            }
+
+            // ---- a busy baseline does not raise the limit ------------------------------------------------
+            // A made-up whole-machine reader: 1,000 core-seconds of load the process list cannot see.
+            long calls = 0;
+            MachineCpuReader heavy = () => TimeSpan.FromSeconds(1000.0 * Interlocked.Increment(ref calls));
+            QuietBaseline busy = QuietMachineProbe.TakeBaseline(TimeSpan.FromMilliseconds(300),
+                                                                watched: Array.Empty<(string, WatchedKind)>(), machine: heavy);
+            using (QuietMachineProbe probe = QuietMachineProbe.Start(TimeSpan.FromSeconds(60), baseline: busy,
+                                                                     watched: Array.Empty<(string, WatchedKind)>(), machine: () => TimeSpan.Zero))
+            {
+                probe.Stop();
+                check(busy.Tainted && !probe.BaselineRaisesLimit && probe.LimitCores == th.ForeignCoresMax,
+                      "a baseline that was itself busy does not raise the in-run limit (it stays at 1 core, not 3x its load)",
+                      "baseline " + busy.ForeignCores.ToString("F0") + " cores, tainted " + busy.Tainted + "; limit " + probe.LimitCores);
+            }
+
+            QuietBaseline calm = QuietMachineProbe.TakeBaseline(TimeSpan.FromMilliseconds(300), new QuietThresholds { ForeignCoresMax = 1e6 },
+                                                                Array.Empty<(string, WatchedKind)>(), () => TimeSpan.Zero);
+            using (QuietMachineProbe probe = QuietMachineProbe.Start(TimeSpan.FromSeconds(60), baseline: calm,
+                                                                     watched: Array.Empty<(string, WatchedKind)>(), machine: () => TimeSpan.Zero))
+            {
+                probe.Stop();
+                check(!calm.Tainted && probe.BaselineRaisesLimit
+                      && Math.Abs(probe.LimitCores - Math.Max(th.ForeignCoresMax, th.BaselineMultiple * calm.ForeignCores)) < 1e-12,
+                      "a quiet baseline raises the limit to 3x its load (never below 1 core)",
+                      "baseline " + calm.ForeignCores.ToString("F3") + " cores; limit " + probe.LimitCores.ToString("F3"));
+            }
+
+            // ---- the last, short sample is judged with the one before it ----------------------------------
+            // Load appears only in the final reading: 1,000 core-seconds. Judged over its own 0.4 s or less
+            // that is at least 2,500 cores; over the ~1.6 s of the sample before it plus itself, about 625.
+            // The limit is set between the two, so the verdict says which window the rule used.
+            QuietThresholds tail = new QuietThresholds { ForeignCoresMax = 1500 };
+            ProbeTick? lastMerged = TailProbe(tail, out int samplesMerged);
+            ProbeTick? lastAlone = TailProbe(new QuietThresholds { ForeignCoresMax = 1500, MinTickSeconds = 0.001 }, out _);
+            bool mergedMachine = lastMerged != null && HasMachineReason(lastMerged);
+            bool aloneMachine = lastAlone != null && HasMachineReason(lastAlone);
+            check(lastMerged != null && lastAlone != null && !mergedMachine && aloneMachine,
+                  "a final sample shorter than 1 s is judged together with the sample before it, so the ~15.6 ms steps "
+                  + "CPU time is charged in cannot read as a burst (the same tail judged alone does)",
+                  "merged: " + (lastMerged == null ? "no sample" : lastMerged.Seconds.ToString("F3") + " s, " + (mergedMachine ? "tainted" : "clean"))
+                  + "; alone: " + (lastAlone == null ? "no sample" : lastAlone.Seconds.ToString("F3") + " s, " + (aloneMachine ? "tainted" : "clean"))
+                  + "; " + samplesMerged + " samples");
+        }
+
+        private static bool HasMachineReason(ProbeTick t)
+        {
+            foreach (string r in t.Reasons) if (r.StartsWith("the machine as a whole", StringComparison.Ordinal)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// A probe with one regular sample, then a stop at most ~0.4 s later, with a made-up machine
+        /// reader that shows 1,000 core-seconds of load only in the final reading. Returns the final sample.
+        /// </summary>
+        private static ProbeTick? TailProbe(QuietThresholds thresholds, out int samples)
+        {
+            int jump = 0;
+            MachineCpuReader reader = () => TimeSpan.FromSeconds(Volatile.Read(ref jump) == 1 ? 1000.0 : 0.0);
+            using QuietMachineProbe probe = QuietMachineProbe.Start(TimeSpan.FromMilliseconds(1200), thresholds: thresholds,
+                                                                    watched: Array.Empty<(string, WatchedKind)>(), machine: reader);
+            // One regular sample at ~1.2 s (0.4 s to read ~400 processes on a busy machine), then stop at
+            // ~1.6 s, before the loop's next sample at ~2.4 s.
+            Thread.Sleep(1600);
+            Volatile.Write(ref jump, 1);
+            probe.Stop();
+            IReadOnlyList<ProbeTick> ticks = probe.Ticks;
+            samples = ticks.Count;
+            return ticks.Count >= 2 ? ticks[ticks.Count - 1] : null;
         }
 
         private static Process? StartPing()

@@ -97,7 +97,7 @@ namespace SeedLab.Runtime.Hardware
         private static CpuFeatures ProbeFeatures()
         {
             bool sse2 = false, avx = false, avx2 = false, avx512 = false, fma = false, adv = false;
-            bool avx512bw = false, avx512vbmi = false;
+            bool avx512bw = false, avx512vbmi = false, avx10v1 = false, avx10v2 = false;
             try
             {
                 sse2 = Sse2.IsSupported;
@@ -111,6 +111,14 @@ namespace SeedLab.Runtime.Hardware
             }
             catch (Exception) { /* an ISA class that will not load simply reads as absent */ }
 
+            // Separately: a runtime that cannot ask about AVX10 must not lose the flags above.
+            try
+            {
+                avx10v1 = Avx10v1.IsSupported;
+                avx10v2 = Avx10v2.IsSupported;
+            }
+            catch (Exception) { }
+
             int width = 16;
             bool v256 = false, v512 = false;
             try
@@ -121,7 +129,7 @@ namespace SeedLab.Runtime.Hardware
             }
             catch (Exception) { }
 
-            return new CpuFeatures(sse2, avx, avx2, avx512, fma, adv, width, v256, v512, avx512bw, avx512vbmi);
+            return new CpuFeatures(sse2, avx, avx2, avx512, fma, adv, width, v256, v512, avx512bw, avx512vbmi, avx10v1, avx10v2);
         }
 
         private static (int?, string) ProbePhysicalCores(HardwareProbeOptions o)

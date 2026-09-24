@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using SeedLab.Runtime.Hardware;
 
 namespace SeedLab.RuntimeTests
 {
@@ -25,6 +26,14 @@ namespace SeedLab.RuntimeTests
     /// in a fresh cache folder so no stamp is reused, and must pass it. The <c>SEEDLAB_SIMD_EXPECT</c>
     /// hook is checked both ways: a true assertion lets the child start, a false one and an unknown name
     /// stop it.</para>
+    ///
+    /// <para><b>K0 is proved to be the default, not assumed.</b> Which levels exist here is derived from
+    /// the K0 child's own flags, so a switch left in this process's environment would make K0 a lowered
+    /// level and every level above it "not applicable" - and the matrix would pass. So the matrix refuses
+    /// to start while any runtime code-generation switch is set (both prefixes, <c>DOTNET_</c> and
+    /// <c>COMPlus_</c>; <see cref="RuntimeKnobs"/>), takes every such switch out of each child's
+    /// environment before setting its own, and compares K0's flags with the processor's CPUID bits
+    /// (<see cref="CpuIdFeatures"/>), which no switch can change.</para>
     /// </summary>
     public static class KnobMatrix
     {
@@ -55,6 +64,18 @@ namespace SeedLab.RuntimeTests
             }
 
             Console.WriteLine("  vseed    " + exe);
+            IReadOnlyList<(string Name, string Value)> leaked = RuntimeKnobs.Set();
+            if (leaked.Count > 0)
+            {
+                foreach ((string name, string value) in leaked)
+                {
+                    Console.WriteLine("FAIL  " + name + "=" + value + " is set in this process; K0 must be the runtime's unswitched state - unset it");
+                }
+
+                return 1;
+            }
+
+            CpuIdFeatures? cpuid = CpuIdFeatures.Read();
             string cache = Path.Combine(Path.GetTempPath(), "seedlab-knobs-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(cache);
             try
@@ -64,6 +85,17 @@ namespace SeedLab.RuntimeTests
                 Console.WriteLine("  K0       " + Line(k0));
                 bool has2 = k0.Facts["avx2"] == "1", has512 = k0.Facts["avx512f"] == "1";
                 bool vbmi = k0.Facts["avx512vbmi"] == "1", acc512 = k0.Facts["v512acc"] == "1";
+                bool hasAvx = k0.Facts["avx"] == "1";
+                if (cpuid == null)
+                {
+                    Check(false, "K0 default: the processor's CPUID bits can be read in this process", "X86Base.CpuId unavailable");
+                }
+                else
+                {
+                    List<string> off = cpuid.Disagreements(k0.Facts);
+                    Check(off.Count == 0, "K0 default: the runtime reports exactly what the CPUID bits imply (no switch leaked in)",
+                          off.Count == 0 ? CpuIdSummary(cpuid) : string.Join("; ", off));
+                }
                 Check(k0.SelfTest is "Passed" or "PassedCached", "K0 default: the machine self-test passes", k0.SelfTest);
                 Check(k0.Facts["active"] == (has2 ? "avx2" : "scalar") && k0.Perlin8 == has2,
                       "K0 default: the active path is the widest built kernel the hardware allows", Line(k0));
@@ -73,10 +105,14 @@ namespace SeedLab.RuntimeTests
                 List<(string Id, Child C)> all = new List<(string, Child)> { ("K0", k0) };
 
                 // ---- the runtime's own knobs -----------------------------------------------------------
-                Level(exe, cache, all, "K3", "DOTNET_EnableAVX512", "0", has512, k0,
-                      c => Is(c, "avx512f", "0") && Is(c, "avx512bw", "0") && Is(c, "avx512vbmi", "0") && Same(c, k0, "avx2")
-                           && Is(c, "hardware", has2 ? "avx2" : "scalar") && Is(c, "active", has2 ? "avx2" : "scalar"),
+                Func<Child, bool> k3 = c => Is(c, "avx512f", "0") && Is(c, "avx512bw", "0") && Is(c, "avx512vbmi", "0") && Same(c, k0, "avx2")
+                                            && Is(c, "hardware", has2 ? "avx2" : "scalar") && Is(c, "active", has2 ? "avx2" : "scalar");
+                Level(exe, cache, all, "K3", "DOTNET_EnableAVX512", "0", has512, k0, k3,
                       "AVX-512 off, AVX2 untouched, path " + (has2 ? "avx2" : "scalar"));
+                // The same switch under the older prefix: the runtime still honours it, which is why the
+                // harnesses strip and refuse both.
+                Level(exe, cache, all, "K3c", "COMPlus_EnableAVX512", "0", has512, k0, k3,
+                      "the COMPlus_ prefix is honoured too: the same state as K3");
                 Level(exe, cache, all, "K4", "DOTNET_EnableAVX512v2", "0", vbmi, k0,
                       c => Is(c, "avx512vbmi", "0") && Same(c, k0, "avx512f") && Same(c, k0, "avx512bw") && Same(c, k0, "active"),
                       "VBMI off, AVX-512 F/BW kept - the Skylake-X shape");
@@ -89,6 +125,13 @@ namespace SeedLab.RuntimeTests
                 Level(exe, cache, all, "K7", "DOTNET_EnableHWIntrinsic", "0", k0.Facts["x86base"] == "1", k0,
                       c => AllFlagsOff(c) && Is(c, "active", "scalar") && !c.Perlin8,
                       "every intrinsic off (x86base, SSE..AVX-512, all Vector acceleration), scalar path");
+                // The shape of a CPU without AVX (Celeron and Pentium to Comet Lake, the Atom line, Jaguar):
+                // SSE4.2 and 128-bit vectors only, AVX-encoded instructions nowhere.
+                Level(exe, cache, all, "K10", "DOTNET_EnableAVX", "0", hasAvx, k0,
+                      c => Is(c, "avx", "0") && Is(c, "avx2", "0") && Is(c, "fma", "0") && Is(c, "avx512f", "0")
+                           && Same(c, k0, "sse42") && Is(c, "v128acc", "1") && Is(c, "v256acc", "0") && Is(c, "vector_bytes", "16")
+                           && Is(c, "active", "scalar") && !c.Perlin8,
+                      "AVX and everything above it off, SSE4.2 and 128-bit vectors kept (Vector<T> 16 bytes) - the no-AVX CPU's shape, scalar path");
 
                 // ---- SeedLab's request ------------------------------------------------------------------
                 Level(exe, cache, all, "K8", "SEEDLAB_SIMD", "scalar", has2, k0,
@@ -141,6 +184,7 @@ namespace SeedLab.RuntimeTests
                 foreach ((string id, Child c) in all)
                 {
                     if (id == "K2" || id == "K9") continue;     // same flags and path as K0 by design; the request differs
+                    if (id == "K3c") continue;                  // the same state as K3 by design; only the prefix differs
                     states++;
                     keys.Add(c.StampKey);
                 }
@@ -171,7 +215,9 @@ namespace SeedLab.RuntimeTests
             if (!applicable)
             {
                 _na++;
-                Console.WriteLine("  [n/a ] " + label + " - this CPU lacks what the knob turns off, so no effect can be shown");
+                // K0 was compared with CPUID above, so reaching here means both say the feature is absent.
+                Console.WriteLine("  [n/a ] " + label + " - this CPU lacks what the knob turns off (the runtime and the "
+                                  + "processor's CPUID bits agree), so no effect can be shown");
                 return;
             }
 
@@ -192,8 +238,15 @@ namespace SeedLab.RuntimeTests
         private static readonly string[] FlagNames =
         {
             "x86base", "sse", "sse2", "sse41", "sse42", "avx", "avx2", "fma", "avx512f", "avx512bw", "avx512cd",
-            "avx512dq", "avx512vbmi", "avx10v1", "avx10v1_v512", "v128acc", "v256acc", "v512acc",
+            "avx512dq", "avx512vbmi", "avx10v1", "avx10v1_v512", "avx10v2", "avx10v2_v512", "v128acc", "v256acc", "v512acc",
         };
+
+        private static string CpuIdSummary(CpuIdFeatures c)
+        {
+            List<string> on = new List<string>();
+            foreach ((string name, bool value) in c.Bits()) if (value) on.Add(name);
+            return "cpuid [" + string.Join(" ", on) + "]";
+        }
 
         private static bool SameFlags(Child c, Child k0)
         {
@@ -253,10 +306,10 @@ namespace SeedLab.RuntimeTests
             psi.ArgumentList.Add("--cache-dir");
             psi.ArgumentList.Add(cache);
 
-            // The parent's own settings must not leak into a configuration that does not name them.
-            foreach (string k in new[] { "DOTNET_EnableAVX512", "DOTNET_EnableAVX512v2", "DOTNET_EnableAVX2",
-                                         "DOTNET_EnableHWIntrinsic", "DOTNET_PreferredVectorBitWidth", "SEEDLAB_SIMD",
-                                         "SEEDLAB_SIMD_EXPECT" })
+            // The parent's own settings must not leak into a configuration that does not name them: every
+            // runtime code-generation switch under either prefix, and SeedLab's own two.
+            foreach (string k in RuntimeKnobs.In(psi.Environment)) psi.Environment.Remove(k);
+            foreach (string k in new[] { "SEEDLAB_SIMD", "SEEDLAB_SIMD_EXPECT", "SEEDLAB_PROFILE_COUNTERS" })
             {
                 psi.Environment.Remove(k);
             }

@@ -137,6 +137,18 @@ namespace SeedLab.Cli.Infra
                 Out.Warn(rt.SelfTest.Message);
             }
 
+            // The profiler's per-point counters are switched by an environment variable that any process
+            // reads. Left set in a shell, it would make every search, bench and page slower with nothing on
+            // screen to say why; 'vseed profile' prints the switch itself, every other command says it here.
+            if (SeedLab.WorldGen.Diagnostics.PhaseClock.CountersOn && !string.Equals(command, "profile", StringComparison.Ordinal))
+            {
+                string line = SeedLab.WorldGen.Diagnostics.PhaseClock.EnvironmentVariable + "=1 is set: the profiler's per-point "
+                              + "counters are ON in this process, so it runs slower than normal (no result changes). Unset the "
+                              + "variable for normal speed.";
+                Out.Warn(line);
+                rt._extra.Add(line);
+            }
+
             return rt;
         }
 

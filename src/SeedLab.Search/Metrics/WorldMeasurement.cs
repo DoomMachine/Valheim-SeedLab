@@ -142,6 +142,18 @@ namespace SeedLab.Search.Metrics
                 }
             }
 
+            MeasurePatches(s, plan);
+        }
+
+        /// <summary>
+        /// The largest-patch flood fills the plan asks for - the last step of <see cref="MeasureBiomes"/>,
+        /// which calls it. Public so that <c>vseed profile</c> can time the flood fill alone after a
+        /// counting pass without patches; the pair then leaves exactly the state one
+        /// <see cref="MeasureBiomes"/> with the patches would, because the counts never read
+        /// <see cref="MeasurementPlan.NeedLargestPatch"/> and the fills read only the sampled biomes.
+        /// </summary>
+        public void MeasurePatches(SeedSampler s, MeasurementPlan plan)
+        {
             for (int bi = 0; bi < 10; bi++)
             {
                 if (plan.NeedLargestPatch[bi]) LargestPatchCells[bi] = LargestComponent(s, bi);

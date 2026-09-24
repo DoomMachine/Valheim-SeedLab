@@ -47,7 +47,9 @@ namespace SeedLab.Cli.Analysis
                 foreach (string r in run.Baseline.Tick.Reasons) _taintReasons.Add("before the run: " + r);
             }
 
-            if (run.Probe != null && run.Probe.TaintedBetween(run.CreatedUtc, run.EndedUtc, out IReadOnlyList<string> reasons))
+            // From the moment the probe started: the baseline before it is judged on its own, above.
+            DateTime watchedFrom = run.Probe != null && run.Probe.StartedUtc > run.CreatedUtc ? run.Probe.StartedUtc : run.CreatedUtc;
+            if (run.Probe != null && run.Probe.TaintedBetween(watchedFrom, run.EndedUtc, out IReadOnlyList<string> reasons))
             {
                 _taintReasons.AddRange(reasons);
             }
@@ -182,6 +184,13 @@ namespace SeedLab.Cli.Analysis
                     }
 
                     for (int c = 0; c < PhaseClock.Capacity; c++) Counters[c] /= n;
+                }
+
+                // A busy baseline taints every section, not only the run: the numbers of a section are what
+                // a consumer reads, and a section of a tainted run must never read "tainted: false".
+                if (run.Baseline != null && run.Baseline.Tainted)
+                {
+                    foreach (string b in run.Baseline.Tick.Reasons) TaintReasons.Add("before the run: " + b);
                 }
 
                 if (run.Probe != null && run.Probe.TaintedBetween(r.StartUtc, r.EndUtc, out IReadOnlyList<string> reasons))
@@ -646,7 +655,8 @@ namespace SeedLab.Cli.Analysis
                 ["tainted"] = _tainted,
                 ["reasons"] = _taintReasons.ConvertAll(r => (object?)r),
                 ["method"] = "per-process TotalProcessorTime deltas, every " + (_run.Probe?.Interval.TotalSeconds ?? 5).ToString(CultureInfo.InvariantCulture)
-                             + " s, excluding this process, Idle and its own timing legs",
+                             + " s, excluding this process, Idle and its own timing legs; and the whole machine's busy time less this "
+                             + "process and its legs, which also counts the processes whose own time cannot be read; the larger decides",
             };
             if (_run.Baseline != null)
             {
@@ -656,9 +666,13 @@ namespace SeedLab.Cli.Analysis
                     ["seconds"] = Math.Round(b.Seconds, 1),
                     ["foreign_core_seconds"] = Math.Round(b.ForeignCoreSeconds, 2),
                     ["foreign_cores"] = Math.Round(b.ForeignCores, 3),
+                    ["process_core_seconds"] = Math.Round(b.Tick.ProcessCoreSeconds, 2),
+                    ["machine_core_seconds"] = b.Tick.MachineCoreSeconds.HasValue ? Math.Round(b.Tick.MachineCoreSeconds.Value, 2) : null,
                     ["processes"] = b.Tick.Processes,
                     ["unreadable"] = b.Tick.Unreadable,
                     ["tainted"] = b.Tainted,
+                    ["reasons"] = new List<string>(b.Tick.Reasons).ConvertAll(r => (object?)r),
+                    ["raises_limit"] = _run.Probe?.BaselineRaisesLimit,
                     ["top"] = new List<ProcessCpu>(b.Tick.Top).ConvertAll(p => (object?)p.ToString()),
                 };
             }
@@ -671,23 +685,48 @@ namespace SeedLab.Cli.Analysis
                     ["foreign_cores_max"] = t.ForeignCoresMax,
                     ["baseline_multiple"] = t.BaselineMultiple,
                     ["dev_tool_cores_max"] = t.DevToolCoresMax,
+                    ["min_sample_seconds"] = t.MinTickSeconds,
+                    ["limit_cores"] = Math.Round(_run.Probe.LimitCores, 3),
                 };
                 IReadOnlyList<ProbeTick> ticks = _run.Probe.Ticks;
-                int tainted = 0;
-                double foreign = 0, seconds = 0, max = 0;
+                int tainted = 0, unreadableMax = 0;
+                double foreign = 0, seconds = 0, max = 0, machine = 0, machineSeconds = 0;
+                List<object?> detail = new List<object?>();
                 foreach (ProbeTick k in ticks)
                 {
                     if (k.Tainted) tainted++;
                     foreign += k.ForeignCoreSeconds;
                     seconds += k.Seconds;
                     max = Math.Max(max, k.ForeignCores);
+                    unreadableMax = Math.Max(unreadableMax, k.Unreadable);
+                    if (k.MachineCoreSeconds.HasValue)
+                    {
+                        machine += k.MachineCoreSeconds.Value;
+                        machineSeconds += k.Seconds;
+                    }
+
+                    detail.Add(new Dictionary<string, object?>
+                    {
+                        ["t_s"] = Math.Round((k.StartUtc - _run.Probe.StartedUtc).TotalSeconds, 3),
+                        ["seconds"] = Math.Round(k.Seconds, 3),
+                        ["foreign_cores"] = Math.Round(k.ForeignCores, 3),
+                        ["process_cores"] = k.Seconds > 0 ? Math.Round(k.ProcessCoreSeconds / k.Seconds, 3) : null,
+                        ["machine_cores"] = k.MachineCoreSeconds.HasValue && k.Seconds > 0 ? Math.Round(k.MachineCoreSeconds.Value / k.Seconds, 3) : null,
+                        ["processes"] = k.Processes,
+                        ["unreadable"] = k.Unreadable,
+                        ["tainted"] = k.Tainted,
+                    });
                 }
 
+                h["whole_machine"] = _run.Probe.SeesWholeMachine;
                 h["samples"] = ticks.Count;
                 h["samples_tainted"] = tainted;
                 h["foreign_cores_mean"] = seconds > 0 ? Math.Round(foreign / seconds, 3) : null;
                 h["foreign_cores_max_sample"] = ticks.Count > 0 ? Math.Round(max, 3) : null;
+                h["machine_foreign_cores_mean"] = machineSeconds > 0 ? Math.Round(machine / machineSeconds, 3) : null;
+                h["unreadable_max"] = unreadableMax;
                 h["watched_seen"] = new List<string>(_run.Probe.WatchedSeen()).ConvertAll(s => (object?)s);
+                h["samples_detail"] = detail;
             }
 
             return h;
@@ -1003,8 +1042,18 @@ namespace SeedLab.Cli.Analysis
             o.Field("counters", _run.CountersOn ? "ON - timings include the counting" : "off");
             if (_run.Baseline != null)
             {
-                o.Field("baseline", Out.F(_run.Baseline.Seconds, 0) + " s: other processes used "
-                                    + Out.F(_run.Baseline.ForeignCoreSeconds, 2) + " core-s (" + Out.F(_run.Baseline.ForeignCores, 2) + " cores)");
+                QuietBaseline b = _run.Baseline;
+                o.Field("baseline", Out.F(b.Seconds, 0) + " s: other processes used "
+                                    + Out.F(b.ForeignCoreSeconds, 2) + " core-s (" + Out.F(b.ForeignCores, 2) + " cores"
+                                    + (b.Tick.MachineCoreSeconds.HasValue ? ", whole machine" : ", readable processes only")
+                                    + "); the own time of " + b.Tick.Unreadable + " of " + b.Tick.Processes + " processes was not readable"
+                                    + (b.Tainted ? "; not quiet, so it does not raise the limit" : ""));
+            }
+
+            if (_run.Probe != null)
+            {
+                o.Field("limit", Out.F(_run.Probe.LimitCores, 2) + " foreign cores"
+                                 + (_run.Probe.SeesWholeMachine ? ", judged on the whole machine" : ", judged on the readable processes only"));
             }
 
             if (_tainted)
@@ -1015,7 +1064,8 @@ namespace SeedLab.Cli.Analysis
             }
             else
             {
-                o.Field("hygiene", "quiet: no other vseed, no Valheim, no busy build tool, foreign load under the limit");
+                o.Field("hygiene", "quiet: no other SeedLab program, no Valheim, no busy build tool, foreign load under the limit"
+                                   + (_run.Probe != null && _run.Probe.SeesWholeMachine ? " (whole machine, protected processes included)" : ""));
             }
 
             foreach (SectionView s in _sections) PrintSection(o, s);

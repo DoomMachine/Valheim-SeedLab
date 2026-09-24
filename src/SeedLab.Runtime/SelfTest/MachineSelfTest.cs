@@ -153,8 +153,7 @@ namespace SeedLab.Runtime.SelfTest
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    r = new SelfTestSuiteResult(s.Name, 1, 1,
-                        "the suite threw " + ex.GetType().Name + ": " + ex.Message, TimeSpan.Zero);
+                    r = SelfTestSuiteResult.Threw(s.Name, ex);
                 }
                 results.Add(r);
             }

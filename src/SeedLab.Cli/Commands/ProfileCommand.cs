@@ -31,9 +31,10 @@ namespace SeedLab.Cli.Commands
     /// the sink (it is write-only from generator code, and the tests prove it on 64 worlds).</para>
     ///
     /// <para><b>Hygiene.</b> Timings from a busy machine are not measurements. The command watches the
-    /// machine for a baseline before it starts and samples every process's CPU throughout
-    /// (<see cref="QuietMachineProbe"/>), and a run another vseed, the game or a build overlapped is
-    /// marked TAINTED, with what tainted it, rather than trusted. Every worker discards its first seeds
+    /// machine for a baseline before it starts and samples every process's CPU, and the whole machine's,
+    /// throughout (<see cref="QuietMachineProbe"/>, with <see cref="MachineCpu"/> for the processes
+    /// Windows will not report on), and a run another SeedLab program, the game, a build or background
+    /// load overlapped is marked TAINTED, with what tainted it, rather than trusted. Every worker discards its first seeds
     /// (tiered JIT and PGO are still settling), and the JIT and GC activity inside the measured window
     /// is reported next to the numbers.</para>
     /// </summary>
@@ -72,7 +73,8 @@ how
                            include the counting
   --overhead               measure what the profiler itself costs instead (default t2 G384,
                            200 seeds, one worker): sink off/on in this process and counters
-                           off/on in child processes, interleaved ABAB x 5, medians
+                           off/on in child processes, interleaved ABAB x 5, medians. Not with
+                           --counters, nor with SEEDLAB_PROFILE_COUNTERS=1 in the environment
   --baseline <vseed.exe>   with --overhead: also time this build (profiler off) against another
                            vseed build on the same one-worker T2 G384 search
   --quiet-baseline <s>     watch the machine for s seconds before measuring (default 30; 0 skips)
@@ -179,6 +181,16 @@ count is still checked against the memory guard.";
                                        + "before the command started.", ExitCodes.Internal);
             }
 
+            // --overhead's in-process legs compare the sink off with the sink on; counting in both would
+            // make that comparison something else, and the report would not say so.
+            if (opt.Overhead && PhaseClock.CountersOn)
+            {
+                throw new CliException(PhaseClock.EnvironmentVariable + "=1 is set in the environment, so counters are on in this "
+                                       + "process: --overhead's sink off/on legs would both count, and its figure would not be "
+                                       + "the profiler's cost. Unset the variable; --overhead times the counters itself, in child "
+                                       + "processes.", ExitCodes.Usage);
+            }
+
             PilotSeedOrder.Verify();
             string? outPath = opt.Out == null ? null : ResolveOut(opt.Out);
 
@@ -217,10 +229,10 @@ count is still checked against the memory guard.";
                 if (opt.QuietSeconds > 0)
                 {
                     if (!o.Json) Console.Error.WriteLine("  watching the machine for " + opt.QuietSeconds + " s before measuring...");
-                    run.Baseline = QuietMachineProbe.TakeBaseline(TimeSpan.FromSeconds(opt.QuietSeconds));
+                    run.Baseline = QuietMachineProbe.TakeBaseline(TimeSpan.FromSeconds(opt.QuietSeconds), machine: MachineCpu.Reader);
                 }
 
-                using QuietMachineProbe probe = QuietMachineProbe.Start(baseline: run.Baseline);
+                using QuietMachineProbe probe = QuietMachineProbe.Start(baseline: run.Baseline, machine: MachineCpu.Reader);
                 run.Probe = probe;
 
                 if (opt.Overhead)
@@ -314,6 +326,12 @@ count is still checked against the memory guard.";
 
             if (opt.Overhead)
             {
+                if (opt.CountersRequested)
+                {
+                    throw new CliException("--overhead times the counters itself (off and on, in child processes); "
+                                           + "leave --counters out.");
+                }
+
                 if (opt.WorkerCounts.Count != 1 || opt.WorkerCounts[0] != 1)
                 {
                     throw new CliException("--overhead measures on one worker; leave --threads out.");
@@ -547,7 +565,6 @@ count is still checked against the memory guard.";
             public PhaseSink? Sink;
             public SeedSampler? Sampler;
             public WorldMeasurement? Measure;
-            public WorldMeasurement? PatchMeasure;
             public long Checksum;
         }
 
@@ -581,7 +598,7 @@ count is still checked against the memory guard.";
 
         internal static string DescribeWork(string tier) => tier switch
         {
-            "t2" => "construct (deferred); SampleBiomes + MeasureBiomes (counts); patch = MeasureBiomes again with the largest-patch flood fill for all ten biomes",
+            "t2" => "construct (deferred); SampleBiomes + MeasureBiomes' counting pass; patch = its largest-patch flood fill for all ten biomes (the two together are one MeasureBiomes with every patch)",
             "t3" => "construct (deferred); SampleBiomes + MeasureBiomes; ForcePregeneration; MeasureStructures; SampleHeights + MeasureHeights (land, peak, land within 10.5 km, above 100 m, islands >= 1 km2, shore band)",
             "t4" => "construct (deferred); ForcePregeneration; MeasureStructures",
             "t5" => "DumpedLocationOracle.Run with no gate: its own eager generator, BiomeGrid, BiomeField, alt biomes, placement of the prefix, harvest",
@@ -621,18 +638,21 @@ count is still checked against the memory guard.";
             {
                 "t2" => (seed, st) =>
                 {
+                    // One biome pass with every biome's largest patch, as a query asking for all ten
+                    // would run it: the counting pass under t2, then the flood fills alone under patch.
+                    // MeasureBiomes(plan with patches) is exactly these two calls, so the seed's total is
+                    // a real T2 seed's and patch is only the flood fill.
                     WorldGeneratorPort gen = new WorldGeneratorPort(seed, Verified.WorldGenVersion, menu: false,
                                                                     deferPregeneration: true);
                     st.Sink?.Begin(t2Phase);
                     st.Sampler!.SampleBiomes(gen, SeedSampler.WaterEdge);
-                    st.Measure!.Reset(s_biomePlan);
+                    st.Measure!.Reset(s_patchPlan);
                     st.Measure.MeasureBiomes(st.Sampler, s_biomePlan);
                     st.Sink?.End(t2Phase);
                     st.Sink?.Begin(Phase.Patch);
-                    st.PatchMeasure!.Reset(s_patchPlan);
-                    st.PatchMeasure.MeasureBiomes(st.Sampler, s_patchPlan);
+                    st.Measure.MeasurePatches(st.Sampler, s_patchPlan);
                     st.Sink?.End(Phase.Patch);
-                    st.Checksum += st.Measure.InWorldCells + st.PatchMeasure.LargestPatchCells[1];
+                    st.Checksum += st.Measure.InWorldCells + st.Measure.LargestPatchCells[1];
                 },
                 "t3" => (seed, st) =>
                 {
@@ -696,7 +716,6 @@ count is still checked against the memory guard.";
                     {
                         st.Sampler = new SeedSampler(grid);
                         st.Measure = new WorldMeasurement(grid);
-                        st.PatchMeasure = new WorldMeasurement(grid);
                     }
                     else
                     {
@@ -998,6 +1017,9 @@ count is still checked against the memory guard.";
             System.Threading.Tasks.Task<string> err = p.StandardError.ReadToEndAsync();
             string stdout = p.StandardOutput.ReadToEnd();
             p.WaitForExit();
+            // Its final CPU time lets the probe take the leg out of the whole-machine figure exactly.
+            try { probe.ChildExited(p.Id, p.TotalProcessorTime); }
+            catch (Exception) { /* unknown: the leg's time then reads as foreign - a false taint, never a false quiet */ }
             if (p.ExitCode != 0)
             {
                 throw new CliException("a timing leg (" + Path.GetFileName(exe) + " " + string.Join(" ", args) + ") exited "

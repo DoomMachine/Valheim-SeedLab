@@ -66,6 +66,32 @@ namespace SeedLabTests
             "Lerp", "Sin", "Cos", "SinCos", "Exp", "Log", "Log2", "Hypot",
         };
 
+        /// <summary>
+        /// A Perlin divergence on a VECTOR path stops every tool at load, 'vseed selftest --report'
+        /// included, so its sentence has to name the way out: the scalar path (which the same check has
+        /// just passed) and the report run on it. A divergence of the scalar reference has no way out and
+        /// must not claim one.
+        /// </summary>
+        private static int RefusalWording()
+        {
+            string vector = SeedLab.WorldGen.Unity.PerlinSelfTest.DivergenceMessage("O5 AVX2 8-wide (lane 3)", true, 1.5f, 2.5f, 0.25f, 0.26f);
+            string scalar = SeedLab.WorldGen.Unity.PerlinSelfTest.DivergenceMessage("O3 byte-table scalar", false, 1.5f, 2.5f, 0.25f, 0.26f);
+            bool ok = vector.StartsWith("SeedLab:", StringComparison.Ordinal)
+                      && vector.Contains("--simd scalar", StringComparison.Ordinal)
+                      && vector.Contains("'vseed --simd scalar selftest --report'", StringComparison.Ordinal)
+                      && vector.Contains("SEEDLAB_SIMD=scalar", StringComparison.Ordinal)
+                      && scalar.StartsWith("SeedLab:", StringComparison.Ordinal)
+                      && !scalar.Contains("--simd", StringComparison.Ordinal);
+            Console.WriteLine((ok ? "PASS" : "FAIL") + "  a vector-path divergence names --simd scalar and the report to send under it; "
+                              + "a scalar-path divergence claims no way out");
+            if (!ok)
+            {
+                Console.WriteLine("      vector: " + vector);
+                Console.WriteLine("      scalar: " + scalar);
+            }
+            return ok ? 0 : 1;
+        }
+
         public static int Run(string[] args)
         {
             Console.WriteLine("SeedLab numerics tripwire (ST1): no API that could change a last bit, no P/Invoke");
@@ -138,6 +164,10 @@ namespace SeedLabTests
             Console.WriteLine((good.Count == 0 ? "PASS" : "FAIL") + "  planted allowed uses left alone (truncating and widening conversions, "
                               + "MathF.Sqrt/Abs, Fma.IsSupported): " + good.Count + " false alarm(s)");
             fail += good.Count;
+
+            // The other half of failing closed: when a vector path is refused, the sentence must say how
+            // to keep working bit-exactly and which report to send - that report cannot run otherwise.
+            fail += RefusalWording();
 
             Console.WriteLine();
             Console.WriteLine((fail == 0 ? "PASS" : "FAIL") + "  numerics tripwire");

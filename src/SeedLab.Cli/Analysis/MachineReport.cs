@@ -41,11 +41,15 @@ namespace SeedLab.Cli.Analysis
         public const string IsaSchema = "seedlab-isa/1";
         private const string ReferenceResource = "SeedLab.Cli.WorldFingerprintReference.json";
 
-        /// <summary>The runtime knobs whose value is worth printing when set. Values only - never other variables.</summary>
-        private static readonly string[] Knobs =
+        /// <summary>
+        /// SeedLab's own variables that change how this process runs, printed when set: the vector-path
+        /// request, the per-level proof's assertion and the profiler's counter switch (which slows every
+        /// world and would otherwise be invisible). The runtime's switches come from
+        /// <see cref="RuntimeKnobs"/>, both prefixes. Values only - never other variables.
+        /// </summary>
+        private static readonly string[] SeedLabVariables =
         {
-            "EnableHWIntrinsic", "EnableSSE42", "EnableAVX", "EnableAVX2", "EnableAVX512", "EnableAVX512v2",
-            "EnableAVX512v3", "EnableAVX10v1", "EnableAVX10v2", "PreferredVectorBitWidth", "MaxVectorTBitWidth",
+            SimdDispatch.EnvironmentVariable, SimdDispatch.ExpectVariable, SeedLab.WorldGen.Diagnostics.PhaseClock.EnvironmentVariable,
         };
 
         // =============================================================================================
@@ -74,6 +78,7 @@ namespace SeedLab.Cli.Analysis
                 j.WriteString("perlin_selftest", PerlinSelfTest.Report());
                 WriteKnobs(j);
                 WriteCpu(j, hw);
+                WriteCpuId(j);
                 j.WriteString("ucrt", hw.UcrtVersion);
                 j.WriteString("isa_key", hw.Features.Key);
                 j.WriteString("stamp_key", hw.StampKey);
@@ -114,7 +119,18 @@ namespace SeedLab.Cli.Analysis
             HardwareInfo hw = rt.Context.Hardware;
 
             // ---- the self-test, run now rather than read from a stamp -----------------------------------
-            SelfTestOutcome st = rt.Context.SelfTest.Verify(hw, force: true);
+            // --skip-self-test turns the gate off for commands that answer questions; this report IS the
+            // self-test, sent from a machine nobody has checked, so it runs it anyway and says so.
+            MachineSelfTest gate = rt.Context.SelfTest;
+            bool skipAsked = !gate.Enabled;
+            if (skipAsked)
+            {
+                gate.Enabled = true;
+                NativesGoldenSuite? natives = NativesGoldenSuite.TryCreate();
+                if (natives != null) gate.Register(natives);
+            }
+
+            SelfTestOutcome st = gate.Verify(hw, force: true);
             string perlin;
             bool perlinOk = true;
             try { perlin = PerlinSelfTest.ProveEveryPath(); }
@@ -226,7 +242,7 @@ namespace SeedLab.Cli.Analysis
 
             if (o.Json)
             {
-                WriteJson(o.J, rt, hw, st, perlin, libm, rows, locationNote, locationComparable, compared, differ, libmDiffer, pass, verdict);
+                WriteJson(o.J, rt, hw, st, skipAsked, perlin, libm, rows, locationNote, locationComparable, compared, differ, libmDiffer, pass, verdict);
                 return pass ? ExitCodes.Ok : ExitCodes.CheckFailed;
             }
 
@@ -241,14 +257,15 @@ namespace SeedLab.Cli.Analysis
             o.Field("cpu", hw.Cpu.Describe());
             o.Field("logical cores", hw.LogicalCores.ToString(CultureInfo.InvariantCulture));
             o.Field("isa", IsaLine());
+            o.Field("cpuid", CpuIdLine());
             o.Field("simd path", SimdDispatch.Summary);
             o.Field("simd reason", SimdDispatch.Reason);
             o.Field("runtime knobs", KnobLine());
             o.Field("ucrtbase", hw.UcrtVersion);
             o.Field("stamp key", hw.StampKey);
 
-            o.Header("Self-test (run now, not read from a stamp)");
-            foreach (SelfTestSuiteResult r in st.Results) o.Field(r.Name, r.ToString().Substring(r.Name.Length + 2));
+            o.Header("Self-test (run now, not read from a stamp" + (skipAsked ? "; --skip-self-test does not apply to this report" : "") + ")");
+            foreach (SelfTestSuiteResult r in st.Results) o.Field(r.Name, Shareable(r));
             if (!rt.Context.SelfTest.HasGeneratorSuite)
             {
                 o.Field("seedlab/natives", "not run - groundtruth\\natives is not beside this build (it is not in the public repository)");
@@ -307,6 +324,51 @@ namespace SeedLab.Cli.Analysis
             if (compared == 0) yield return "no world digest could be compared (the embedded reference is missing)";
         }
 
+        /// <summary>
+        /// One suite's line for the report: the counts and, when it failed, the failure WITHOUT an
+        /// exception message - an I/O error's message names the full path, and this text is sent to
+        /// someone else.
+        /// </summary>
+        private static string Shareable(SelfTestSuiteResult r)
+            => (r.Checks - r.Failures).ToString(CultureInfo.InvariantCulture) + "/" + r.Checks.ToString(CultureInfo.InvariantCulture)
+               + " exact" + (r.Passed ? "" : "  FIRST FAILURE: " + r.ShareableFailure);
+
+        /// <summary>The processor's own feature bits, and whether the runtime's flags agree with them.</summary>
+        private static string CpuIdLine()
+        {
+            CpuIdFeatures? c = CpuIdFeatures.Read();
+            if (c == null) return "not readable in this process (x86 intrinsics are switched off, or not x86)";
+            List<string> on = new List<string>();
+            foreach ((string name, bool value) in c.Bits()) if (value) on.Add(name);
+            if (c.Avx10) on.Add("avx10." + c.Avx10Version.ToString(CultureInfo.InvariantCulture));
+            List<string> off = c.Disagreements(SimdDispatch.Facts());
+            return string.Join(" ", on) + (off.Count == 0 ? "; the runtime reports what these bits imply"
+                                                          : "; DIFFERS from the runtime: " + string.Join("; ", off));
+        }
+
+        private static void WriteCpuId(Utf8JsonWriter j)
+        {
+            CpuIdFeatures? c = CpuIdFeatures.Read();
+            if (c == null)
+            {
+                j.WriteNull("cpuid");
+                return;
+            }
+
+            j.WriteStartObject("cpuid");
+            j.WriteStartObject("bits");
+            foreach ((string name, bool value) in c.Bits()) j.WriteString(name, value ? "1" : "0");
+            j.WriteEndObject();
+            j.WriteNumber("avx10_version", c.Avx10Version);
+            j.WriteStartObject("expected");
+            foreach (KeyValuePair<string, string> kv in c.ExpectedFacts()) j.WriteString(kv.Key, kv.Value);
+            j.WriteEndObject();
+            j.WriteStartArray("disagreements");
+            foreach (string d in c.Disagreements(SimdDispatch.Facts())) j.WriteStringValue(d);
+            j.WriteEndArray();
+            j.WriteEndObject();
+        }
+
         private static string FirstLine(string s)
         {
             int nl = s.IndexOf('\n');
@@ -329,19 +391,12 @@ namespace SeedLab.Cli.Analysis
             return set.Count == 0 ? "none set" : string.Join(" ", set);
         }
 
-        /// <summary>The runtime ISA knobs and SeedLab's own two variables, where set. Nothing else from the environment.</summary>
+        /// <summary>The runtime's code-generation switches and SeedLab's own variables, where set. Nothing else from the environment.</summary>
         private static IEnumerable<(string Name, string Value)> SetKnobs()
         {
-            foreach (string k in Knobs)
-            {
-                foreach (string prefix in new[] { "DOTNET_", "COMPlus_" })
-                {
-                    string? v = Environment.GetEnvironmentVariable(prefix + k);
-                    if (!string.IsNullOrEmpty(v)) yield return (prefix + k, Clip(v));
-                }
-            }
+            foreach ((string name, string value) in RuntimeKnobs.Set()) yield return (name, Clip(value));
 
-            foreach (string k in new[] { SimdDispatch.EnvironmentVariable, SimdDispatch.ExpectVariable })
+            foreach (string k in SeedLabVariables)
             {
                 string? v = Environment.GetEnvironmentVariable(k);
                 if (!string.IsNullOrEmpty(v)) yield return (k, Clip(v));
@@ -371,7 +426,7 @@ namespace SeedLab.Cli.Analysis
             j.WriteEndObject();
         }
 
-        private static void WriteJson(Utf8JsonWriter j, CliRuntime rt, HardwareInfo hw, SelfTestOutcome st, string perlin,
+        private static void WriteJson(Utf8JsonWriter j, CliRuntime rt, HardwareInfo hw, SelfTestOutcome st, bool skipAsked, string perlin,
                                       IReadOnlyList<LibmDense.SiteDigest> libm, Row[] rows, string locationNote,
                                       bool locationComparable, int compared, int differ, int libmDiffer, bool pass, string verdict)
         {
@@ -389,6 +444,7 @@ namespace SeedLab.Cli.Analysis
             j.WriteStartObject("isa");
             foreach (KeyValuePair<string, string> kv in SimdDispatch.Facts()) j.WriteString(kv.Key, kv.Value);
             j.WriteEndObject();
+            WriteCpuId(j);
             j.WriteString("dispatch_key", SimdDispatch.Key);
             j.WriteString("dispatch_reason", SimdDispatch.Reason);
             WriteKnobs(j);
@@ -397,6 +453,7 @@ namespace SeedLab.Cli.Analysis
 
             j.WriteStartObject("self_test");
             j.WriteString("status", st.Status.ToString());
+            if (skipAsked) j.WriteString("note", "--skip-self-test was given; it does not apply to this report, which ran the self-test");
             j.WriteStartArray("suites");
             foreach (SelfTestSuiteResult r in st.Results)
             {
@@ -404,7 +461,7 @@ namespace SeedLab.Cli.Analysis
                 j.WriteString("name", r.Name);
                 j.WriteNumber("checks", r.Checks);
                 j.WriteNumber("failures", r.Failures);
-                if (r.FirstFailure.Length > 0) j.WriteString("first_failure", r.FirstFailure);
+                if (r.ShareableFailure.Length > 0) j.WriteString("first_failure", r.ShareableFailure);
                 j.WriteEndObject();
             }
 
