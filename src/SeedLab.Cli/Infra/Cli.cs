@@ -67,7 +67,7 @@ namespace SeedLab.Cli.Infra
             };
 
         private static readonly HashSet<string> GlobalValued =
-            new HashSet<string>(StringComparer.Ordinal) { "threads", "mode", "cache-dir" };
+            new HashSet<string>(StringComparer.Ordinal) { "threads", "mode", "cache-dir", "simd" };
 
         /// <summary>
         /// The largest <c>--threads</c> this machine will accept. Four times the core count (never
@@ -271,6 +271,7 @@ namespace SeedLab.Cli.Infra
             Flag("skip-self-test");
             Flag("accept-unverified-platform");
             Get("cache-dir");
+            Get("simd");          // applied by Main before any generator type loaded; validated there
             string? mode = Get("mode");
             if (mode != null && !SeedLab.Runtime.Execution.ResourceModes.TryParse(mode, out _, out string err))
             {

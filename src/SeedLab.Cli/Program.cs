@@ -43,7 +43,9 @@ usage: vseed <command> [options]
   worlds                    the Valheim worlds on this machine (read-only)
   world <name>              one save: seed, world-gen version, modifiers, contents
   selftest                  re-check this build against the bundled ground truth
+                            (--report: this machine's CPU, vector path and fingerprints, to send)
   bench                     measured throughput of each stage on this machine
+  profile                   where one seed's time goes, phase by phase, on this machine now
 
 global options (accepted before or after the command name):
   --json                    machine-readable output on stdout (warnings go to stderr)
@@ -62,6 +64,10 @@ global options (accepted before or after the command name):
                             The run then says out loud that it is unverified.
   --accept-unverified-platform
                             proceed on an architecture SeedLab has never had its gates run on
+  --simd <path>             auto | scalar | avx2 | avx512 - the widest vector path the generator
+                            may use (DEFAULT auto: the widest this CPU and runtime allow). Every
+                            path is proved to give the same bits; this changes only speed.
+                            'vseed selftest --report' shows what this machine runs
   --debug                   print a stack trace if something unexpected goes wrong
   -h, --help                this text, or 'vseed <command> --help'
   -V, --version
@@ -82,6 +88,22 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
 
         public static int Main(string[] rawArgs)
         {
+            // FIRST, before anything can touch a generator type: 'vseed profile --counters' switches the
+            // per-point counters on through an environment variable that is read exactly once, in a type
+            // initialiser. Nothing else in this method may run before it.
+            ProfileCommand.ApplyCountersSwitch(rawArgs);
+
+            // The same rule for the vector path: '--simd' becomes SEEDLAB_SIMD before the generator's
+            // dispatch reads it, once, in its type initialiser.
+            string? simdError = SimdSwitch.Apply(rawArgs);
+            if (simdError != null)
+            {
+                Console.Error.WriteLine("vseed: " + simdError);
+                Console.Error.WriteLine("       auto (the default) takes the widest path this CPU and runtime allow; "
+                                        + "every path gives the same bits.");
+                return ExitCodes.Usage;
+            }
+
             CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
             CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
 
@@ -159,6 +181,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
             }
 
             List<string> rest = argv.GetRange(1, argv.Count - 1);
+            if (cmd == "profile") rest = ProfileCommand.RenameThreadsOption(rest);
             if (rest.Contains("--help") || rest.Contains("-h"))
             {
                 Console.Out.WriteLine(help);
@@ -203,13 +226,15 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 // answer attached. They still accept and VALIDATE every global option, which is what
                 // ConsumeGlobals is for.
                 bool needsRuntime = cmd is "seed" or "map" or "at" or "locations" or "search"
-                                        or "explain" or "serve" or "selftest" or "bench" or "clean";
+                                        or "explain" or "serve" or "selftest" or "bench" or "clean"
+                                        or "profile";
                 rt = needsRuntime ? CliRuntime.Start(a, cmd, AsTyped(rawArgs)) : null;
                 if (rt == null) a.ConsumeGlobals();
 
                 // Fail closed before anything a user would act on. 'selftest' is exempt because it IS
                 // the diagnostic - refusing to run the thing that explains the refusal helps nobody -
-                // and so are 'bench' (it times, it does not answer) and 'clean' (it moves no numbers).
+                // and so are 'bench' and 'profile' (they time, they do not answer) and 'clean' (it
+                // moves no numbers). 'profile' prints the self-test's status in its machine block.
                 if (rt != null && cmd is "seed" or "map" or "at" or "locations" or "search"
                                      or "explain" or "serve")
                 {
@@ -235,6 +260,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                     "serve" => ServeCommand.Run(a, o, rt!),
                     "selftest" => SelfTestCommand.Run(a, o, rt!),
                     "bench" => BenchCommand.Run(a, o, rt!),
+                    "profile" => ProfileCommand.Run(a, o, rt!),
                     "clean" => CleanCommand.Run(a, o, rt!),
                     _ => throw new CliException("unknown command '" + cmd + "'."),
                 };
@@ -337,6 +363,19 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 Logged(rt, cmd, d?.Message ?? ex.Message, ex, true);
                 return exit = ExitCodes.NotFound;
             }
+            catch (TypeInitializationException ex) when (RefusedToLoad(ex) != null)
+            {
+                // The generator's module initialiser refused to load: the Perlin self-test found a vector
+                // path that differs from the reference transcription, or a per-level proof's
+                // SEEDLAB_SIMD_EXPECT did not hold. Both are this machine failing a check, not a bug, and
+                // the sentence that says what happened is the inner one - the outer one only names
+                // "<Module>".
+                string why = RefusedToLoad(ex)!;
+                Console.Error.WriteLine("vseed " + cmd + ": " + why);
+                if (debug) Console.Error.WriteLine(ex.ToString());
+                Logged(rt, cmd, why, ex, false);
+                return exit = ExitCodes.CheckFailed;
+            }
             catch (Exception ex)
             {
                 // No stack trace unless asked: a wall of frames is not a message to a user. The log
@@ -392,6 +431,19 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
             if (withStack) rt.Log.Exception("the command failed", ex);
         }
 
+        /// <summary>
+        /// The generator's own refusal inside a type-initialiser failure - its fail-closed checks throw an
+        /// InvalidOperationException whose message starts "SeedLab:" - or null for any other cause.
+        /// </summary>
+        private static string? RefusedToLoad(TypeInitializationException ex)
+        {
+            Exception e = ex;
+            while (e.InnerException != null) e = e.InnerException;
+            return e is InvalidOperationException && e.Message.StartsWith("SeedLab:", StringComparison.Ordinal)
+                ? e.Message
+                : null;
+        }
+
         /// <summary>The command line as typed, for the session log: "vseed search axe-heads --seeds 400".</summary>
         private static string AsTyped(string[] rawArgs)
         {
@@ -424,6 +476,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
             "serve" => ServeCommand.Help,
             "selftest" => SelfTestCommand.Help,
             "bench" => BenchCommand.Help,
+            "profile" => ProfileCommand.Help,
             "clean" => CleanCommand.Help,
             _ => null,
         };

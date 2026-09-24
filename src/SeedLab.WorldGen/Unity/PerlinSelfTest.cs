@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
+using SeedLab.WorldGen.Simd;
 
 namespace SeedLab.WorldGen.Unity
 {
@@ -20,6 +21,12 @@ namespace SeedLab.WorldGen.Unity
     ///
     /// <para>It runs once per process and costs a few milliseconds - see the figure printed by
     /// <see cref="Report"/>, which is measured on the machine it runs on.</para>
+    ///
+    /// <para><b>Which vector path it proves</b> is the one <see cref="SimdDispatch"/> made active, so the
+    /// path every world in this process is built with is the path that was checked. A path the hardware
+    /// has but the dispatch left off (<c>--simd scalar</c>) is proved on demand by
+    /// <see cref="ProveEveryPath"/>, which is <c>vseed selftest --simd-all</c>. The same initialiser
+    /// enforces <see cref="SimdDispatch.ExpectVariable"/> when a per-level proof run sets it.</para>
     ///
     /// <para><b>The vector set</b> is fixed and hostile on purpose. It covers: the exact argument shapes
     /// <c>GetBaseHeight</c>'s six octaves and two sea-channel samples produce at the corners, edges and
@@ -43,7 +50,14 @@ namespace SeedLab.WorldGen.Unity
         // once per process.
 #pragma warning disable CA2255
         [ModuleInitializer]
-        internal static void RunAtStartup() => Ensure();
+        internal static void RunAtStartup()
+        {
+            // A per-level proof run states what the runtime knob must have done; a process where it did
+            // not must not be counted as a proof at that level, so it refuses to start at all.
+            string? wrong = SimdDispatch.CheckExpectation();
+            if (wrong != null) throw new InvalidOperationException(wrong);
+            Ensure();
+        }
 #pragma warning restore CA2255
 
         /// <summary>Runs the check once per process. Throws on divergence; returns silently otherwise.</summary>
@@ -52,7 +66,7 @@ namespace SeedLab.WorldGen.Unity
             if (s_report != null) return;
             lock (s_gate)
             {
-                if (s_report == null) s_report = Run();
+                if (s_report == null) s_report = Run(PerlinFast.Use8Wide);
             }
         }
 
@@ -63,7 +77,14 @@ namespace SeedLab.WorldGen.Unity
             return s_report!;
         }
 
-        private static unsafe string Run()
+        /// <summary>
+        /// Proves every Perlin path this hardware supports, whether or not the dispatch made it active:
+        /// the byte-table scalar always, the AVX2 8-wide whenever AVX2 is allowed. Runs the full check
+        /// again (it is not cached) and throws on a divergence, like the startup check.
+        /// </summary>
+        public static string ProveEveryPath() => Run(SimdDispatch.Hardware >= SimdLevel.Avx2);
+
+        private static unsafe string Run(bool vectorPath)
         {
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             float[] cases = BuildCases();
@@ -92,12 +113,12 @@ namespace SeedLab.WorldGen.Unity
                     float a = (UnityPerlin.Noise(x, y) + UnityPerlin.NormAdd) / UnityPerlin.NormDiv;
                     float b = PerlinFast.PerlinNoise(x, y);
                     scalarChecked++;
-                    if (Bits(a) != Bits(b)) throw Diverged("O3 byte-table scalar", x, y, a, b);
+                    if (Bits(a) != Bits(b)) throw Diverged("O3 byte-table scalar", false, x, y, a, b);
                 }
             }
 
             // --- 2. the 8-wide path against the same reference ---------------------------------------
-            if (PerlinFast.Use8Wide)
+            if (vectorPath)
             {
                 float* xs = stackalloc float[8];
                 float* ys = stackalloc float[8];
@@ -114,13 +135,19 @@ namespace SeedLab.WorldGen.Unity
                             xs[(k + rot) & 7] = cases[ix];
                             ys[(k + rot) & 7] = cases[iy];
                         }
-                        PerlinFast.PerlinNoise8(xs, ys, got);
+                        // The vector body directly, so the path proved is the 8-wide one even where the
+                        // dispatch left it off; a batch its guard refuses is the scalar answer, as in
+                        // PerlinNoise8 itself.
+                        if (!PerlinFast.TryPerlinNoise8Vector(xs, ys, got))
+                        {
+                            for (int k = 0; k < 8; k++) got[k] = PerlinFast.PerlinNoise(xs[k], ys[k]);
+                        }
                         for (int k = 0; k < 8; k++)
                         {
                             float want = (UnityPerlin.Noise(xs[k], ys[k]) + UnityPerlin.NormAdd) / UnityPerlin.NormDiv;
                             vectorChecked++;
                             if (Bits(want) != Bits(got[k]))
-                                throw Diverged("O5 AVX2 8-wide (lane " + k + ")", xs[k], ys[k], want, got[k]);
+                                throw Diverged("O5 AVX2 8-wide (lane " + k + ")", true, xs[k], ys[k], want, got[k]);
                         }
                     }
                 }
@@ -130,14 +157,21 @@ namespace SeedLab.WorldGen.Unity
             sb.Append("Perlin self-test PASS: ")
               .Append(scalarChecked.ToString("N0", CultureInfo.InvariantCulture))
               .Append(" byte-table scalar samples");
-            if (PerlinFast.Use8Wide)
+            if (vectorPath)
             {
                 sb.Append(" and ")
                   .Append(vectorChecked.ToString("N0", CultureInfo.InvariantCulture))
                   .Append(" AVX2 8-wide samples");
             }
             sb.Append(" bit-identical to UnityPerlin.Noise; 8-wide path ")
-              .Append(PerlinFast.Use8Wide ? "ENABLED (AVX2)" : "disabled (no AVX2 on this machine - scalar fallback in use)")
+              .Append(PerlinFast.Use8Wide
+                  ? "ENABLED (AVX2)"
+                  : SimdDispatch.Hardware >= SimdLevel.Avx2
+                      ? "off (AVX2 present, " + SimdDispatch.EnvironmentVariable + "=" + SimdDispatch.Name(SimdDispatch.Requested)
+                        + " - scalar in use" + (vectorPath ? ", 8-wide proved anyway" : "") + ")"
+                      : "disabled (the runtime reports no AVX2 here - scalar fallback in use)")
+              .Append("; simd ")
+              .Append(SimdDispatch.Summary)
               .Append("; ")
               .Append(((System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0
                        / System.Diagnostics.Stopwatch.Frequency).ToString("F1", CultureInfo.InvariantCulture))
@@ -145,14 +179,30 @@ namespace SeedLab.WorldGen.Unity
             return sb.ToString();
         }
 
-        private static InvalidOperationException Diverged(string which, float x, float y, float want, float got)
-            => new InvalidOperationException(
-                "SeedLab: the " + which + " Perlin path does not agree with the reference transcription on "
-                + "this machine, so world generation here would NOT be bit-exact. "
-                + "PerlinNoise(" + R(x) + ", " + R(y) + ") = " + R(want) + " (0x" + Bits(want).ToString("X8") + ")"
-                + " reference, " + R(got) + " (0x" + Bits(got).ToString("X8") + ") fast. "
-                + "This is a hard failure on purpose: refusing to run is correct, producing a different "
-                + "world silently is not. Report the machine's CPU and .NET version.");
+        private static InvalidOperationException Diverged(string which, bool vectorPath, float x, float y, float want, float got)
+            => new InvalidOperationException(DivergenceMessage(which, vectorPath, x, y, want, got));
+
+        /// <summary>
+        /// The sentence a divergence stops the process with. A VECTOR path that differs leaves the
+        /// scalar reference path, which the check has just passed, so the sentence names the way to keep
+        /// working bit-exactly (<c>--simd scalar</c>) and the report to send, which under that switch
+        /// starts, proves the vector path separately and prints where it differs. The byte-table scalar
+        /// differing leaves nothing to fall back to. Public so the tests can read what a user would.
+        /// </summary>
+        public static string DivergenceMessage(string which, bool vectorPath, float x, float y, float want, float got)
+            => "SeedLab: the " + which + " Perlin path does not agree with the reference transcription on "
+               + "this machine, so world generation here would NOT be bit-exact. "
+               + "PerlinNoise(" + R(x) + ", " + R(y) + ") = " + R(want) + " (0x" + Bits(want).ToString("X8") + ")"
+               + " reference, " + R(got) + " (0x" + Bits(got).ToString("X8") + ") fast. "
+               + "This is a hard failure on purpose: refusing to run is correct, producing a different "
+               + "world silently is not. "
+               + (vectorPath
+                   ? "SeedLab still runs bit-exactly here on the scalar path: add --simd scalar to the vseed command "
+                     + "(or set " + SimdDispatch.EnvironmentVariable + "=scalar for the other tools). Please send the output of "
+                     + "'vseed --simd scalar selftest --report', which proves the vector path separately and prints where it "
+                     + "differs, with the machine's CPU and .NET version."
+                   : "The scalar path is the reference itself, so there is no path to fall back to. Report the machine's "
+                     + "CPU and .NET version.");
 
         private static string R(float f) => f.ToString("R", CultureInfo.InvariantCulture);
 

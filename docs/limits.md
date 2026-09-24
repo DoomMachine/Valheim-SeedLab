@@ -144,8 +144,12 @@ What ships instead of a promise:
 
 - On a cold cache every command that builds a world runs a **machine self-test** against the corpora
   the game itself produced — `numerics` (271 checks) and `seedlab/natives` (**263,780** recorded
-  values: Perlin samples, `Random` traces, libm results, hash vectors) — and writes a stamp into
-  `<cache root>\selftest` recording platform, runtime, ISA and result.
+  values: Perlin samples, `Random` traces, libm results, hash vectors) — plus `libm-dense` (the C
+  runtime's maths over 65,536 arguments at each of the generator's five call-site shapes, as digests
+  recorded on the reference machine) and `denormals` (no flush-to-zero on the thread), and writes a
+  stamp into `<cache root>\selftest` recording platform, runtime, ISA flags, the processor (from
+  CPUID), the version of the C runtime's `ucrtbase.dll`, the vector path in use and the result. A
+  runtime switch, another CPU, a replaced `ucrtbase.dll` or a different `--simd` re-runs it.
 - It **fails closed, demonstrated by counterexample rather than asserted.** Copy
   `groundtruth\natives` aside, change one recorded hash by 1, run `vseed` with that copy on the
   search path, and `vseed seed 12345` exits **1**:
@@ -167,6 +171,24 @@ What ships instead of a promise:
   rest on the 429 verified hash vectors, so their silence is a gap worth closing.
 
 Linux and macOS on x64 are expected to work and are **untested**; arm64 is untested and unproven.
+
+**x64 CPUs without FMA3 are refused today.** On Windows, `Math.Sin/Cos/Atan2/Pow` are the C runtime's
+(`ucrtbase.dll`), which computes with FMA3 on CPUs that have it and differently on CPUs that do not
+(older Pentium, Celeron and Atom parts, AMD Jaguar/Puma). The game's recorded values match the FMA3
+path; without it `Cos(1.0)` and `Cos(20.0)` come out one bit different, the `numerics` suite fails and
+every world-building command exits 1 (unless `--skip-self-test`). Whether the game itself computes the
+same different values on such a CPU is **Unverified** - it would take the dumper's natives mode run on
+one. Until then the refusal stands.
+
+**Vector paths.** Every CPU runs the same arithmetic; only the vector path differs (AVX2 or scalar
+today; AVX-512 is detected but has no kernel of its own). Each path has been proved against the game's
+output on one machine at the levels the .NET runtime's own switches reach there that matter most - AVX-512
+off, AVX2 off, AVX off, every intrinsic off, and the scalar path by request - which proves SeedLab's and
+the JIT's code paths, not another CPU's maths library. Which path each CPU family from 2015 on gets,
+the traps, what is tested and what needs other hardware: [`cpu-compatibility.md`](cpu-compatibility.md).
+`vseed selftest --report` is the report to run, and send, from a CPU nobody has tested; where SeedLab
+refuses to start because its AVX2 path differs there, `vseed --simd scalar selftest --report` runs on the
+scalar path (still bit-exact) and shows where the AVX2 path differs.
 
 ## Not implemented
 

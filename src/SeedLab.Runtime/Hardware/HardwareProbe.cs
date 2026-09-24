@@ -41,6 +41,22 @@ namespace SeedLab.Runtime.Hardware
     /// </summary>
     public static class HardwareProbe
     {
+        private static volatile string? s_simdKey;
+        private static volatile string? s_simdSummary;
+
+        /// <summary>
+        /// The host's report of the generator's vector dispatch, which this layer cannot see: the CLI
+        /// passes <c>SimdDispatch.Key</c> and <c>SimdDispatch.Summary</c> before the runtime starts. It is
+        /// process-wide because the dispatch is (static, read once), and every later
+        /// <see cref="Probe"/> carries it into <see cref="HardwareInfo.SimdKey"/> - and so into the
+        /// self-test stamp and the machine block. Null clears it (for tests).
+        /// </summary>
+        public static void ReportDispatch(string? key, string? summary)
+        {
+            s_simdSummary = summary;
+            s_simdKey = key;
+        }
+
         /// <summary>Probes the machine now. Never throws.</summary>
         public static HardwareInfo Probe(HardwareProbeOptions? options = null)
         {
@@ -52,6 +68,8 @@ namespace SeedLab.Runtime.Hardware
             (long total, long available, string memSource, bool isLimit) = ProbeMemory(o);
 
             CpuFeatures features = ProbeFeatures();
+            CpuIdentity cpu = CpuIdentity.Probe();
+            string ucrt = CpuIdentity.UcrtVersion();
 
             string rid;
             try { rid = RuntimeInformation.RuntimeIdentifier; }
@@ -66,7 +84,8 @@ namespace SeedLab.Runtime.Hardware
                 Safe(() => RuntimeInformation.OSDescription),
                 Safe(() => RuntimeInformation.FrameworkDescription),
                 features,
-                DateTime.UtcNow);
+                DateTime.UtcNow,
+                cpu, ucrt, s_simdKey, s_simdSummary);
         }
 
         private static string Safe(Func<string> f)
@@ -78,16 +97,27 @@ namespace SeedLab.Runtime.Hardware
         private static CpuFeatures ProbeFeatures()
         {
             bool sse2 = false, avx = false, avx2 = false, avx512 = false, fma = false, adv = false;
+            bool avx512bw = false, avx512vbmi = false, avx10v1 = false, avx10v2 = false;
             try
             {
                 sse2 = Sse2.IsSupported;
                 avx = Avx.IsSupported;
                 avx2 = Avx2.IsSupported;
                 avx512 = Avx512F.IsSupported;
+                avx512bw = Avx512BW.IsSupported;
+                avx512vbmi = Avx512Vbmi.IsSupported;
                 fma = Fma.IsSupported;
                 adv = AdvSimd.IsSupported;
             }
             catch (Exception) { /* an ISA class that will not load simply reads as absent */ }
+
+            // Separately: a runtime that cannot ask about AVX10 must not lose the flags above.
+            try
+            {
+                avx10v1 = Avx10v1.IsSupported;
+                avx10v2 = Avx10v2.IsSupported;
+            }
+            catch (Exception) { }
 
             int width = 16;
             bool v256 = false, v512 = false;
@@ -99,7 +129,7 @@ namespace SeedLab.Runtime.Hardware
             }
             catch (Exception) { }
 
-            return new CpuFeatures(sse2, avx, avx2, avx512, fma, adv, width, v256, v512);
+            return new CpuFeatures(sse2, avx, avx2, avx512, fma, adv, width, v256, v512, avx512bw, avx512vbmi, avx10v1, avx10v2);
         }
 
         private static (int?, string) ProbePhysicalCores(HardwareProbeOptions o)

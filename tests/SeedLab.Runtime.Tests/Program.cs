@@ -17,6 +17,11 @@ namespace SeedLab.RuntimeTests
         {
             if (Array.IndexOf(args, "--emit-vectors") >= 0) return EmitVectors(args);
             if (Array.IndexOf(args, "--probe") >= 0) return PrintProbe();
+            if (Array.IndexOf(args, "--emit-libm-dense") >= 0) return EmitLibmDense();
+
+            // ST2 needs the built vseed.exe, so it is its own run rather than a section here:
+            // dotnet run -c Release --project tests\SeedLab.Runtime.Tests -- --knob-matrix
+            if (Array.IndexOf(args, "--knob-matrix") >= 0) return KnobMatrix.Run(args);
 
             Console.WriteLine("SeedLab.Runtime tests");
             Console.WriteLine(new string('=', 78));
@@ -44,6 +49,12 @@ namespace SeedLab.RuntimeTests
 
             Section("8. The web servers' registry: found, told live from stale, and never made by reading it");
             ServerRegistryChecks.Run(Check);
+
+            Section("9. The quiet-machine probe: what else ran, named, never pretended away");
+            QuietProbeChecks.Run(Check);
+
+            Section("10. The processor, the C runtime and the vector path in the stamp; libm-dense and subnormals");
+            CpuChecks.Run(Check);
 
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));
@@ -84,6 +95,24 @@ namespace SeedLab.RuntimeTests
             File.WriteAllText(outPath, text, new System.Text.UTF8Encoding(false));
             Console.WriteLine("recorded " + text.Split('\n').Length + " lines to " + Path.GetFullPath(outPath));
             Console.WriteLine("copy it to src/SeedLab.Runtime/SelfTest/selftest-vectors.txt and rebuild");
+            return 0;
+        }
+
+        /// <summary>
+        /// Prints the libm-dense digests this machine computes, as the lines to paste into
+        /// <c>LibmDense.Reference</c>. The same rule as --emit-vectors: only on a machine that has just
+        /// passed the full gates, or the reference would describe the wrong library.
+        /// </summary>
+        private static int EmitLibmDense()
+        {
+            foreach (LibmDense.SiteDigest d in LibmDense.Compute())
+            {
+                Console.WriteLine("            (\"" + d.Site + "\", \"" + d.Raw + "\", \"" + d.Consumed + "\"),");
+            }
+
+            Console.WriteLine("// " + System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier + ", "
+                              + System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription
+                              + ", ucrtbase " + CpuIdentity.UcrtVersion());
             return 0;
         }
 

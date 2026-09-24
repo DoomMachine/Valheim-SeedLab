@@ -2,6 +2,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using SeedLab.WorldGen.Simd;
 
 namespace SeedLab.WorldGen.Unity
 {
@@ -50,10 +51,12 @@ namespace SeedLab.WorldGen.Unity
     /// <para>Because points 1-3 make the vector result <i>identical</i> rather than <i>close</i>, there
     /// is no tolerance anywhere in this file or its self-test: the comparison is on raw bit patterns.</para>
     ///
-    /// <para><b>Fallback.</b> On a machine without AVX2 (ARM64, pre-Haswell x64) <see cref="Use8Wide"/>
-    /// is false and every caller runs <see cref="NoiseScalar"/> instead. The self-test runs both paths on
-    /// every machine that has AVX2 and throws if they differ, so a machine where they diverge fails
-    /// loudly at startup instead of silently generating a different world.</para>
+    /// <para><b>Fallback.</b> On a machine without AVX2 (ARM64, pre-Haswell x64), under a runtime knob that
+    /// turns AVX2 off, or when <c>--simd scalar</c> asks for it, <see cref="Use8Wide"/> is false and every
+    /// caller runs <see cref="NoiseScalar"/> instead - <see cref="SimdDispatch"/> decides which, in one
+    /// place. The self-test proves the active path at startup (and <c>vseed selftest --simd-all</c> every
+    /// path the hardware has) and throws if a path differs from the reference, so a machine where they
+    /// diverge fails loudly instead of silently generating a different world.</para>
     ///
     /// <para>Stateless and thread-safe: the two tables are immutable and carry no seed data.</para>
     /// </summary>
@@ -70,8 +73,12 @@ namespace SeedLab.WorldGen.Unity
         /// </summary>
         public const float Domain8 = 1048576f;   // 2^20
 
-        /// <summary>True when the 8-wide path is available AND has been proved bit-identical here.</summary>
-        public static readonly bool Use8Wide = Avx2.IsSupported;
+        /// <summary>
+        /// True when the dispatch chose the 8-wide path: AVX2 is allowed here and nothing capped it (see
+        /// <see cref="SimdDispatch"/>). The startup self-test proves it bit-identical before any world is
+        /// built. A static readonly bool, so the JIT still folds every <c>if (Use8Wide)</c> away.
+        /// </summary>
+        public static readonly bool Use8Wide = SimdDispatch.Active >= SimdLevel.Avx2;
 
         /// <summary>512 bytes: the classic permutation, twice. The same values as UnityPerlin's int[512].</summary>
         private static readonly byte[] PB = BuildBytes();
@@ -173,22 +180,34 @@ namespace SeedLab.WorldGen.Unity
         /// </summary>
         public static unsafe void PerlinNoise8(float* xs, float* ys, float* dst)
         {
-            if (Use8Wide)
-            {
-                Vector256<float> vx = Vector256.Load(xs);
-                Vector256<float> vy = Vector256.Load(ys);
-                Vector256<float> lim = Vector256.Create(Domain8);
-                Vector256<float> absMask = Vector256.Create(0x7FFFFFFF).AsSingle();
-                if (Vector256.LessThanAll(Avx.And(vx, absMask), lim) &&
-                    Vector256.LessThanAll(Avx.And(vy, absMask), lim))
-                {
-                    Vector256<float> n = Noise8(vx, vy);
-                    Vector256<float> r = Avx.Divide(Avx.Add(n, Vector256.Create(NormAdd)), Vector256.Create(NormDiv));
-                    r.Store(dst);
-                    return;
-                }
-            }
+            if (Use8Wide && TryPerlinNoise8Vector(xs, ys, dst)) return;
             for (int i = 0; i < 8; i++) dst[i] = PerlinNoise(xs[i], ys[i]);
+        }
+
+        /// <summary>
+        /// The 8-wide body of <see cref="PerlinNoise8"/> without the dispatch test: false, with nothing
+        /// written, when the domain guard sends the batch to scalar. The caller must know AVX2 is
+        /// supported. <see cref="PerlinNoise8"/> reaches it only through <see cref="Use8Wide"/>; the
+        /// self-test's <c>--simd-all</c> calls it directly, to prove the vector path on a machine where
+        /// <c>--simd scalar</c> keeps it switched off.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static unsafe bool TryPerlinNoise8Vector(float* xs, float* ys, float* dst)
+        {
+            Vector256<float> vx = Vector256.Load(xs);
+            Vector256<float> vy = Vector256.Load(ys);
+            Vector256<float> lim = Vector256.Create(Domain8);
+            Vector256<float> absMask = Vector256.Create(0x7FFFFFFF).AsSingle();
+            if (Vector256.LessThanAll(Avx.And(vx, absMask), lim) &&
+                Vector256.LessThanAll(Avx.And(vy, absMask), lim))
+            {
+                Vector256<float> n = Noise8(vx, vy);
+                Vector256<float> r = Avx.Divide(Avx.Add(n, Vector256.Create(NormAdd)), Vector256.Create(NormDiv));
+                r.Store(dst);
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>

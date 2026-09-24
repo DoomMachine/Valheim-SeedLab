@@ -533,6 +533,7 @@ options work on either side of the command name:
 | `--ignore-running-game` | do not drop to `background` when Valheim is running. |
 | `--skip-self-test` | do not check this machine against the recorded goldens. `seed`, `at`, `map`, `locations` and `search` then say `warning: the machine self-test was turned off: SeedLab's bit-exactness is UNVERIFIED on this run` (commands that do not build a world stay quiet). |
 | `--accept-unverified-platform` | proceed on an architecture the gates have never run on (see [`docs\limits.md`](docs/limits.md)). |
+| `--simd auto\|scalar\|avx2\|avx512` | the widest vector path the generator may use. **Default `auto`**: the widest this CPU and the .NET runtime allow (AVX2 today; AVX-512 is detected but has no kernel yet). Every path is proved to give the same bits, so this changes only speed - `scalar` can be faster on CPUs with slow gathers. See [`docs\cpu-compatibility.md`](docs/cpu-compatibility.md). |
 
 **Auto-throttle.** If Valheim is running when a command starts, SeedLab drops to background mode by
 itself and prints one line saying so and how to override it:
@@ -548,7 +549,8 @@ recorded native values — and **fails closed**: one divergent value and the com
 the platform, the suite, the first failing case with both numbers, and what to do. Demonstrated by
 altering one recorded hash by 1 in a copy of `groundtruth\natives`, which made `vseed seed 12345`
 exit 1 with `seedlab/natives: 263779/263780 exact`. A pass writes a stamp in `<cache root>\selftest`
-and costs nothing again.
+and costs nothing again - until the processor, the vector path, a .NET runtime switch or the C
+runtime's `ucrtbase.dll` changes, each of which is part of the stamp and re-runs the test.
 
 **`vseed clean`** reports what SeedLab is holding on disk, per category, with the volume's free
 space, and removes the caches with `--yes` (`--what checkpoints,maps,tiles,scratch,runs,selftest,logs,all`).
@@ -755,8 +757,17 @@ folder or to Steam Cloud.**
 ### `vseed data`, `vseed selftest`, `vseed bench`
 
 `data` reports the shipped game data and whether it matches your install. `selftest` re-checks this
-build against the ground truth. `bench` measures each stage on your machine, so any throughput
-estimate is anchored to a number you watched being produced:
+build against the ground truth. `selftest --report` is the **machine report** - the processor, its
+instruction sets, the vector path SeedLab chose and why, the C runtime's version, the machine
+self-test run there and then, and world fingerprints of 8 seeds compared with the reference machine's.
+It needs neither `groundtruth\` nor `data\`, contains no machine name, user name or path, and is what
+to send when SeedLab runs on a CPU it has not been tested on ([`docs\cpu-compatibility.md`](docs/cpu-compatibility.md)).
+If SeedLab stops at start-up because its AVX2 path disagrees with the reference on your CPU, it still
+runs bit-exactly on the scalar path: send `vseed --simd scalar selftest --report` instead, which then
+starts, proves the AVX2 path separately and prints where it differs. `--report` runs the self-test
+even when `--skip-self-test` is given.
+`bench` measures each stage on your machine, so any throughput estimate is anchored to a number you
+watched being produced:
 
 ```
 $ vseed bench --no-map
@@ -770,13 +781,39 @@ Bench  (16 logical cores, .NET 10.0.12)
   shortest-text inverse              2,000 in 1.612 s               1241 seeds/s, 1 thread
 ```
 
+### `vseed profile`
+
+Where one seed's time goes, phase by phase: the generator's constructor, the lake/river/stream
+pre-generation and its nine steps, the biome and height passes per sampling grid, the structure
+counts, and the location world build (the 2048^2 point grid, the sectors, the alt biomes, the
+placement). With no options it runs a fixed battery; `--tier`, `--grid`, `--prefix`, `--seeds` and
+`--threads 1,8,16` narrow or widen it, `--counters` also counts per-point events (base heights, world
+angles, river lookups), and `--out profile.json` keeps the result (`seedlab-profile/1`, with
+`--per-seed` a CSV beside it). `vseed profile --help` has the rest.
+
+- **It changes no answer.** Timestamps are taken only at phase boundaries, generator code can write
+  the profiler but never read it (an IL check in the tests enforces that), and the world fingerprints
+  of 64 seeds - every biome, height, river point and placed location - are bit-identical with the
+  profiler off, on, and on with counters.
+- **It says when its numbers are not measurements.** It watches the machine for 30 s first and the
+  whole time it runs; another `vseed` or SeedLab test, a running Valheim, a busy build or a heavy
+  background load marks the run **TAINTED**, naming what it saw. The load is judged on the whole
+  machine, so a protected process whose own CPU time Windows will not show (an antivirus scan, the
+  search indexer, an update) counts too, and a baseline that was itself busy does not raise the limit.
+  A tainted profile is a smoke test, not a figure to quote - `docs\measurements.md` stays the only
+  source of throughput numbers.
+- `--overhead` measures what the profiler itself costs (and, with `--baseline <another vseed.exe>`,
+  what this build costs with the profiler off against another build). It times the counters itself, so
+  it refuses `--counters` and a `SEEDLAB_PROFILE_COUNTERS=1` left in the environment; every other
+  command prints a warning when that variable is set, because it slows every world.
+
 ---
 
 ## The session logs, and a file another program holds
 
 Every command that starts SeedLab's runtime — `seed`, `at`, `map`, `locations`, `search`, `explain`,
-`serve`, `selftest`, `bench` and `clean` — keeps a log of what it did, and SeedLab keeps two of them
-(the user's decision of 2026-09-24: *"a current log, and a last session log"*):
+`serve`, `selftest`, `bench`, `profile` and `clean` — keeps a log of what it did, and SeedLab keeps two
+of them, this session's and the last one's:
 
 ```
 %LOCALAPPDATA%\SeedLab\logs\vseed.log         this session's      (with --cache-dir: <that folder>\logs\)

@@ -38,6 +38,14 @@ namespace SeedLabTests
             // separate, sub-second suite: dotnet run --project tests\SeedLab.Tests -- natives [--verbose]
             if (args.Length > 0 && args[0] == "natives") return NativesGoldens.Run(args);
 
+            // PT1: generator code writes the profiler and never reads it - an IL-level check, seconds:
+            // dotnet run --project tests\SeedLab.Tests -c Release -- profile-tripwire
+            if (args.Length > 0 && args[0] == "profile-tripwire") return ProfileTripwire.Run(args);
+
+            // ST1: no API that could change a last bit is referenced by the generator; no P/Invoke:
+            // dotnet run -c Release --project tests\SeedLab.Tests -- numerics-tripwire
+            if (args.Length > 0 && args[0] == "numerics-tripwire") return NumericsTripwire.Run(args);
+
             string world = (args.Length > 0 && !args[0].StartsWith("-")) ? args[0] : "asdasdasd";
             int seed = world switch
             {

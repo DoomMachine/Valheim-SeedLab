@@ -74,6 +74,14 @@ namespace SeedLab.Cli.Infra
                     "background is ~25 % of the cores at BelowNormal, balanced (the default) ~50 %, full all of them");
             }
 
+            // --simd was applied by Main before anything loaded the generator; it is read here only so
+            // RejectUnknown does not call a documented global a typo. The dispatch it produced is handed
+            // to the runtime layer, which cannot see the generator: it goes into the self-test stamp and
+            // the machine block, so a pass earned on one vector path is never trusted on another.
+            a.Get("simd");
+            SeedLab.Runtime.Hardware.HardwareProbe.ReportDispatch(
+                SeedLab.WorldGen.Simd.SimdDispatch.Key, SeedLab.WorldGen.Simd.SimdDispatch.Summary);
+
             RuntimeOptions options = new RuntimeOptions
             {
                 Mode = mode,
@@ -127,6 +135,18 @@ namespace SeedLab.Cli.Infra
             if (rt.SelfTest != null && rt.SelfTest.Status == SelfTestStatus.Skipped)
             {
                 Out.Warn(rt.SelfTest.Message);
+            }
+
+            // The profiler's per-point counters are switched by an environment variable that any process
+            // reads. Left set in a shell, it would make every search, bench and page slower with nothing on
+            // screen to say why; 'vseed profile' prints the switch itself, every other command says it here.
+            if (SeedLab.WorldGen.Diagnostics.PhaseClock.CountersOn && !string.Equals(command, "profile", StringComparison.Ordinal))
+            {
+                string line = SeedLab.WorldGen.Diagnostics.PhaseClock.EnvironmentVariable + "=1 is set: the profiler's per-point "
+                              + "counters are ON in this process, so it runs slower than normal (no result changes). Unset the "
+                              + "variable for normal speed.";
+                Out.Warn(line);
+                rt._extra.Add(line);
             }
 
             return rt;

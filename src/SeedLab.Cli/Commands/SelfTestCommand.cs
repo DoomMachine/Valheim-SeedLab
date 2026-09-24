@@ -11,6 +11,8 @@ using SeedLab.Render.Png;
 using SeedLab.Saves;
 using SeedLab.Seeds;
 using SeedLab.WorldGen;
+using SeedLab.WorldGen.Simd;
+using SeedLab.WorldGen.Unity;
 
 namespace SeedLab.Cli.Commands
 {
@@ -38,6 +40,17 @@ Options:
   --threads <n>
   --json
 
+Machine checks (no ground truth needed - they work on a clone of the public repository):
+  --report         the machine report to send when SeedLab runs on a CPU it has not been
+                   tested on: the processor, its ISA flags, the vector path chosen and why,
+                   the C runtime's version, the machine self-test run now, every Perlin path
+                   the hardware has, the libm-dense digests, and world fingerprints of 8
+                   seeds compared with the reference machine's (terrain always; locations when
+                   data\ is present). No machine name, user name or path. --seeds <n> (1-64)
+                   fingerprints more seeds; --json prints every digest in full
+  --isa-json       this process's ISA flags and vector dispatch as JSON (the knob matrix reads it)
+  --simd-all       prove every Perlin path this hardware supports, not only the active one
+
 Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not found.";
 
         private sealed class Check
@@ -51,6 +64,40 @@ Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not fo
 
         public static int Run(Args a, Out o, CliRuntime rt)
         {
+            // The machine checks need no ground truth, so they branch before it is looked for: a
+            // tester on another CPU has a clone of the public repository, which does not carry it.
+            if (a.Flag("isa-json"))
+            {
+                a.RejectUnknown();
+                return SeedLab.Cli.Analysis.MachineReport.IsaJson(rt);
+            }
+
+            if (a.Flag("report")) return SeedLab.Cli.Analysis.MachineReport.Report(a, o, rt);
+
+            if (a.Flag("simd-all"))
+            {
+                a.RejectUnknown();
+                string proof = PerlinSelfTest.ProveEveryPath();
+                if (o.Json)
+                {
+                    o.J.WriteStartObject();
+                    o.J.WriteString("command", "selftest --simd-all");
+                    o.J.WriteString("dispatch", SimdDispatch.Summary);
+                    o.J.WriteString("reason", SimdDispatch.Reason);
+                    o.J.WriteString("perlin", proof);
+                    o.J.WriteBoolean("passed", true);
+                    o.J.WriteEndObject();
+                    return ExitCodes.Ok;
+                }
+
+                o.Header("Every vector path this hardware supports");
+                o.Field("simd path", SimdDispatch.Summary);
+                o.Field("reason", SimdDispatch.Reason);
+                o.Field("perlin", proof);
+                o.Line();
+                return ExitCodes.Ok;
+            }
+
             bool quick = a.Flag("quick");
             bool doMap = a.Flag("map", true);
             bool strict = a.Flag("strict");
@@ -99,6 +146,18 @@ Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not fo
                                     : "DIFFERENT: installed " + installedHash + ", verified against " + Verified.AssemblyValheimSha256),
                 Pass = buildMatches,
                 Gating = strict,
+            });
+
+            // ---- the vector path this run used -------------------------------------------------------
+            // Not a gate of its own - the Perlin self-test already refused to load if the active path
+            // differed from the reference - but every sweep below ran on it, so it is named.
+            checks.Add(new Check
+            {
+                Id = "D1",
+                What = "vector path the sweeps below ran on (proved against the reference at startup)",
+                Result = SimdDispatch.Summary + "; " + (PerlinFast.Use8Wide ? "8-wide Perlin in use" : "scalar Perlin in use"),
+                Pass = true,
+                Gating = false,
             });
 
             // ---- seed maths ------------------------------------------------------------------------

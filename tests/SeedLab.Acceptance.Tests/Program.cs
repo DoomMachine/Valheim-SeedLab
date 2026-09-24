@@ -10,6 +10,8 @@ namespace SeedLabAcceptanceTests
     /// SeedLab's permanent acceptance gate.
     ///
     ///   dotnet run -c Release --project tests\SeedLab.Acceptance.Tests [-- --serial] [--samples N]
+    ///   dotnet run -c Release --project tests\SeedLab.Acceptance.Tests -- --profile-neutrality [--seeds N] [--threads N]
+    ///   dotnet run -c Release --project tests\SeedLab.Acceptance.Tests -- --level-matrix [--seeds N] [--threads N] [--levels K0,K3,K6,K7,K8]
     ///
     /// It regenerates both ground-truth worlds pixel by pixel against what the game itself wrote,
     /// cross-checks the save readers, and round-trips the seed maths. Exit code 0 only if every gating
@@ -33,6 +35,14 @@ namespace SeedLabAcceptanceTests
             // --probe <seed> <x> <z> prints the intermediates at one point. It is here because the only
             // way to localise a sub-ULP height disagreement is to look at the factors that produce it.
             if (args.Length >= 4 && args[0] == "--probe") return Probe(args);
+            // Profiling changes no result: the recorded world fingerprints, recomputed with the profiler
+            // off, with phases on and (in a child process) with counters on. Separate from the default
+            // suite because it places every location of 64 worlds three times - minutes, not seconds.
+            if (args.Length >= 1 && args[0] == "--profile-neutrality") return ProfileNeutrality.Run(args);
+            if (args.Length >= 1 && args[0] == "--record-fingerprints") return ProfileNeutrality.Record(args);
+            if (args.Length >= 1 && args[0] == "--fingerprint-child") return ProfileNeutrality.Child(args);
+            if (args.Length >= 1 && args[0] == "--level-matrix") return LevelMatrix.Run(args);
+            if (args.Length >= 1 && args[0] == "--level-child") return LevelMatrix.Child(args);
             if (args.Length >= 1 && args[0] == "--dn-variants")
             {
                 foreach (WorldFixture wf in WorldFixture.All) DeepNorthVariants.Run(wf);

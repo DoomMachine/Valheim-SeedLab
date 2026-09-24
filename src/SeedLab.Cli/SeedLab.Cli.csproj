@@ -47,4 +47,11 @@
     <ProjectReference Include="..\SeedLab.Locations\SeedLab.Locations.csproj" />
     <ProjectReference Include="..\SeedLab.Contracts\SeedLab.Contracts.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- 'vseed selftest' with its report option compares this machine's world fingerprints with the reference
+         machine's. One recording, kept with the acceptance suite that checks every build and every
+         vector level against it; embedded here so a tester's report can say "equal" by itself. -->
+    <EmbeddedResource Include="..\..\tests\SeedLab.Acceptance.Tests\WorldFingerprintReference.json"
+                      LogicalName="SeedLab.Cli.WorldFingerprintReference.json" />
+  </ItemGroup>
 </Project>
