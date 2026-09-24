@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The search engine's SAFETY suite: what the output layer does to the disk, to memory and to a
+    hard kill. It is deliberately a separate project from tests\SeedLab.Search.Tests, which answers
+    "is the answer right" and reaches none of this code - every one of its 70 checks constructs
+    SeedEvaluator, CompiledQuery, ScanPlan or Presets directly, so it would still pass with every
+    fix in this suite reverted. That gap is what decisions item 9 calls a tripwire that is not
+    tested, and this project is it.
+
+    It is a console program with subcommands rather than a single run, because two of the things it
+    proves can only be proved by killing a process:
+
+      proof bounded    the keep setting is a real cap: the file holds exactly N records and they are exactly
+                       the top N an unbounded run writes, seed for seed
+      proof memory     a whole-space plan (the whole int32 range) is enumerated lazily and the block queue is bounded
+      proof run        one leg of a killable run (used by killtest.ps1, not usually run by hand)
+      proof rotate     1 GB-style segments, gzip, manifest, and reduce-then-delete; add the csv switch to
+                       check that every segment carries its own header
+      proof refuse     every refusal: non-mergeable reductions, a rotated JSON array, resuming a
+                       rotated run, an all-must-have bounded query, and the 100 %-match warning
+      proof policy     the per-goal grid policy over every shipped preset
+      proof region     the measured cost of a region restriction at several radii
+      proof estimate   the live projection against what the run really did
+      proof screen     screen-then-verify returns the same seeds AND the same records as a pure
+                       12 m run - the check that makes the whole mechanism trustworthy
+
+      killtest.ps1     hard-kills a run at three points and resumes it, then compares SHA-256 with
+                       an uninterrupted run. Run it twice: bare, and with the KeepAll switch.
+
+    Exit code is 0 when the subcommand's own checks pass.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>proof</AssemblyName>
+    <RootNamespace>Proof</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SeedLab.Search\SeedLab.Search.csproj" />
+    <ProjectReference Include="..\..\src\SeedLab.Seeds\SeedLab.Seeds.csproj" />
+  </ItemGroup>
+</Project>

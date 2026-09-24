@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- ZoneSystem location placement + AltBiome biome-point grid. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Data\SeedLab.Data.csproj" />
+    <!-- LocationDef / AltBiomeDef: the dumped asset table is the engine's only source of parameters. -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Contracts\SeedLab.Contracts.csproj" />
+    <!-- GetStableHashCode: the per-location RNG stream seed and the .db2 prefab hash. -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Seeds\SeedLab.Seeds.csproj" />
+  </ItemGroup>
+</Project>

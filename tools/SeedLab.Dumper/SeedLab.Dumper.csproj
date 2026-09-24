@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    SeedLab game-data dumper: the only project in this tree that touches Unity or the game.
+    Based on .claude\skills\valheim-modding\assets\plugin-template\ExampleMod.csproj.
+
+    Build (from _ModSource\SeedLab):
+      dotnet build tools\SeedLab.Dumper\SeedLab.Dumper.csproj -v quiet
+    (an XML comment cannot contain a double hyphen, so the nologo switch is not spelled out here)
+
+    DeployToGame defaults to FALSE here, the opposite of the template. This plugin must not sit in
+    BepInEx\plugins during normal play; the user decides when it is installed. Set DeployToGame to
+    true on the command line only when that decision has been made.
+  -->
+
+  <PropertyGroup>
+    <ModName>SeedLab.Dumper</ModName>
+    <ModAuthor>DoomMachine</ModAuthor>
+
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>$(ModName)</AssemblyName>
+    <RootNamespace>SeedLab.Dumper</RootNamespace>
+    <Version>1.0.0</Version>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>build\</OutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DebugType>portable</DebugType>
+
+    <!-- The game and BepInEx assemblies carry no nullable annotations, so enabling the feature here
+         would only produce noise about types we do not control. The shared DTOs in
+         SeedLab.Contracts keep their annotations. -->
+    <Nullable>disable</Nullable>
+
+    <!-- Unity's assemblies bind other System.* versions than netstandard2.1; harmless for a mod. -->
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
+
+    <ValheimDir Condition="'$(ValheimDir)' == ''">E:\SteamLibrary\steamapps\common\Valheim</ValheimDir>
+    <ValheimManaged>$(ValheimDir)\valheim_Data\Managed</ValheimManaged>
+    <BepInExCore>$(ValheimDir)\BepInEx\core</BepInExCore>
+    <DeployToGame Condition="'$(DeployToGame)' == ''">false</DeployToGame>
+    <DeployDir>$(ValheimDir)\BepInEx\plugins\$(ModAuthor)-SeedLabDumper\</DeployDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SeedLab.Contracts\SeedLab.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Private=false: game assemblies must never be copied next to the plugin. -->
+    <Reference Include="assembly_valheim">        <HintPath>$(ValheimManaged)\assembly_valheim.dll</HintPath>        <Private>false</Private></Reference>
+    <Reference Include="assembly_utils">          <HintPath>$(ValheimManaged)\assembly_utils.dll</HintPath>          <Private>false</Private></Reference>
+    <!-- Localization lives here, not in assembly_valheim: it is what turns 'GDKing' into 'The Elder'. -->
+    <Reference Include="assembly_guiutils">       <HintPath>$(ValheimManaged)\assembly_guiutils.dll</HintPath>       <Private>false</Private></Reference>
+    <Reference Include="SoftReferenceableAssets"> <HintPath>$(ValheimManaged)\SoftReferenceableAssets.dll</HintPath> <Private>false</Private></Reference>
+    <Reference Include="UnityEngine">             <HintPath>$(ValheimManaged)\UnityEngine.dll</HintPath>             <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule">  <HintPath>$(ValheimManaged)\UnityEngine.CoreModule.dll</HintPath>  <Private>false</Private></Reference>
+    <Reference Include="Unity.InputSystem">       <HintPath>$(ValheimManaged)\Unity.InputSystem.dll</HintPath>       <Private>false</Private></Reference>
+    <Reference Include="BepInEx">                 <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>                    <Private>false</Private></Reference>
+    <Reference Include="0Harmony">                <HintPath>$(BepInExCore)\0Harmony.dll</HintPath>                   <Private>false</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="DeployPlugin" AfterTargets="Build" Condition="'$(DeployToGame)' == 'true'">
+    <MakeDir Directories="$(DeployDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(DeployDir)" ContinueOnError="true" />
+    <Copy SourceFiles="$(TargetDir)SeedLab.Contracts.dll" DestinationFolder="$(DeployDir)" ContinueOnError="true" />
+    <Message Importance="high" Text="Deployed $(ModName) + SeedLab.Contracts.dll to $(DeployDir)" />
+  </Target>
+
+</Project>

@@ -1,0 +1,210 @@
+# The 183-row location listing, in the order the dropdown and 'vseed locations' render it:
+# bosses A-Z, traders A-Z, then the rest by biome in the map legend's order, with the
+# several-biome residue last. Format:  <display name>  (<prefab>)  q=<m_quantity> oi=<orderedIndex>
+# <biomes> <flags>.  The test reads only the display name and the prefab; the rest is here so a
+# human can check a row without opening the dump.
+#
+# Measured from data\1.0.15-59f53fb5\ on 2026-09-24. THREE rows differ from the listing this file
+# was copied from, and deliberately: AncientUpgradeStation, Hildir_plainsfortress and
+# CharredFortress carry a Location.m_discoverLabel, and the ruling is that a resolved discoverLabel
+# IS the place's name - so they read 'Forge of Potential', 'Sealed Tower' and 'Charred Fortress',
+# and the first two therefore sort under F and S instead of under A and H. The earlier listing
+# showed their prefabs because it was written before that ruling. DN_Bossroom is the fourth
+# discoverLabel prefab; it is captioned by its boss and keeps 'Aesir Passage' as an alias only.
+#
+--- [0] Bosses  (8)
+  Bonemass                       (Bonemass)                       q=5    oi=4    Swamp                        prioritized
+  Eikthyr                        (Eikthyrnir)                     q=3    oi=1    Meadows                      prioritized
+  Fader                          (FaderLocation)                  q=3    oi=16   Ashlands                     prioritized
+  Kall Fimbulbringer             (DN_Bossroom)                    q=3    oi=22   Deep North                   prioritized
+  Moder                          (Dragonqueen)                    q=3    oi=7    Mountain                     prioritized
+  The Elder                      (GDKing)                         q=4    oi=3    Black Forest                 prioritized
+  The Queen                      (Mistlands_DvergrBossEntrance1)  q=5    oi=11   Mistlands                    dungeon x1,prioritized
+  Yagluth                        (GoblinKing)                     q=4    oi=2    Plains                       prioritized
+--- [1] Traders  (3)
+  Haldor                         (Vendor_BlackForest)             q=10   oi=6    Black Forest                 unique,prioritized
+  Hildir                         (Hildir_camp)                    q=10   oi=13   Meadows                      unique,prioritized
+  The Bog Witch                  (BogWitch_Camp)                  q=10   oi=21   Swamp                        unique,prioritized
+--- [2] Meadows  (22)
+  CombatRuin01                   (CombatRuin01)                   q=5    oi=101  Meadows                      
+  Runestone_Boars                (Runestone_Boars)                q=50   oi=96   Meadows                      
+  Runestone_Meadows              (Runestone_Meadows)              q=100  oi=95   Meadows                      
+  ShipSetting01                  (ShipSetting01)                  q=100  oi=81   Meadows                      
+  StartTemple                    (StartTemple)                    q=1    oi=0    Meadows                      prioritized
+  StoneCircle                    (StoneCircle)                    q=25   oi=23   Meadows                      
+  WoodFarm1                      (WoodFarm1)                      q=10   oi=59   Meadows                      dungeon x1
+  WoodHouse1                     (WoodHouse1)                     q=20   oi=46   Meadows                      
+  WoodHouse2                     (WoodHouse2)                     q=20   oi=47   Meadows                      
+  WoodHouse3                     (WoodHouse3)                     q=20   oi=48   Meadows                      
+  WoodHouse4                     (WoodHouse4)                     q=20   oi=49   Meadows                      
+  WoodHouse5                     (WoodHouse5)                     q=20   oi=50   Meadows                      
+  WoodHouse6                     (WoodHouse6)                     q=20   oi=51   Meadows                      
+  WoodHouse7                     (WoodHouse7)                     q=20   oi=52   Meadows                      
+  WoodHouse8                     (WoodHouse8)                     q=20   oi=53   Meadows                      
+  WoodHouse9                     (WoodHouse9)                     q=20   oi=54   Meadows                      
+  WoodHouse10                    (WoodHouse10)                    q=20   oi=55   Meadows                      
+  WoodHouse11                    (WoodHouse11)                    q=20   oi=56   Meadows                      
+  WoodHouse12                    (WoodHouse12)                    q=20   oi=57   Meadows                      
+  WoodHouse13                    (WoodHouse13)                    q=20   oi=58   Meadows                      
+  WoodVillage1                   (WoodVillage1)                   q=15   oi=60   Meadows                      dungeon x1
+  WoodVillage2                   (WoodVillage2)                   q=15   oi=167  Meadows                      dungeon x1,alt:Dark Meadows
+--- [3] Black Forest  (23)
+  BearCave                       (BearCave)                       q=50   oi=166  Black Forest                 
+  BigRockClearing                (BigRockClearing)                q=10   oi=102  Black Forest                 unique
+  Crypt2                         (Crypt2)                         q=200  oi=31   Black Forest                 dungeon x1
+  Crypt3                         (Crypt3)                         q=200  oi=65   Black Forest                 dungeon x1
+  Crypt4                         (Crypt4)                         q=200  oi=66   Black Forest                 dungeon x1
+  Greydwarf_camp1                (Greydwarf_camp1)                q=300  oi=24   Black Forest                 
+  Hildir_crypt                   (Hildir_crypt)                   q=3    oi=14   Black Forest                 dungeon x1,prioritized
+  Ruin1                          (Ruin1)                          q=200  oi=32   Black Forest                 
+  Ruin2                          (Ruin2)                          q=200  oi=33   Black Forest                 
+  Runestone_BlackForest          (Runestone_BlackForest)          q=50   oi=99   Black Forest                 
+  Runestone_Greydwarfs           (Runestone_Greydwarfs)           q=25   oi=25   Black Forest                 
+  StoneHouse3                    (StoneHouse3)                    q=200  oi=34   Black Forest                 
+  StoneHouse4                    (StoneHouse4)                    q=200  oi=35   Black Forest                 
+  StoneTowerRuins03              (StoneTowerRuins03)              q=80   oi=76   Black Forest                 
+  StoneTowerRuins07              (StoneTowerRuins07)              q=80   oi=77   Black Forest                 
+  StoneTowerRuins07_sunk         (StoneTowerRuins07_sunk)         q=10   oi=168  Black Forest                 alt:Ruin Black Forest
+  StoneTowerRuins08              (StoneTowerRuins08)              q=80   oi=78   Black Forest                 
+  StoneTowerRuins08_sunk         (StoneTowerRuins08_sunk)         q=10   oi=169  Black Forest                 alt:Ruin Black Forest
+  StoneTowerRuins09              (StoneTowerRuins09)              q=80   oi=79   Black Forest                 
+  StoneTowerRuins09_sunk         (StoneTowerRuins09_sunk)         q=10   oi=170  Black Forest                 alt:Ruin Black Forest
+  StoneTowerRuins10              (StoneTowerRuins10)              q=80   oi=80   Black Forest                 
+  StoneTowerRuins10_sunk         (StoneTowerRuins10_sunk)         q=10   oi=171  Black Forest                 alt:Ruin Black Forest
+  TrollCave02                    (TrollCave02)                    q=200  oi=61   Black Forest                 
+--- [4] Swamp  (17)
+  FireHole                       (FireHole)                       q=75   oi=29   Swamp                        
+  Grave1                         (Grave1)                         q=200  oi=26   Swamp                        
+  InfestedTree01                 (InfestedTree01)                 q=700  oi=67   Swamp                        
+  Runestone_Draugr               (Runestone_Draugr)               q=50   oi=30   Swamp                        
+  Runestone_Swamps               (Runestone_Swamps)               q=100  oi=97   Swamp                        
+  SunkenCrypt4                   (SunkenCrypt4)                   q=175  oi=5    Swamp                        dungeon x1,prioritized
+  SwampHut1                      (SwampHut1)                      q=50   oi=68   Swamp                        
+  SwampHut1_1                    (SwampHut1_1)                    q=50   oi=172  Swamp                        alt:Hut Swamp
+  SwampHut2                      (SwampHut2)                      q=50   oi=69   Swamp                        
+  SwampHut2_1                    (SwampHut2_1)                    q=50   oi=173  Swamp                        alt:Hut Swamp
+  SwampHut3                      (SwampHut3)                      q=50   oi=70   Swamp                        
+  SwampHut3_1                    (SwampHut3_1)                    q=50   oi=174  Swamp                        alt:Hut Swamp
+  SwampHut4                      (SwampHut4)                      q=50   oi=71   Swamp                        
+  SwampHut5                      (SwampHut5)                      q=25   oi=72   Swamp                        
+  SwampRuin1                     (SwampRuin1)                     q=30   oi=27   Swamp                        
+  SwampRuin2                     (SwampRuin2)                     q=30   oi=28   Swamp                        
+  SwampWell1                     (SwampWell1)                     q=25   oi=73   Swamp                        
+--- [5] Mountain  (16)
+  AbandonedLogCabin02            (AbandonedLogCabin02)            q=33   oi=85   Mountain                     
+  AbandonedLogCabin03            (AbandonedLogCabin03)            q=33   oi=86   Mountain                     
+  AbandonedLogCabin04            (AbandonedLogCabin04)            q=50   oi=87   Mountain                     
+  DrakeLorestone                 (DrakeLorestone)                 q=50   oi=89   Mountain                     
+  DrakeNest01                    (DrakeNest01)                    q=200  oi=82   Mountain                     
+  Forge of Potential             (AncientUpgradeStation)          q=10   oi=8    Mountain                     unique,prioritized
+  Hildir_cave                    (Hildir_cave)                    q=3    oi=12   Mountain                     dungeon x1,prioritized
+  MountainCave02                 (MountainCave02)                 q=120  oi=106  Mountain                     dungeon x1
+  MountainGrave01                (MountainGrave01)                q=100  oi=88   Mountain                     
+  MountainWell1                  (MountainWell1)                  q=25   oi=90   Mountain                     
+  Runestone_Mountains            (Runestone_Mountains)            q=100  oi=98   Mountain                     
+  StoneTowerRuins04              (StoneTowerRuins04)              q=50   oi=74   Mountain                     
+  StoneTowerRuins05              (StoneTowerRuins05)              q=50   oi=75   Mountain                     
+  StoneTowerRuins05_leet         (StoneTowerRuins05_leet)         q=10   oi=175  Mountain                     alt:Fortress Mountain
+  Waymarker01                    (Waymarker01)                    q=50   oi=83   Mountain                     
+  Waymarker02                    (Waymarker02)                    q=50   oi=84   Mountain                     
+--- [6] Plains  (22)
+  GoblinCamp2                    (GoblinCamp2)                    q=200  oi=37   Plains                       dungeon x1
+  GoblinCamp2_1                  (GoblinCamp2_1)                  q=5    oi=176  Plains                       dungeon x1,alt:Goblin Plains
+  GoblinHut01                    (GoblinHut01)                    q=30   oi=177  Plains                       alt:Goblin Plains
+  GoblinHut02                    (GoblinHut02)                    q=30   oi=178  Plains                       alt:Goblin Plains
+  GoblinHut03                    (GoblinHut03)                    q=20   oi=179  Plains                       alt:Goblin Plains
+  Ruin3                          (Ruin3)                          q=50   oi=36   Plains                       
+  Runestone_Plains               (Runestone_Plains)               q=100  oi=100  Plains                       
+  Sealed Tower                   (Hildir_plainsfortress)          q=3    oi=15   Plains                       dungeon x1,prioritized
+  StoneHenge1                    (StoneHenge1)                    q=5    oi=40   Plains                       
+  StoneHenge2                    (StoneHenge2)                    q=5    oi=41   Plains                       
+  StoneHenge3                    (StoneHenge3)                    q=5    oi=42   Plains                       
+  StoneHenge4                    (StoneHenge4)                    q=5    oi=43   Plains                       
+  StoneHenge5                    (StoneHenge5)                    q=20   oi=44   Plains                       
+  StoneHenge6                    (StoneHenge6)                    q=20   oi=45   Plains                       
+  StoneTower1                    (StoneTower1)                    q=50   oi=38   Plains                       
+  StoneTower3                    (StoneTower3)                    q=50   oi=39   Plains                       
+  TarPit1                        (TarPit1)                        q=100  oi=103  Plains                       
+  TarPit1_1                      (TarPit1_1)                      q=50   oi=180  Plains                       alt:Death Plains
+  TarPit2                        (TarPit2)                        q=16   oi=104  Plains                       
+  TarPit2_1                      (TarPit2_1)                      q=20   oi=181  Plains                       alt:Death Plains
+  TarPit3                        (TarPit3)                        q=100  oi=105  Plains                       
+  TarPit3_1                      (TarPit3_1)                      q=100  oi=182  Plains                       alt:Death Plains
+--- [7] Mistlands  (26)
+  Mistlands_DvergrTownEntrance1  (Mistlands_DvergrTownEntrance1)  q=120  oi=9    Mistlands                    dungeon x1,prioritized
+  Mistlands_DvergrTownEntrance2  (Mistlands_DvergrTownEntrance2)  q=120  oi=10   Mistlands                    dungeon x1,prioritized
+  Mistlands_Excavation1          (Mistlands_Excavation1)          q=40   oi=114  Mistlands                    
+  Mistlands_Excavation2          (Mistlands_Excavation2)          q=40   oi=115  Mistlands                    
+  Mistlands_Excavation3          (Mistlands_Excavation3)          q=40   oi=116  Mistlands                    
+  Mistlands_Giant1               (Mistlands_Giant1)               q=250  oi=121  Mistlands                    
+  Mistlands_Giant2               (Mistlands_Giant2)               q=85   oi=122  Mistlands                    
+  Mistlands_GuardTower1_new      (Mistlands_GuardTower1_new)      q=75   oi=107  Mistlands                    
+  Mistlands_GuardTower1_ruined_new (Mistlands_GuardTower1_ruined_new) q=80   oi=108  Mistlands                    
+  Mistlands_GuardTower1_ruined_new2 (Mistlands_GuardTower1_ruined_new2) q=20   oi=109  Mistlands                    
+  Mistlands_GuardTower2_new      (Mistlands_GuardTower2_new)      q=75   oi=110  Mistlands                    
+  Mistlands_GuardTower3_new      (Mistlands_GuardTower3_new)      q=50   oi=111  Mistlands                    
+  Mistlands_GuardTower3_ruined_new (Mistlands_GuardTower3_ruined_new) q=50   oi=112  Mistlands                    
+  Mistlands_Harbour1             (Mistlands_Harbour1)             q=100  oi=117  Mistlands                    
+  Mistlands_Lighthouse1_new      (Mistlands_Lighthouse1_new)      q=100  oi=113  Mistlands                    
+  Mistlands_RoadPost1            (Mistlands_RoadPost1)            q=500  oi=123  Mistlands                    
+  Mistlands_RockSpire1           (Mistlands_RockSpire1)           q=200  oi=120  Mistlands                    
+  Mistlands_Statue1              (Mistlands_Statue1)              q=200  oi=125  Mistlands                    
+  Mistlands_Statue2              (Mistlands_Statue2)              q=200  oi=126  Mistlands                    
+  Mistlands_StatueGroup1         (Mistlands_StatueGroup1)         q=200  oi=124  Mistlands                    
+  Mistlands_Swords1              (Mistlands_Swords1)              q=33   oi=127  Mistlands                    
+  Mistlands_Swords2              (Mistlands_Swords2)              q=33   oi=128  Mistlands                    
+  Mistlands_Swords3              (Mistlands_Swords3)              q=33   oi=129  Mistlands                    
+  Mistlands_Viaduct1             (Mistlands_Viaduct1)             q=100  oi=118  Mistlands                    
+  Mistlands_Viaduct2             (Mistlands_Viaduct2)             q=150  oi=119  Mistlands                    
+  Runestone_Mistlands            (Runestone_Mistlands)            q=50   oi=130  Mistlands                    
+--- [8] Ashlands  (22)
+  AshlandRuins                   (AshlandRuins)                   q=100  oi=142  Ashlands                     dungeon x1
+  Charred Fortress               (CharredFortress)                q=20   oi=20   Ashlands                     prioritized
+  CharredRuins1                  (CharredRuins1)                  q=75   oi=132  Ashlands                     
+  CharredRuins2                  (CharredRuins2)                  q=100  oi=146  Ashlands                     
+  CharredRuins3                  (CharredRuins3)                  q=100  oi=147  Ashlands                     
+  CharredRuins4                  (CharredRuins4)                  q=100  oi=148  Ashlands                     
+  CharredStone_Spawner           (CharredStone_Spawner)           q=300  oi=136  Ashlands                     
+  CharredTowerRuins1             (CharredTowerRuins1)             q=30   oi=138  Ashlands                     
+  CharredTowerRuins1_dvergr      (CharredTowerRuins1_dvergr)      q=30   oi=139  Ashlands                     
+  CharredTowerRuins2             (CharredTowerRuins2)             q=40   oi=140  Ashlands                     
+  CharredTowerRuins3             (CharredTowerRuins3)             q=30   oi=141  Ashlands                     
+  FortressRuins                  (FortressRuins)                  q=100  oi=131  Ashlands                     dungeon x1
+  LeviathanLava                  (LeviathanLava)                  q=100  oi=134  Ashlands                     
+  MorgenHole1                    (MorgenHole1)                    q=40   oi=143  Ashlands                     
+  MorgenHole2                    (MorgenHole2)                    q=40   oi=144  Ashlands                     
+  MorgenHole3                    (MorgenHole3)                    q=40   oi=145  Ashlands                     
+  PlaceofMystery1                (PlaceofMystery1)                q=1    oi=17   Ashlands                     unique,prioritized
+  PlaceofMystery2                (PlaceofMystery2)                q=1    oi=18   Ashlands                     unique,prioritized
+  PlaceofMystery3                (PlaceofMystery3)                q=1    oi=19   Ashlands                     unique,prioritized
+  Runestone_Ashlands             (Runestone_Ashlands)             q=70   oi=133  Ashlands                     
+  SulfurArch                     (SulfurArch)                     q=100  oi=135  Ashlands                     
+  VoltureNest                    (VoltureNest)                    q=350  oi=137  Ashlands                     
+--- [9] Deep North  (17)
+  DN_gammeltrollFrac01           (DN_gammeltrollFrac01)           q=30   oi=164  Deep North                   
+  DN_gammeltrollFrac02           (DN_gammeltrollFrac02)           q=30   oi=165  Deep North                   
+  DN_hut01                       (DN_hut01)                       q=40   oi=157  Deep North                   
+  FrozenShip01_DN                (FrozenShip01_DN)                q=50   oi=153  Deep North                   
+  FrozenShip02_DN                (FrozenShip02_DN)                q=50   oi=154  Deep North                   
+  FrozenShip03_DN                (FrozenShip03_DN)                q=50   oi=155  Deep North                   
+  IcePond1                       (IcePond1)                       q=40   oi=156  Deep North                   
+  LumberCamp                     (LumberCamp)                     q=50   oi=160  Deep North                   
+  MorkBorg                       (MorkBorg)                       q=40   oi=151  Deep North                   dungeon x1
+  NorthMemorialPlace             (NorthMemorialPlace)             q=15   oi=152  Deep North                   
+  NorthVillage                   (NorthVillage)                   q=135  oi=150  Deep North                   dungeon x1
+  Runestone_DeepNorth            (Runestone_DeepNorth)            q=70   oi=163  Deep North                   
+  ShipSetting02                  (ShipSetting02)                  q=100  oi=158  Deep North                   
+  ShipSetting03                  (ShipSetting03)                  q=50   oi=159  Deep North                   
+  ShipWreck01_DN                 (ShipWreck01_DN)                 q=170  oi=161  Deep North                   
+  ShipWreck02_DN                 (ShipWreck02_DN)                 q=120  oi=162  Deep North                   
+  TheHole01                      (TheHole01)                      q=40   oi=149  Deep North                   dungeon x1
+--- Ocean  (0 members - OMITTED)
+--- [11] Several biomes  (7)
+  Dolmen01                       (Dolmen01)                       q=100  oi=62   Meadows/Black Forest         
+  Dolmen02                       (Dolmen02)                       q=100  oi=63   Meadows/Black Forest         
+  Dolmen03                       (Dolmen03)                       q=50   oi=64   Meadows/Black Forest         
+  ShipWreck01                    (ShipWreck01)                    q=25   oi=91   Black Forest/Swamp/Plains/Ocean 
+  ShipWreck02                    (ShipWreck02)                    q=25   oi=92   Black Forest/Swamp/Plains/Ocean 
+  ShipWreck03                    (ShipWreck03)                    q=25   oi=93   Black Forest/Swamp/Plains/Ocean 
+  ShipWreck04                    (ShipWreck04)                    q=25   oi=94   Black Forest/Swamp/Plains/Ocean 
+TOTAL 183

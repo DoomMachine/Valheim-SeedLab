@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Dumped asset tables + DATA-STAMP. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Contracts\SeedLab.Contracts.csproj" />
+  </ItemGroup>
+</Project>

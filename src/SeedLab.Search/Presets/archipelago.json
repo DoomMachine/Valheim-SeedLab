@@ -1,0 +1,48 @@
+{
+  // Archipelago explorer - many small islands, a world you sail rather than walk.
+  // WORKS TODAY.
+  //
+  // WHAT CHANGED, 2026-09-23. Every one of this preset's three goals was measured, and all three
+  // were inert. The file now ships the measured numbers instead.
+  //
+  // 1. GRID 24 -> GRID 12. `island_count` is a connected-component count and no coarse grid
+  //    measures it safely: it is NON-MONOTONE in the grid (median 1 ha count 137/126/119/119/121/
+  //    120/112/141/128 across G12..G384 - it falls, then rises), Spearman against the G12 ranking
+  //    is 0.83 at G24, and with min_area 0 the count moves 77x. A must-have on it at G24 was a
+  //    filter on a different number from the one the preset's own comment described. The engine now
+  //    raises the grid for a goal like this and says so; the preset asks for G12 up front.
+  //
+  // 2. THE THRESHOLD WAS BELOW THE FLOOR. "at least 120 islands of 1 ha or more" passed 256 of 256
+  //    seeds measured at G12: the MINIMUM over that sample is 189 and the median is 225
+  //    (p10 209, p90 244, CV 0.062 - measured 2026-09-23, scratchpad\safe\calib). The old 120 came
+  //    from a number measured with min_area 100,000 m2 (10 ha), where the median really is 138 -
+  //    the two were conflated. The must-have is now 244, the measured p90, so it keeps roughly the
+  //    top tenth of seeds and the preset's name is a claim about the seeds it returns.
+  //
+  // 3. THE TWO RANKING GOALS SCORED THE SAME FOR EVERY SEED. `largest_island_area at_most
+  //    3,000,000` scored exactly 0 for 255 of 256 seeds, because the measured minimum largest
+  //    island at G12 is 3,143,808 m2 (p50 5,267,592, p90 6,585,336). And `land_area between
+  //    80,000,000 and 130,000,000` scored exactly 1.0 for all 256, because land area has a CV of
+  //    0.0215 and its whole measured range - 110,544,624 to 125,940,960 m2 - sits inside that band.
+  //    The land-area goal is deleted: no threshold on a metric with a 2 % spread ranks anything.
+  //    'no-continent' is retuned to the measured p90, where its sub-score runs from 0.52 for the
+  //    smallest largest-island in the sample to 0 for the top tenth.
+  //
+  // 4. A SMALL HOME ISLAND is what "sail rather than walk" actually means on the ground, and
+  //    spawn_island_area is the widest-spread metric in the tool (CV 0.762 at G12: p10 193,176,
+  //    p50 2,258,064, p90 5,471,136 m2), so it ranks well. It is a nice-to-have, never a filter.
+  "version": 1,
+  "defs": 1,
+  "name": "archipelago",
+  "description": "At least 244 islands of 1 ha or more at the game's own grid - about the top tenth of seeds - with no single landmass dominating.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 12, "keep": 100 },
+  "goals": [
+    { "id": "many-islands", "target": "world:island_count", "metric": "island_count",
+      "min_area": 10000, "test": "at_least", "value": 244, "importance": "must" },
+    { "id": "no-continent", "target": "world:largest_island_area", "metric": "largest_island_area",
+      "test": "at_most", "value": 6600000, "importance": "nice", "weight": 2 },
+    { "id": "small-home", "target": "world:spawn_island_area", "metric": "spawn_island_area",
+      "test": "at_most", "value": 3000000, "importance": "nice" }
+  ]
+}

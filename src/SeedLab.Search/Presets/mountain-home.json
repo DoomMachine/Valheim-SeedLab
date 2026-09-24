@@ -1,0 +1,28 @@
+{
+  // Mountain home - a big, high Mountain range near spawn, for a silver and wolf start.
+  // WORKS TODAY.
+  "version": 1,
+  "defs": 1,
+  "name": "mountain-home",
+  "description": "A large Mountain close to the centre, with real altitude on it.",
+  "world": { "gen_version": 2 },
+  // GRID 12, the game's own, and it costs almost nothing here. Both must-haves are bounded by a
+  // disc - 1,500 m for the distance goal, 2,500 m for the area goal - so the engine samples a
+  // 2.5 km disc instead of the 10,500 m world: measured, a 1 km goal at 12 m is 8.16 ms/seed
+  // against 1,324 ms for the whole world. The reason it MUST be 12 m is 'mountain-near': the
+  // resolution study measured the margin a coarse grid needs on nearest_distance(Mountain) at
+  // 927 m at G24 and 3,015 m at G384 - bigger than the 1,500 m the goal is asking for, i.e. the
+  // coarse answer is not an approximation of the exact one at all. Mountain is the one biome with
+  // that problem: for Meadows, Black Forest, Plains, Swamp and Mistlands the margin is <= 46 m.
+  "search": { "order": "shuffled", "grid": 12, "screen": "auto", "screen_grid": 24, "keep": 100 },
+  "goals": [
+    { "id": "mountain-near", "target": "biome:Mountain", "metric": "nearest_distance",
+      "test": "near", "value": 1500, "importance": "must" },
+    { "id": "mountain-big", "target": "biome:Mountain", "metric": "area_within",
+      "radius": 2500, "test": "at_least", "value": 3000000, "importance": "must" },
+    { "id": "high-ground", "target": "biome:Mountain", "metric": "area_above_height",
+      "height": 150, "test": "at_least", "value": 1000000, "importance": "nice", "weight": 2 },
+    { "id": "peak", "target": "world:highest_peak", "metric": "highest_peak",
+      "test": "at_least", "value": 250, "importance": "nice" }
+  ]
+}

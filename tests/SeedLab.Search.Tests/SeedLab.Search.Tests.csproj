@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The search engine's own test suite. It answers the three questions that decide whether a search
+    result can be believed:
+
+      1. Is the deferred lake/river/stream pre-generation the same world as the eager one?
+      2. Does the tiered evaluator return exactly what an unfiltered evaluation returns?
+      3. Does the scan order visit every seed exactly once, with no repeats and no gaps?
+      4. Do the two soundness bugs a verifier found - the T1 probe's 'present' comparison and T0
+         refusing a satisfiable 'between' - stay fixed?
+      5. Is the ordered location prefix exactly what the full 183-entry placement would give, and
+         does the early abort ever change a verdict?
+
+    Run it with:  dotnet run  (project tests/SeedLab.Search.Tests, configuration Release).
+    Pass /quick style argument "quick" for a shorter pass; see Program.cs.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>SeedLab.Search.Tests</AssemblyName>
+    <RootNamespace>SeedLab.SearchTests</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SeedLab.Search\SeedLab.Search.csproj" />
+    <!-- The real ILocationOracle, for section 6: boss/trader/dungeon goals against the dumped table. -->
+    <ProjectReference Include="..\..\src\SeedLab.LocationOracle\SeedLab.LocationOracle.csproj" />
+    <ProjectReference Include="..\..\src\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+    <ProjectReference Include="..\..\src\SeedLab.Seeds\SeedLab.Seeds.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!--
+      The 183-row dropdown listing, as an out-of-source golden. Section 8 regenerates it through the
+      real comparer and diffs it: it is the only guard on the ToLowerInvariant + Ordinal fold, which
+      no pair among the current rows exercises on its own.
+    -->
+    <Content Include="Fixtures\location-groups.golden.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

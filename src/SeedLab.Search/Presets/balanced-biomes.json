@@ -1,0 +1,56 @@
+{
+  // Balanced world, biomes only - the fast one.
+  //
+  // This is 'balanced' with every location goal removed. A location goal forces the 2048^2
+  // biome-and-height point grid that ZoneSystem's candidate-zone draw reads - about 1.9 s per seed
+  // per thread - while these goals are measured off the query's own 192 m sampling grid.
+  //
+  // Use this to narrow the space, then run 'balanced' - or 'vseed explain <seed> balanced' - over
+  // the seeds it keeps.
+  //
+  // MEASURED PASS RATE: 55 of 128 seeds, 43.0 %, at 20.4 seeds/s on 12 threads - against
+  // 'balanced' at 3.0 seeds/s on the same machine in the same minute, a 6.8x difference. It is not
+  // larger than that only because 'balanced' puts a cheap T3 must-have in front of the placement
+  // and so skipped it on 83 of its 128 seeds; a location query with no cheap filter in front of it
+  // pays the full ~2 s every time.
+  //
+  // Every threshold is the measured median of that metric over 831 seeds at this grid, so each
+  // sub-score actually separates seeds instead of sitting at 1.0. AshLands has no goal: its area is
+  // 42,946,560 m2 in ALL 831 of them, because IsAshlands is a fixed circle.
+  "version": 1,
+  "defs": 1,
+  "name": "balanced-biomes",
+  "description": "All nine biomes in usable quantity and a home island worth building on. No locations, so it is fast.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 192, "keep": 200 },
+  "goals": [
+    // The filter. MEASURED: spawn_island_area has median 3.80 km2 at this grid, so 4 km2 keeps
+    // about half the space - and the score below is what orders what survives.
+    // RANKS, does not filter - the same change, for the same measured reason, as in 'balanced'.
+    // spawn_island_area is a connected component and coarse grids merge islands across straits: at
+    // 164 m its median error is 44 %, at 96 m half of the seeds a 3 km2 must-have reports are not
+    // matches at 12 m, and no margin at any grid removes the false negatives (50 % at G24 still lost
+    // 8 of 802 true matches while passing 2,068 of 2,560 seeds). A must-have on it at 192 m was a
+    // filter that quietly both let the wrong seeds through and threw the right ones away. For a
+    // guaranteed home island use 'gentle-start', which runs at the game's own 12 m grid.
+    { "id": "home-island", "target": "world:spawn_island_area", "metric": "spawn_island_area",
+      "test": "at_least", "value": 4000000, "importance": "nice", "weight": 3 },
+
+    { "id": "meadows",     "target": "biome:Meadows",     "metric": "area", "test": "at_least", "value": 10650000, "importance": "nice" },
+    { "id": "blackforest", "target": "biome:BlackForest", "metric": "area", "test": "at_least", "value": 46150000, "importance": "nice" },
+    { "id": "swamp",       "target": "biome:Swamp",       "metric": "area", "test": "at_least", "value": 9180000,  "importance": "nice" },
+    { "id": "mountain",    "target": "biome:Mountain",    "metric": "area", "test": "at_least", "value": 11020000, "importance": "nice" },
+    { "id": "plains",      "target": "biome:Plains",      "metric": "area", "test": "at_least", "value": 44640000, "importance": "nice" },
+    { "id": "mistlands",   "target": "biome:Mistlands",   "metric": "area", "test": "at_least", "value": 59600000, "importance": "nice" },
+    { "id": "deepnorth",   "target": "biome:DeepNorth",   "metric": "area", "test": "at_least", "value": 23920000, "importance": "nice" },
+    { "id": "ocean",       "target": "biome:Ocean",       "metric": "area", "test": "at_most",  "value": 98100000, "importance": "nice" },
+
+    { "id": "big-home", "target": "world:spawn_island_area", "metric": "spawn_island_area",
+      "test": "at_least", "value": 8000000, "importance": "nice", "weight": 3 },
+
+    // MEASURED: Swamp is never further than 2,308 m from the centre at this grid, so this ranks
+    // rather than filters.
+    { "id": "swamp-near", "target": "biome:Swamp", "metric": "nearest_distance",
+      "test": "near", "value": 2100, "importance": "nice", "weight": 2 }
+  ]
+}

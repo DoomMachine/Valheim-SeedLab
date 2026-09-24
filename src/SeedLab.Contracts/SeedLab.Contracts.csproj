@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    DTOs shared with the BepInEx dumper plugin. POCOs only: no Unity references, no I/O, no packages.
+
+    TFMs: spec 08 section 1.2 asks for netstandard2.0;net10.0. netstandard2.0 needs the
+    NETStandard.Library 2.0.3 NuGet package, and this machine has no nuget.org source and no cached
+    copy, so it cannot be restored. netstandard2.1 is shipped as a targeting pack with the SDK, is
+    what the dumper plugin itself targets (Unity's Mono supports it), and is a strict superset of
+    2.0 - so nothing is lost. Change it back to netstandard2.0 if a consumer ever needs it AND the
+    package can be restored.
+  -->
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>SeedLab.Contracts</AssemblyName>
+    <RootNamespace>SeedLab.Contracts</RootNamespace>
+
+    <!-- Every DTO here is written with nullable annotations (string?, int[]?), which are an ERROR of
+         omission rather than of style: without the nullable context the compiler emits CS8632 for
+         each one on BOTH target frameworks and the annotations mean nothing. The repository's
+         Directory.Build.props happens to switch it on for the whole tree, but this project is the one
+         that is copied next to the dumper plugin and built on its own, so it states the requirement
+         itself instead of inheriting it. Do not remove: deleting the line reintroduces the warnings
+         the moment the project is built outside this tree. -->
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

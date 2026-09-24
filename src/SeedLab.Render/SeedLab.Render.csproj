@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    PNG map rendering: field sampling, the biome palette, the compositor and a hand-written PNG
+    encoder/decoder over System.IO.Compression. No packages (SeedLab takes none) and no
+    System.Drawing (Windows-only), so the same source renders on Windows, Linux and macOS.
+
+    SeedLab.Data is deliberately NOT referenced: the only game data the renderer needs is the biome
+    colour table, and that is the MEASURED prefab table from 05-validation.md section 2.1, hard-coded
+    in MapPalette with its evidence. Add the reference if a dumped table ever supersedes it.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>SeedLab.Render</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,622 @@
+/* SeedLab - the local web UI.
+   No web fonts, no external anything: the stack below is what the machine already has. */
+
+:root {
+  --bg:        #0d1115;
+  --bg-2:      #11171d;
+  --panel:     #151c23;
+  --panel-2:   #1a222a;
+  --panel-3:   #202a34;
+  --line:      #263139;
+  --line-2:    #36444f;
+  --ink:       #e7e2d6;
+  --ink-dim:   #9fa9b4;
+  --ink-faint: #6d7985;
+  --accent:    #c9a227;
+  --accent-lo: #8a6f1b;
+  --accent-hi: #e8c75c;
+  --good:      #7fb069;
+  --bad:       #c4573f;
+  --focus:     #74a9d8;
+
+  --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+
+  --sidebar-w: 384px;
+  --top-h: 52px;
+  --r: 6px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select { font: inherit; color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.spacer { flex: 1 1 auto; }
+
+/* ----------------------------------------------------------------- top bar */
+.topbar {
+  height: var(--top-h);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, #171f27, #121920);
+  border-bottom: 1px solid var(--line);
+  position: relative;
+  z-index: 5;
+}
+
+.brand { display: flex; align-items: center; gap: 8px; color: var(--accent); flex: none; }
+.brand-mark { width: 24px; height: 24px; }
+.brand-name {
+  font-weight: 650; letter-spacing: .14em; text-transform: uppercase;
+  font-size: 13px; color: var(--ink);
+}
+
+.seedbar { display: flex; gap: 6px; flex: 1 1 auto; max-width: 720px; }
+
+.seedinput {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: #0b1014;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  padding: 7px 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.seedinput::placeholder { color: var(--ink-faint); }
+.seedinput:focus { border-color: var(--focus); outline: none; }
+
+.topmeta { display: flex; gap: 8px; align-items: center; flex: none; }
+
+.chip {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.chip-quiet { color: var(--ink-faint); }
+
+/* ------------------------------------------------------------------ layout */
+.layout {
+  display: flex;
+  height: calc(100% - var(--top-h));
+}
+
+.sidebar {
+  width: var(--sidebar-w);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+  border-right: 1px solid var(--line);
+  min-height: 0;
+}
+
+.tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; }
+.tab {
+  flex: 1 1 0;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 9px 4px;
+  color: var(--ink-dim);
+  cursor: pointer;
+  font-size: 13px;
+}
+.tab:hover { color: var(--ink); background: #1a222a; }
+.tab.is-active { color: var(--accent-hi); border-bottom-color: var(--accent); }
+
+.panel { display: none; overflow-y: auto; padding: 12px; gap: 12px; flex-direction: column; min-height: 0; }
+.panel.is-active { display: flex; }
+
+/* ------------------------------------------------------------------- cards */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 11px 12px 12px;
+}
+.card.warn { border-color: #6b4a1e; background: #221a0d; }
+
+.card-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+.card.warn .card-title { color: var(--accent-hi); }
+
+.count { color: var(--ink-faint); font-weight: 400; letter-spacing: 0; text-transform: none; }
+
+.note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+  line-height: 1.5;
+}
+.note code { font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+.note strong { color: var(--ink); font-weight: 600; }
+
+.empty { color: var(--ink-faint); font-size: 12.5px; padding: 2px 0; }
+
+/* -------------------------------------------------------------- key/value */
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; }
+.kv .k { color: var(--ink-faint); white-space: nowrap; }
+.kv .v { font-family: var(--mono); font-size: 12.5px; word-break: break-word; }
+.kv .v.wrap { font-family: var(--sans); font-size: 12.5px; color: var(--ink-dim); }
+.kv .v em { color: var(--ink-faint); font-style: normal; }
+
+/* ------------------------------------------------------------------ tables */
+.table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12.5px; }
+.table th {
+  text-align: left; font-weight: 600; color: var(--ink-faint);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  border-bottom: 1px solid var(--line); padding: 3px 6px 4px;
+}
+.table td { padding: 3px 6px; border-bottom: 1px solid #1c242c; font-family: var(--mono); font-size: 12px; }
+.table td:first-child { font-family: var(--sans); }
+.table .num { text-align: right; }
+.table tbody tr:hover { background: #1b242d; }
+.table.results tbody tr { cursor: pointer; }
+.table.results tbody tr.is-active { background: #24303b; }
+
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px solid #0006; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; border: 1px solid #0006; background: #e8f0ff; }
+
+/* -------------------------------------------------------------------- bars */
+.bars { display: flex; flex-direction: column; gap: 4px; }
+.bar-row { display: grid; grid-template-columns: 96px 1fr 52px; gap: 8px; align-items: center; font-size: 12px; }
+.bar-name { color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { height: 9px; background: #0b1014; border-radius: 2px; overflow: hidden; border: 1px solid #1d262e; }
+.bar-fill { height: 100%; }
+.bar-val { text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
+
+/* ----------------------------------------------------------------- controls */
+.row-inline { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.row-inline label { color: var(--ink-faint); font-size: 12px; }
+.row-inline .grow { flex: 1 1 auto; min-width: 0; }
+
+.grid2 { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; }
+.grid2 label { color: var(--ink-faint); font-size: 12px; }
+
+input[type=text], input[type=number], select {
+  background: #0b1014;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 5px 7px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  min-width: 0;
+}
+select { font-family: var(--sans); }
+input:focus, select:focus { border-color: var(--focus); outline: none; }
+
+.btn {
+  background: var(--panel-3);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.btn:hover { background: #29343f; border-color: #46545f; }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .45; cursor: default; transform: none; }
+.btn-small { padding: 4px 9px; font-size: 12px; }
+.btn-primary { background: #3a3117; border-color: var(--accent-lo); color: var(--accent-hi); }
+.btn-primary:hover { background: #4a3e1c; border-color: var(--accent); }
+
+/* ------------------------------------------------------------------- goals */
+.goals { display: flex; flex-direction: column; gap: 6px; }
+.goal {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 7px;
+}
+.goal-main { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.goal-main select, .goal-main input { padding: 3px 6px; font-size: 12px; }
+.goal-main input[type=number] { width: 78px; }
+.goal-unit { color: var(--ink-faint); font-size: 11.5px; }
+.goal-del {
+  background: none; border: 0; color: var(--ink-faint); cursor: pointer;
+  font-size: 16px; line-height: 1; padding: 0 4px; align-self: start;
+}
+.goal-del:hover { color: var(--bad); }
+.goal.is-must { border-left: 2px solid var(--accent); }
+.goal.is-nice { border-left: 2px solid var(--line-2); }
+
+/* ---------------------------------------------------------------- progress */
+.progress { margin-top: 9px; }
+.progress-bar { height: 5px; background: #0b1014; border-radius: 3px; overflow: hidden; border: 1px solid #1d262e; }
+.progress-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent-lo), var(--accent-hi)); transition: width .2s linear; }
+.progress-text { margin-top: 5px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
+
+/* ----------------------------------------------------------------- markers */
+.markers { display: flex; flex-direction: column; gap: 4px; }
+.marker {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 4px; padding: 4px 6px; font-size: 12px;
+}
+.marker .m-co { font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+.marker .m-name { color: var(--ink-dim); flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.marker button { background: none; border: 0; color: var(--ink-faint); cursor: pointer; padding: 0 3px; }
+.marker button:hover { color: var(--ink); }
+
+/* -------------------------------------------------------------------- keys */
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12.5px; }
+.keys dt { color: var(--ink-dim); }
+.keys dd { margin: 0; color: var(--ink-dim); }
+kbd {
+  font-family: var(--mono); font-size: 11px;
+  background: #0b1014; border: 1px solid var(--line-2); border-bottom-width: 2px;
+  border-radius: 3px; padding: 1px 5px; color: var(--ink);
+}
+
+/* --------------------------------------------------------------------- map */
+.mapwrap { position: relative; flex: 1 1 auto; min-width: 0; background: #080d14; }
+
+#map { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+#map.is-dragging { cursor: grabbing; }
+#map.is-crosshair { cursor: crosshair; }
+
+/* The toolbar answers one question about every control - is this ON? - and it now answers it four
+   times over: with the fill, with the polarity of the text, with a glyph that is a SHAPE, and (for
+   a layer) with the word. The old answer was a hue, and amber in this page is also the active tab,
+   the primary button, a warning, an expensive goal and a boss marker, so "Mark is yellow" read just
+   as easily as "Mark is the recommended action".
+
+   The four measured defects of the old rules, with the toolbar surface composited (#0f151a at e6
+   over the map's #080d14, i.e. #0e1419):
+     - ON vs OFF LABEL CONTRAST was 1.448:1 (--accent-hi over --ink-dim). A non-text state cue needs
+       3:1. A luminance ordering did exist; it was far too faint to be read.
+     - THE PRESSED FILL did not exist: #33291155 composited to about 1.05:1 against the idle button,
+       so the "filled" half of the old design did no work at all.
+     - THE ONLY CUE THAT CLEARED 3:1 was the 1px inset --accent-lo ring, and only over a dark map
+       (3.7:1); over a bright one it fell to 2.94:1, and it is one pixel either way.
+     - A PRESSED CONTROL GOT NO HOVER FEEDBACK. .tool[aria-pressed="true"] and .tool:hover are both
+       specificity (0,2,0) and the pressed rule was declared later, so it won on colour, background
+       AND box-shadow. You could not probe a control's state by pointing at it. The
+       [aria-checked]:hover / [aria-pressed]:hover rules below are what close that.
+
+   The glyphs are drawn from the ARIA attribute and from nothing else, so the picture and the
+   accessibility tree cannot drift apart, and they live in aria-hidden spans so a screen reader says
+   "Mark, radio button, selected" and not "circle Mark". */
+.maptools {
+  position: absolute; top: 10px; left: 10px;
+  /* Wrap rather than slide under the zoom column (.mapzoom is right: 10px and 30px wide). A
+     viewport media query cannot help here: the splitter resizes the map without the window
+     changing at all, so @media would be blind to the case that actually squeezes the bar. */
+  max-width: calc(100% - 60px);
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+  background: #0f151ae6;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 4px;
+  backdrop-filter: blur(3px);
+}
+
+/* Which group this is - and, through aria-labelledby, the group's accessible name, so the text is
+   not announced twice. --ink-dim and not --ink-faint: at 10px on this surface --ink-faint is
+   4.17:1, under AA, and this is the label that teaches "one of these three". */
+.grp-label {
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-dim); padding: 0 1px 0 3px; white-space: nowrap; user-select: none;
+}
+
+/* The three modes are ONE control - exactly one of them is always on - and the box says so. */
+.seg { display: flex; gap: 2px; padding: 2px; background: #0b1014; border: 1px solid var(--line-2); border-radius: 5px; }
+.switches { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+
+.tool {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  /* 1px transparent border where there used to be none, and the padding drops 5px 10px -> 4px 9px
+     to pay for it, so the bar keeps its height. */
+  background: none; border: 1px solid transparent; border-radius: 4px;
+  padding: 4px 9px; cursor: pointer; font-size: 12px; color: var(--ink-dim);
+}
+.tool:hover { background: #1d2630; color: var(--ink); }
+/* A layer switch stands on its own, so OFF still has to look like a control: outlined and dim. */
+.tool-switch { border-color: var(--line-2); }
+
+/* ON, and it is the same sentence for both kinds of control. 7.83:1 for the text on the fill,
+   7.66:1 for the fill as an area against the toolbar, 6.33:1 against the hover fill. The text is
+   --bg and deliberately NOT --accent-hi, which is 1.47:1 on this fill - the palette's amber-on-amber
+   trap. No font-weight change: a button must not change width when it is pressed. */
+.tool[aria-checked="true"], .tool[aria-pressed="true"] {
+  background: var(--accent); border-color: var(--accent); color: var(--bg); box-shadow: none;
+}
+/* The hover feedback a pressed control used to be denied. */
+.tool[aria-checked="true"]:hover, .tool[aria-pressed="true"]:hover {
+  background: var(--accent-hi); border-color: var(--accent-hi); color: var(--bg);
+}
+
+/* The glyph. A ring for a mode (pick one of these), a box for a switch (each one on its own): the
+   SHAPE says which kind of control it is before the state does, and the fill says the state.
+   currentColor throughout, so the glyph is always exactly as legible as the label beside it, can
+   never disagree with the fill, and asks nothing of any font. */
+.sw { flex: none; width: 10px; height: 10px; box-sizing: border-box; border: 1.5px solid currentColor; }
+.tool-mode .sw { border-radius: 50%; }
+.tool-switch .sw { border-radius: 2px; }
+.tool[aria-checked="true"] .sw, .tool[aria-pressed="true"] .sw { background: currentColor; }
+
+/* The word, for the switches. A fixed min-width so on/off cannot reflow the row. */
+.sw-txt { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; opacity: .8; min-width: 22px; text-align: left; }
+.tool-switch .sw-txt::after { content: "off"; }
+.tool-switch[aria-pressed="true"] .sw-txt::after { content: "on"; }
+
+/* Places has to go and compute before it can be on. It says so - dashed outline, hollow dashed
+   glyph, the word "..." - rather than sitting at OFF for a second, or seven on the full set, while
+   it works. Declared after the pressed rules so the dashes win on a busy control. */
+.tool-switch[aria-busy="true"] { border-style: dashed; color: var(--ink); }
+.tool-switch[aria-busy="true"] .sw { background: none; border-style: dashed; }
+.tool-switch[aria-busy="true"] .sw-txt::after { content: "\2026"; }
+/* A core -> all upgrade is pressed AND busy at the same time: the markers on screen are real while
+   a bigger set computes. Without this rule the busy colour (--ink, (0,2,0), declared later) would
+   land on the --accent fill at about 1.9:1 and the dashed border would be accent-on-accent, i.e.
+   invisible. Restate both in --bg so pressed+busy reads as a light block with a dark dashed edge. */
+.tool-switch[aria-busy="true"][aria-pressed="true"] { color: var(--bg); border-color: var(--bg); }
+
+/* Windows high contrast throws author backgrounds away, so ON is restated in the system's own
+   selected-item colours. The glyph outline and the word survive on their own regardless, and the
+   dashed busy border is a border-STYLE, which forced colors keeps. */
+@media (forced-colors: active) {
+  .tool[aria-checked="true"], .tool[aria-pressed="true"] {
+    forced-color-adjust: none;
+    background: Highlight; color: HighlightText; border-color: HighlightText;
+  }
+  .tool-switch[aria-busy="true"][aria-pressed="true"] { color: HighlightText; border-color: HighlightText; }
+}
+
+.tool-sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 2px; }
+
+.mapzoom { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 3px; }
+.zbtn {
+  width: 30px; height: 30px;
+  background: #0f151ae6; border: 1px solid var(--line); border-radius: 4px;
+  color: var(--ink-dim); cursor: pointer; font-size: 15px; line-height: 1;
+}
+.zbtn:hover { color: var(--ink); background: #1d2630; }
+
+.readout {
+  position: absolute; left: 10px; right: 10px; bottom: 10px;
+  display: flex; align-items: center; gap: 10px;
+  background: #0f151ae6;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+  pointer-events: none;
+}
+.readout .ro-coord { color: var(--ink); }
+.readout .ro-sep { width: 1px; height: 14px; background: var(--line-2); }
+.readout .ro-biome { color: var(--ink); }
+.readout .ro-zoom { color: var(--ink-faint); }
+
+.maphint {
+  position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+  background: #1d2630ee; border: 1px solid var(--line-2); border-radius: var(--r);
+  padding: 6px 12px; font-size: 12px; color: var(--ink);
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- narrow */
+@media (max-width: 900px) {
+  .layout { flex-direction: column-reverse; }
+  .sidebar { width: 100%; border-right: 0; border-top: 1px solid var(--line); max-height: 45%; }
+  .mapwrap { min-height: 55%; }
+  .topbar { flex-wrap: wrap; height: auto; padding: 8px 10px; gap: 8px; }
+  .layout { height: auto; min-height: calc(100% - var(--top-h)); }
+  .topmeta { order: 3; width: 100%; }
+}
+
+/* =====================================================================================
+   Places: categories, type list, the selected marker.
+   The four marker colours are defined ONCE, here, and read back out of the computed style
+   by the canvas so the legend swatch and the marker on the map can never disagree.
+   ===================================================================================== */
+:root {
+  --loc-boss:   #ffcf4d;
+  --loc-trader: #74d69a;
+  --loc-dungeon:#9fb8ff;
+  --loc-feature:#b6a8c9;
+  --loc-pick:   #ff8f5e;
+}
+
+.cats { display: flex; flex-direction: column; gap: 4px; }
+.cat {
+  /* swatch | label | count | the word. Four children, four columns. */
+  display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: center;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
+  padding: 5px 8px; cursor: pointer; font-size: 12.5px; text-align: left; width: 100%;
+  color: var(--ink-dim);
+}
+.cat:hover { background: var(--panel-3); color: var(--ink); }
+/* The same sentence as the toolbar, and opacity: .5 is gone. It put the label at 2.74:1 (AA wants
+   4.5) and, worse, it faded the category's own canvas-drawn swatch with it - boss amber #ffcf4d
+   dropped from greyscale L 0.664 to 0.193 - so a greyed row no longer said WHICH category it was,
+   which is the one thing the swatch is there for. The word lives in an aria-hidden span (see
+   renderPlaceCats) rather than in ::after on the button, because Chrome folds pseudo-element text
+   into the accessible name and the button would start announcing as "Bosses 5 on". */
+.cat[aria-pressed="true"] { color: var(--ink); border-color: var(--accent-lo); background: #221b0c; }
+.cat[aria-pressed="false"] { color: var(--ink-dim); }
+.cat .cat-txt {
+  font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-faint); min-width: 22px; text-align: right;
+}
+.cat .cat-txt::after { content: "off"; }
+.cat[aria-pressed="true"] .cat-txt::after { content: "on"; }
+.cat[aria-pressed="true"] .cat-txt { color: var(--accent-hi); }
+.cat .cat-mark { width: 13px; height: 13px; flex: none; }
+.cat .cat-n { font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); }
+
+.loctypes { max-height: 260px; overflow-y: auto; margin-top: 7px; border: 1px solid var(--line); border-radius: 4px; }
+.loctype {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 7px; align-items: center;
+  padding: 3px 7px; font-size: 12px; cursor: pointer; border-bottom: 1px solid #1a222a;
+}
+.loctype:last-child { border-bottom: 0; }
+.loctype:hover { background: #1b242d; }
+.loctype .lt-name { font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loctype .lt-n { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+.loctype.is-off .lt-name { color: var(--ink-faint); text-decoration: line-through; }
+.loctype .lt-uniq { color: var(--accent-hi); font-size: 10.5px; letter-spacing: .04em; }
+
+.bullets { margin: 0; padding-left: 16px; font-size: 12px; color: var(--ink-dim); line-height: 1.5; }
+.bullets li { margin-bottom: 5px; }
+
+.warn-note { color: var(--accent-hi); }
+
+/* -------------------------------------------------------------- search extras */
+.feed { display: flex; flex-direction: column; gap: 3px; max-height: 190px; overflow-y: auto; }
+.feed-row {
+  display: grid; grid-template-columns: 54px 1fr auto; gap: 8px; align-items: baseline;
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim);
+  border-bottom: 1px solid #1a222a; padding: 2px 0;
+}
+.feed-row .f-score { color: var(--accent-hi); text-align: right; }
+.feed-row .f-seed { color: var(--ink); cursor: pointer; }
+.feed-row .f-seed:hover { text-decoration: underline; }
+
+.table td.bounded { color: var(--ink-faint); }
+#searchError { color: var(--bad); }
+#searchError.is-info { color: var(--ink-dim); }
+
+/* ------------------------------------------------------------ sidebar splitter */
+.splitter {
+  flex: none; width: 5px; cursor: col-resize; background: var(--bg-2);
+  border-right: 1px solid var(--line);
+}
+.splitter:hover, .splitter.is-dragging { background: var(--line-2); }
+@media (max-width: 900px) { .splitter { display: none; } }
+
+.readout .ro-place { color: var(--accent-hi); }
+
+#map.is-pointer { cursor: pointer; }
+.goal.is-unavailable { border-left-color: var(--bad); }
+.goal.is-unavailable .g-help { color: var(--bad); }
+.goal .g-help { margin: 4px 0 0; font-size: 11.5px; color: var(--ink-faint); grid-column: 1 / -1; }
+.goal { grid-template-columns: 1fr auto; }
+.goal-main select { max-width: 150px; }
+.goal-main input[type=number] { width: 84px; }
+
+/* A marker drawn into a data: URL by the same canvas code that draws it on the map. The size and
+   repeat rules live here because a style ATTRIBUTE is blocked by this page's own CSP - see
+   glyphSwatch() - so the script sets only background-image, one property, through the CSSOM. */
+.glyph {
+  display: inline-block; width: 14px; height: 14px; flex: none;
+  background-size: contain; background-repeat: no-repeat; background-position: center;
+}
+.loctype .glyph { width: 13px; height: 13px; }
+.card-title-next { margin-top: 14px; }
+
+/* ------------------------------------------------------- search: goal editor
+   Decision 9's goal model, and the user's own constraint on it: the limit is expressed BY the
+   control, the hint is one line, and the evidence is behind an affordance that starts closed. */
+.goal-hint { font-size: 11.5px; color: var(--ink-faint); line-height: 1.45; margin: 2px 0 0; }
+.goal-hint.is-bad { color: var(--bad); }
+/* The goal card is a two-column grid: everything stacks in column 1, the buttons sit in column 2
+   for the whole height of the card. Without the explicit placement the rows flowed alternately
+   left/right and the buttons landed in the middle of the expanded half. */
+.goal > :not(.goal-side) { grid-column: 1; }
+.goal > .goal-side { grid-column: 2; grid-row: 1; }
+
+.goal-more {
+  display: grid; grid-template-columns: auto 1fr; gap: 4px 8px;
+  align-items: center; margin-top: 5px; padding-top: 5px;
+  border-top: 1px dashed var(--line);
+}
+/* A class that sets `display` beats the user agent's `[hidden] { display: none }`, so every element
+   here that is toggled with .hidden needs its own rule. This is why the expanded half of a goal was
+   open the moment the panel loaded. */
+.goal-more[hidden] { display: none; }
+.goal-side[hidden] { display: none; }
+.goal-more > .note { grid-column: 1 / -1; margin: 2px 0 0; }
+.goal-more label { color: var(--ink-faint); font-size: 11.5px; }
+.goal-more select, .goal-more input { padding: 2px 5px; font-size: 11.5px; }
+.goal-more input[type=number] { width: 88px; }
+.goal-side { display: flex; gap: 3px; align-items: center; align-self: start; }
+.goal-btn {
+  background: none; border: 0; color: var(--ink-faint); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 1px 4px; border-radius: 3px;
+}
+.goal-btn:hover { color: var(--ink); background: var(--panel-3); }
+.goal-btn.is-on { color: var(--accent-hi); }
+
+/* The per-goal cost class. Four decades wide, so contention cannot move a goal between them. */
+.badge {
+  display: inline-block; font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase;
+  border: 1px solid var(--line-2); border-radius: 3px; padding: 1px 5px; color: var(--ink-dim);
+  white-space: nowrap;
+}
+.badge.c-instant { color: var(--good); border-color: #3f5d34; }
+.badge.c-cheap { color: var(--good); border-color: #3f5d34; }
+.badge.c-moderate { color: var(--ink); border-color: var(--line-2); }
+.badge.c-expensive { color: var(--accent-hi); border-color: var(--accent-lo); }
+.badge.c-very { color: var(--bad); border-color: #7a3524; }
+.badge.v-ok { color: var(--good); border-color: #3f5d34; }
+.badge.v-confirm { color: var(--accent-hi); border-color: var(--accent-lo); }
+.badge.v-refused { color: var(--bad); border-color: #7a3524; }
+.badge.v-busy { color: var(--ink-faint); }
+
+/* --------------------------------------------------------- search: the plan */
+.planblock {
+  margin: 8px 0 0; padding: 7px 9px;
+  background: #0b1014; border: 1px solid var(--line); border-radius: 4px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim);
+  white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto;
+}
+
+.verdict-line { font-size: 12.5px; color: var(--ink-dim); line-height: 1.5; }
+.verdict-line.is-bad { color: var(--bad); }
+
+#gridTable tbody tr.is-chosen { background: #24303b; }
+#gridTable tbody tr.is-unsafe td { color: var(--ink-faint); }
+
+/* ------------------------------------------------------------------ dialogs */
+.dlg {
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line-2); border-radius: var(--r);
+  padding: 14px 16px; max-width: 640px; width: calc(100vw - 48px);
+  font-family: var(--sans); font-size: 13px;
+}
+.dlg::backdrop { background: #000a; }
+.dlg .card-title { margin-top: 0; }

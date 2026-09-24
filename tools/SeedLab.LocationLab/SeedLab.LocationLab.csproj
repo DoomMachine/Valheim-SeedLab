@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The location-engine harness: validates SeedLab.Locations against the ground truth that exists
+    today (the minimap biome/height oracles, the recovered prefab hashes, the two .db2 location
+    lists) and, the moment locations.json is dumped, reconstructs both worlds with one command.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>SeedLab.LocationLab</AssemblyName>
+    <RootNamespace>SeedLab.LocationLab</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Locations\SeedLab.Locations.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Seeds\SeedLab.Seeds.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Saves\SeedLab.Saves.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Contracts\SeedLab.Contracts.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Data\SeedLab.Data.csproj" />
+  </ItemGroup>
+</Project>

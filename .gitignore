@@ -1,0 +1,17 @@
+# Build output. Everything here is reproducible from source with `dotnet build`.
+bin/
+obj/
+# The dumper's own output folder (tools/SeedLab.Dumper/build/SeedLab.Dumper.dll).
+build/
+
+# Kept local on purpose (decision 2026-09-24):
+#   data/         the game data snapshot, dumped from your own copy of Valheim by tools/SeedLab.Dumper.
+#                 It is the game's content (location tables, its English text), so it is not published.
+#   groundtruth/  worlds the game generated on the author's machine, their map caches and a game log -
+#                 the evidence the gates compare against.
+/data/
+/groundtruth/
+
+# Local IDE state.
+.vs/
+*.user

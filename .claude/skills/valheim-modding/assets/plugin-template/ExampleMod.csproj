@@ -1,0 +1,71 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Starter project for a new Valheim BepInEx plugin. Copy the whole plugin-template folder to a
+    folder of its own (the author uses <Valheim>\_ModSource\<ModName>\), then rename:
+      ExampleMod.csproj -> <ModName>.csproj, ModAuthor below, and in src\Plugin.cs the GUID / name / namespace.
+    The game folder comes from -p:ValheimDir=<Valheim>, else from the SEEDLAB_VALHEIM_DIR environment
+    variable, else the default Steam library.
+    Build with:  dotnet build            (installs into BepInEx\plugins\<Author>-<ModName>\)
+                 dotnet build -p:DeployToGame=false
+    For several editions of one mod built from shared source, use the TomTom/Wayfinder layout instead
+    (a shared Plugin.props imported by one small csproj per edition) - see
+    https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder.
+  -->
+
+  <PropertyGroup>
+    <ModName>ExampleMod</ModName>
+    <ModAuthor>DoomMachine</ModAuthor>
+
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>$(ModName)</AssemblyName>
+    <RootNamespace>$(ModName)</RootNamespace>
+    <Version>1.0.0</Version>
+    <Authors>$(ModAuthor)</Authors>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>build\</OutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DebugType>portable</DebugType>
+    <!-- Unity's assemblies bind other System.* versions than netstandard2.1; harmless for a mod. -->
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
+
+    <ValheimDir Condition="'$(ValheimDir)' == ''">$(SEEDLAB_VALHEIM_DIR)</ValheimDir>
+    <ValheimDir Condition="'$(ValheimDir)' == ''">$(MSBuildProgramFiles32)\Steam\steamapps\common\Valheim</ValheimDir>
+    <ValheimManaged>$(ValheimDir)\valheim_Data\Managed</ValheimManaged>
+    <BepInExCore>$(ValheimDir)\BepInEx\core</BepInExCore>
+    <DeployToGame Condition="'$(DeployToGame)' == ''">true</DeployToGame>
+    <DeployDir>$(ValheimDir)\BepInEx\plugins\$(ModAuthor)-$(ModName)\</DeployDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Private=false: game assemblies must never be copied next to the plugin. Add more as needed. -->
+    <Reference Include="assembly_valheim">        <HintPath>$(ValheimManaged)\assembly_valheim.dll</HintPath>        <Private>false</Private></Reference>
+    <Reference Include="assembly_utils">          <HintPath>$(ValheimManaged)\assembly_utils.dll</HintPath>          <Private>false</Private></Reference>
+    <Reference Include="assembly_guiutils">       <HintPath>$(ValheimManaged)\assembly_guiutils.dll</HintPath>       <Private>false</Private></Reference>
+    <Reference Include="Splatform">               <HintPath>$(ValheimManaged)\Splatform.dll</HintPath>               <Private>false</Private></Reference>
+    <Reference Include="UnityEngine">             <HintPath>$(ValheimManaged)\UnityEngine.dll</HintPath>             <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule">  <HintPath>$(ValheimManaged)\UnityEngine.CoreModule.dll</HintPath>  <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"> <HintPath>$(ValheimManaged)\UnityEngine.IMGUIModule.dll</HintPath> <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(ValheimManaged)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.InputSystem">       <HintPath>$(ValheimManaged)\Unity.InputSystem.dll</HintPath>       <Private>false</Private></Reference>
+    <Reference Include="BepInEx">                 <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>                    <Private>false</Private></Reference>
+    <Reference Include="0Harmony">                <HintPath>$(BepInExCore)\0Harmony.dll</HintPath>                   <Private>false</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="CheckValheimDir" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(ValheimManaged)\assembly_valheim.dll')"
+           Text="Valheim not found at '$(ValheimDir)'. Build with -p:ValheimDir=&lt;the folder holding valheim_Data&gt; or set SEEDLAB_VALHEIM_DIR." />
+  </Target>
+
+  <Target Name="DeployPlugin" AfterTargets="Build" Condition="'$(DeployToGame)' == 'true'">
+    <MakeDir Directories="$(DeployDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(DeployDir)" ContinueOnError="true" />
+    <Message Importance="high" Text="Deployed $(ModName) to $(DeployDir)" />
+  </Target>
+
+</Project>

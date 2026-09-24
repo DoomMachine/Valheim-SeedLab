@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>SeedLab</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 2 L20 7 V17 L12 22 L4 17 V7 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+      <path d="M12 7.5 L15.8 9.8 V14.2 L12 16.5 L8.2 14.2 V9.8 Z" fill="currentColor" opacity=".55"/>
+    </svg>
+    <span class="brand-name">SeedLab</span>
+  </div>
+
+  <form class="seedbar" id="seedForm" autocomplete="off">
+    <label class="sr-only" for="seedInput">Seed text or int32</label>
+    <input id="seedInput" class="seedinput" type="text" placeholder="seed text or int32 &mdash; e.g. MWd8eV6svz or -1772362158" spellcheck="false">
+    <button class="btn btn-primary" type="submit">Open</button>
+    <button class="btn" type="button" id="btnRandom" title="A seed drawn uniformly from the whole int32 space">Random</button>
+  </form>
+
+  <div class="topmeta">
+    <span class="chip" id="chipSeed" title="The int32 the world is actually generated from">&mdash;</span>
+    <span class="chip chip-quiet" id="chipEngine">&mdash;</span>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="sidebar" id="sidebar">
+    <nav class="tabs" role="tablist" aria-label="Panels">
+      <button class="tab is-active" role="tab" id="tabBtnSeed" aria-controls="panelSeed" aria-selected="true" title="Alt+1">Seed</button>
+      <button class="tab" role="tab" id="tabBtnPlaces" aria-controls="panelPlaces" aria-selected="false" title="Alt+2">Places</button>
+      <button class="tab" role="tab" id="tabBtnSearch" aria-controls="panelSearch" aria-selected="false" title="Alt+3">Search</button>
+      <button class="tab" role="tab" id="tabBtnPoint" aria-controls="panelPoint" aria-selected="false" title="Alt+4">Point</button>
+      <button class="tab" role="tab" id="tabBtnHelp" aria-controls="panelHelp" aria-selected="false" title="Alt+5">Help</button>
+    </nav>
+
+    <!-- ------------------------------------------------------------------ SEED -->
+    <section class="panel is-active" id="panelSeed" role="tabpanel" aria-labelledby="tabBtnSeed" tabindex="0">
+
+      <div class="card" id="cardSeedText">
+        <h2 class="card-title">Seed text</h2>
+        <div class="kv" id="seedTextKv"><div class="empty">Open a seed to begin.</div></div>
+        <p class="note">
+          The create-world box hashes the text with <code>GetStableHashCode</code> and then never
+          looks at it again, so the <strong>int is the world</strong>. Any int32 has a typeable
+          text; seven characters are enough for every one of them.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Measurement</h2>
+        <div class="row-inline">
+          <label for="gridSelect">Grid</label>
+          <select id="gridSelect">
+            <option value="12" selected>12 m &mdash; the game's own grid</option>
+            <option value="24">24 m</option>
+            <option value="48">48 m</option>
+            <option value="96">96 m &mdash; quick</option>
+          </select>
+          <button class="btn btn-small" id="btnRemeasure" type="button">Measure</button>
+        </div>
+        <div class="kv" id="gridKv"></div>
+        <p class="note">
+          A figure measured on a coarser grid is a <em>different measurement</em>, not an
+          approximation of the fine one, so every number below carries the grid it came from.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Biomes</h2>
+        <div id="biomeBars" class="bars"><div class="empty">&mdash;</div></div>
+        <table class="table" id="biomeTable">
+          <thead><tr><th>biome</th><th class="num">km&sup2;</th><th class="num">%</th><th class="num">nearest</th><th class="num">nearest land</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="note" id="biomeNote"></p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Land and islands</h2>
+        <div class="kv" id="islandKv"></div>
+        <table class="table" id="islandTable">
+          <thead><tr><th>#</th><th class="num">km&sup2;</th><th class="num">cells</th><th class="num">nearest</th><th>at</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="note" id="islandNote"></p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Spawn area and extremes</h2>
+        <div class="kv" id="extremesKv"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Seed text tools</h2>
+        <div class="row-inline">
+          <label class="sr-only" for="toolInput">Text or int</label>
+          <input id="toolInput" type="text" class="grow" placeholder="paste a text or an int32" spellcheck="false">
+          <button class="btn btn-small" id="btnResolve" type="button">Resolve</button>
+        </div>
+        <div class="kv" id="toolKv"></div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------------- PLACES -->
+    <section class="panel" id="panelPlaces" role="tabpanel" aria-labelledby="tabBtnPlaces" tabindex="0" hidden>
+
+      <div class="card" id="locUnavailable" hidden>
+        <h2 class="card-title">Locations are not available</h2>
+        <p class="note" id="locUnavailableNote"></p>
+      </div>
+
+      <div class="card" id="locPickCard" hidden>
+        <h2 class="card-title">Selected</h2>
+        <div class="kv" id="locPickKv"></div>
+        <div class="row-inline">
+          <button class="btn btn-small" id="btnLocCopy" type="button">Copy x, z</button>
+          <button class="btn btn-small" id="btnLocCentre" type="button">Centre here</button>
+          <button class="btn btn-small" id="btnLocMark" type="button">Save as marker</button>
+        </div>
+        <div id="locCandidates" hidden>
+          <p class="note warn-note" id="locCandidateNote"></p>
+          <table class="table" id="locCandidateTable">
+            <thead><tr><th>#</th><th class="num">x</th><th class="num">z</th><th class="num">dist</th><th>biome</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Placement run</h2>
+        <div class="row-inline">
+          <button class="btn btn-primary btn-small" id="btnLocCore" type="button"
+                  title="Bosses and traders only - the shortest safe prefix of the placement list">Bosses &amp; traders</button>
+          <button class="btn btn-small" id="btnLocAll" type="button"
+                  title="Every location type. About seven seconds a seed on this machine">Everything</button>
+          <span class="spacer"></span>
+          <button class="btn btn-small" id="btnLocClear" type="button" title="Hide the markers (L)">Hide</button>
+        </div>
+        <div class="progress" id="locProgress" hidden>
+          <div class="progress-bar"><div class="progress-fill" id="locProgressFill"></div></div>
+          <div class="progress-text" id="locProgressText"></div>
+        </div>
+        <div class="kv" id="locKv"><div class="empty">Nothing placed yet for this seed.</div></div>
+        <p class="note">
+          Everything before the selection has to run too &mdash; one location per zone, globally, so an
+          earlier type can take a later type&rsquo;s zone. The prefix is never shortened past that,
+          which is why &ldquo;bosses only&rdquo; is fast and &ldquo;everything&rdquo; is not.
+        </p>
+      </div>
+
+      <div class="card" id="locCatCard" hidden>
+        <h2 class="card-title">Categories</h2>
+        <div id="locCats" class="cats"></div>
+        <p class="note">
+          A full run places about 12,300 instances and 10,500 of them are world features, so those
+          start hidden &mdash; every one is counted above and one click brings them back.
+        </p>
+        <div class="row-inline">
+          <label for="locLabels">Labels</label>
+          <select id="locLabels">
+            <option value="key" selected>bosses and traders</option>
+            <option value="all">everything</option>
+            <option value="none">none</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card" id="locTypeCard" hidden>
+        <h2 class="card-title">Types <span class="count" id="locTypeCount"></span></h2>
+        <div class="row-inline">
+          <label class="sr-only" for="locFilter">Filter</label>
+          <input id="locFilter" class="grow" type="text" placeholder="filter by name, prefab, biome or feature" spellcheck="false">
+          <button class="btn btn-small" id="btnLocAllOn" type="button">All</button>
+          <button class="btn btn-small" id="btnLocAllOff" type="button">None</button>
+        </div>
+        <div id="locTypes" class="loctypes"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">What is not a function of the seed</h2>
+        <ul class="bullets" id="locNotPredictable"><li>Run a placement to see the list.</li></ul>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------------- SEARCH -->
+    <section class="panel" id="panelSearch" role="tabpanel" aria-labelledby="tabBtnSearch" tabindex="0" hidden>
+      <div class="card warn" id="engineBanner" hidden>
+        <h2 class="card-title">Placeholder engine</h2>
+        <p class="note" id="engineNote"></p>
+      </div>
+
+      <!--
+        Decision 7: the auto-throttle drops to background mode while Valheim is running, and no change
+        of speed is ever silent. The page has no socket of its own, so it polls /api/runtime at the
+        throttle's own interval and turns what it finds into this banner.
+      -->
+      <div class="card warn" id="throttleBanner" hidden>
+        <h2 class="card-title">Resource mode changed</h2>
+        <p class="note" id="throttleNote"></p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Engine</h2>
+        <div class="kv" id="engineKv"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Goals</h2>
+        <div id="goalList" class="goals"></div>
+        <div class="row-inline">
+          <button class="btn btn-small" id="btnAddGoal" type="button">Add goal</button>
+          <span class="spacer"></span>
+          <label class="sr-only" for="presetSelect">Preset</label>
+          <select id="presetSelect"><option value="">load a preset&hellip;</option></select>
+        </div>
+        <p class="note" id="presetNote"></p>
+        <p class="note" id="costHeadline"></p>
+      </div>
+
+      <!--
+        Decision 12: every flag 'vseed search' takes is here, under the heading a user would look for
+        it under, mapping onto the same query JSON the terminal reads.
+      -->
+      <div class="card">
+        <h2 class="card-title">Where to look</h2>
+        <div class="grid2">
+          <label for="qSeeds">Seeds</label>
+          <input id="qSeeds" type="number" min="0" max="4294967296" step="1" value="20000">
+          <label for="qWall">Stop after</label>
+          <input id="qWall" type="number" min="0" max="604800" step="5" value="120">
+          <label for="qOrder">Scan order</label>
+          <select id="qOrder">
+            <option value="shuffled" selected>shuffled &mdash; an unbiased sample of the space</option>
+            <option value="sequential">sequential &mdash; a contiguous stretch</option>
+          </select>
+          <label for="qFrom">From</label>
+          <input id="qFrom" type="number" step="1" min="-2147483648" max="2147483647" value="-2147483648">
+          <label for="qTo">To</label>
+          <input id="qTo" type="number" step="1" min="-2147483648" max="2147483647" value="2147483647">
+          <label for="qRegion">Region</label>
+          <input id="qRegion" type="number" min="0" max="10500" step="50" value="0" placeholder="0 = whatever the goals need">
+        </div>
+        <p class="note" id="regionNote">
+          <strong>Region</strong> is the largest free lever in the tool: a metric bounded by a disc
+          cannot be changed by a cell outside it, so restricting it is exact, not approximate.
+          Measured here at the game&rsquo;s own 12 m grid, one biome goal costs 7.90 ms/seed inside a
+          1 km disc against 314.40 ms/seed over the whole world &mdash; 39.8&times;.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">How to measure</h2>
+        <div class="grid2">
+          <label for="qGrid">Sampling grid</label>
+          <select id="qGrid"></select>
+          <label for="qStrategy">Strategy</label>
+          <select id="qStrategy">
+            <option value="auto" selected>auto &mdash; pick per query, and say why</option>
+            <option value="funnel">funnel &mdash; cheap goals over the whole range first, place only the survivors</option>
+            <option value="sample">sample &mdash; evaluate the seeds straight through</option>
+          </select>
+          <label for="qScreen">Screening</label>
+          <select id="qScreen">
+            <option value="auto" selected>auto-pick &mdash; screen coarse, verify every survivor</option>
+            <option value="on">always screen</option>
+            <option value="off">never screen &mdash; measure once at the grid above</option>
+          </select>
+          <label for="qScreenGrid">Screen at</label>
+          <select id="qScreenGrid">
+            <option value="0" selected>the policy&rsquo;s own choice</option>
+            <option value="384">384 m</option>
+            <option value="256">256 m</option>
+            <option value="192">192 m</option>
+            <option value="96">96 m</option>
+            <option value="48">48 m</option>
+            <option value="24">24 m</option>
+          </select>
+        </div>
+        <table class="table" id="gridTable">
+          <thead><tr><th>grid</th><th class="num">samples</th><th class="num">ms/seed</th><th class="num">seeds/s</th><th>safe here</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="note" id="gridNote">
+          Sampling changes <strong>time and memory, not disk</strong>. The cost column is this
+          query&rsquo;s own, measured at its tier and region &mdash; not a relative factor from a table.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">What to keep</h2>
+        <div class="grid2">
+          <label for="qKeepMode">Keep</label>
+          <select id="qKeepMode">
+            <option value="best" selected>the best N &mdash; a real cap on the file</option>
+            <option value="all">every match &mdash; unbounded, wants rotation</option>
+          </select>
+          <label for="qKeep">N</label>
+          <input id="qKeep" type="number" min="1" max="1000000" step="1" value="200">
+          <label for="qOut">Results file</label>
+          <input id="qOut" type="text" placeholder="nothing is kept" spellcheck="false">
+          <label for="qRotate">Rotate every</label>
+          <select id="qRotate">
+            <option value="0" selected>do not rotate &mdash; one flat file</option>
+            <option value="1073741824">1 GB segments</option>
+            <option value="536870912">512 MB segments</option>
+            <option value="268435456">256 MB segments</option>
+          </select>
+          <label for="qCompress">Compress</label>
+          <select id="qCompress">
+            <option value="1" selected>gzip each closed segment</option>
+            <option value="0">leave segments uncompressed</option>
+          </select>
+          <label for="qReduce">Reduce</label>
+          <input id="qReduce" type="text" value="none" spellcheck="false" placeholder="none, or top:1000">
+          <label for="qOnLimit">At the ceiling</label>
+          <select id="qOnLimit">
+            <option value="stop" selected>stop cleanly and print the resume command</option>
+            <option value="evict">keep running and drop the lowest-scoring records</option>
+          </select>
+          <label for="qMaxBytes">Ceiling</label>
+          <input id="qMaxBytes" type="number" min="0" step="1048576" value="0" placeholder="0 = 90 % of free space">
+        </div>
+        <p class="note" id="outNote"></p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">How much of the machine</h2>
+        <div class="grid2">
+          <label for="qMode">Mode</label>
+          <select id="qMode">
+            <option value="background">background &mdash; ~25 % of cores, BelowNormal</option>
+            <option value="balanced" selected>balanced &mdash; ~50 % of cores, Normal</option>
+            <option value="full">full &mdash; all cores, still memory-capped</option>
+          </select>
+          <label for="qThreads">Threads</label>
+          <input id="qThreads" type="number" min="0" max="256" step="1" value="0" placeholder="0 = the mode decides">
+          <label for="qBlock">Block size</label>
+          <input id="qBlock" type="number" min="1" max="65536" step="1" value="64">
+        </div>
+        <div class="row-inline">
+          <label><input id="qIgnoreGame" type="checkbox"> run at full speed even while Valheim is open</label>
+        </div>
+        <div class="kv" id="workerKv"></div>
+      </div>
+
+      <!--
+        The live whole-query verdict, beside the button it governs. It is POST /api/search/preflight -
+        the same call POST /api/search makes before it starts a seed - so what this says and what the
+        server will do cannot come apart.
+      -->
+      <div class="card" id="verdictCard">
+        <h2 class="card-title">Verdict <span class="count" id="verdictPill"></span></h2>
+        <div class="kv" id="verdictKv"></div>
+        <ul class="bullets" id="verdictList"></ul>
+        <div class="row-inline">
+          <button class="btn btn-primary" id="btnRunSearch" type="button">Find seeds</button>
+          <button class="btn" id="btnCancelSearch" type="button" disabled>Stop</button>
+          <span class="spacer"></span>
+          <button class="btn btn-small" id="btnCopyQuery" type="button"
+                  title="The query file this run is, for 'vseed search'">Copy query</button>
+          <button class="btn btn-small" id="btnDownloadQuery" type="button"
+                  title="Save the query file, then run: vseed search that-file.json">Export</button>
+        </div>
+        <div class="progress" id="searchProgress" hidden>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+          <div class="progress-text" id="progressText"></div>
+          <div class="progress-text" id="coverageText"></div>
+          <div class="progress-text" id="outputText"></div>
+        </div>
+        <p class="note" id="searchError" hidden></p>
+      </div>
+
+      <div class="card" id="planCard" hidden>
+        <h2 class="card-title">Plan</h2>
+        <div class="kv" id="planKv"></div>
+        <pre class="planblock" id="planBlock"></pre>
+        <pre class="planblock" id="funnelBox" hidden></pre>
+        <table class="table" id="planTable">
+          <thead><tr><th>goal</th><th>cost</th><th>tier</th><th class="num">region</th><th>measures</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Best of <span class="count" id="resultCount"></span></h2>
+        <table class="table results" id="resultTable">
+          <thead><tr><th class="num">score</th><th>seed</th><th class="num">int32</th><th class="num">land</th><th class="num">largest</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty" id="resultEmpty">Nothing yet.</div>
+        <p class="note" id="resultNote"></p>
+      </div>
+
+      <div class="card" id="feedCard" hidden>
+        <h2 class="card-title">Latest finds</h2>
+        <div id="resultFeed" class="feed"></div>
+      </div>
+    </section>
+
+    <!-- ----------------------------------------------------------------- POINT -->
+    <section class="panel" id="panelPoint" role="tabpanel" aria-labelledby="tabBtnPoint" tabindex="0" hidden>
+      <div class="card">
+        <h2 class="card-title">Marker</h2>
+        <div class="kv" id="pinKv"><div class="empty">Click the map to drop a marker.</div></div>
+        <div class="row-inline" id="pinActions" hidden>
+          <button class="btn btn-small" id="btnCopyPin" type="button">Copy x, z</button>
+          <button class="btn btn-small" id="btnSavePin" type="button">Save marker</button>
+          <button class="btn btn-small" id="btnCentrePin" type="button">Centre here</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2 class="card-title">Saved markers <span class="count" id="markerCount"></span></h2>
+        <div id="markerList" class="markers"><div class="empty">None yet.</div></div>
+        <p class="note">
+          Markers live in this browser only, per seed. Nothing is written to your Valheim saves. The
+          server writes in exactly three places, all of them named on the Search panel: the results
+          file you ask for, its checkpoint, and the tile cache.
+        </p>
+      </div>
+      <div class="card">
+        <h2 class="card-title">Ruler</h2>
+        <div class="kv" id="rulerKv"><div class="empty">Press <kbd>R</kbd>, then click two points.</div></div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------------------ HELP -->
+    <section class="panel" id="panelHelp" role="tabpanel" aria-labelledby="tabBtnHelp" tabindex="0" hidden>
+      <div class="card">
+        <h2 class="card-title">Keys</h2>
+        <dl class="keys">
+          <dt><kbd>drag</kbd></dt><dd>pan</dd>
+          <dt><kbd>wheel</kbd></dt><dd>zoom about the pointer</dd>
+          <!-- The one exception is real and is stated rather than left to be discovered: inside the
+               map's Mode group the arrows choose the mode, as a radio group must. -->
+          <dt><kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd></dt><dd>pan (hold <kbd>Shift</kbd> for a big step) &mdash; but they move between Pan / Ruler / Mark while one of those has keyboard focus</dd>
+          <dt><kbd>+</kbd> <kbd>&minus;</kbd></dt><dd>zoom</dd>
+          <dt><kbd>0</kbd></dt><dd>fit the whole world</dd>
+          <dt><kbd>R</kbd></dt><dd>ruler: click two points</dd>
+          <dt><kbd>M</kbd></dt><dd>drop a marker at the pointer</dd>
+          <dt><kbd>G</kbd></dt><dd>coordinate grid</dd>
+          <dt><kbd>H</kbd></dt><dd>hillshade</dd>
+          <dt><kbd>B</kbd></dt><dd>water depth shading</dd>
+          <dt><kbd>P</kbd></dt><dd>in-game palette (Ocean, Mountain and Deep North all white)</dd>
+          <dt><kbd>C</kbd></dt><dd>copy the centre coordinates</dd>
+          <dt><kbd>Esc</kbd></dt><dd>cancel the current tool, or clear the selected place</dd>
+        </dl>
+        <h2 class="card-title card-title-next">Places</h2>
+        <dl class="keys">
+          <dt><kbd>L</kbd></dt><dd>show or hide the location markers</dd>
+          <dt><kbd>F</kbd></dt><dd>place the fast set (bosses and traders) for this seed</dd>
+          <dt><kbd>Shift</kbd>+<kbd>F</kbd></dt><dd>place <em>every</em> type &mdash; about seven seconds</dd>
+          <dt><kbd>1</kbd>&hellip;<kbd>4</kbd></dt><dd>toggle bosses / traders / dungeons / features</dd>
+          <dt><kbd>click a marker</kbd></dt><dd>name, prefab, where the name came from, coordinates, biome and distance from the centre</dd>
+        </dl>
+        <h2 class="card-title card-title-next">Panels and search</h2>
+        <dl class="keys">
+          <dt><kbd>Alt</kbd>+<kbd>1</kbd>&hellip;<kbd>5</kbd></dt><dd>Seed, Places, Search, Point, Help</dd>
+          <dt><kbd>/</kbd></dt><dd>jump to the seed box</dd>
+          <dt><kbd>Enter</kbd> in the seed box</dt><dd>open that world</dd>
+          <dt><kbd>S</kbd></dt><dd>start the search with the goals as they stand</dd>
+          <dt><kbd>.</kbd></dt><dd>stop the running search</dd>
+          <dt><kbd>?</kbd></dt><dd>this page</dd>
+        </dl>
+        <p class="note">
+          A key pressed inside a text box or a dropdown goes to that control, never to the map.
+        </p>
+      </div>
+      <div class="card">
+        <h2 class="card-title">What the map is</h2>
+        <p class="note">
+          Every tile is generated on demand by the ported <code>WorldGenerator</code> at that zoom's
+          own sampling resolution, so zooming in genuinely resolves more terrain instead of
+          enlarging pixels. Zoom <strong>3</strong> samples exactly the points the game's own minimap
+          samples &mdash; 12 m apart &mdash; and <code>vseed serve --selftest</code> checks those tiles
+          against the biome texture the game itself wrote, pixel for pixel, on two worlds.
+        </p>
+        <p class="note">
+          Water below 30 m is depth-shaded, the hillshade is Lambert from the height gradient with the
+          light at 315&deg;, and Ashlands lava is painted where the cheap mask alpha passes 0.6. The
+          biome colours are the game's own measured prefab bytes, with one deliberate change: the game
+          paints Deep North pure white, identical to Mountain and Ocean, which makes an offline map
+          unreadable, so Deep North is <span class="swatch" id="dnSwatch"></span> here. Press
+          <kbd>P</kbd> for the game's table exactly.
+        </p>
+      </div>
+      <div class="card">
+        <h2 class="card-title">What the markers are</h2>
+        <p class="note">
+          The markers are the output of the game&rsquo;s own location placement, re-run offline for
+          this seed: the same ordered pass over <code>ZoneSystem.m_locations</code>, the same
+          per-type RNG streams, the same eleven filters. Against a freshly generated world it
+          reproduces all 12,228 instances bit-identically in zone, prefab and x/y/z, and the
+          game&rsquo;s own per-type counters with them.
+        </p>
+        <p class="note">
+          <strong>A hollow, dashed marker is a candidate, not a place.</strong> A
+          <code>m_unique</code> type &mdash; every trader camp is one &mdash; is written into the save
+          several times over, and the game keeps whichever one a player (or a peer) generates the
+          zone of first, deleting the rest. That is exploration order, not the seed. This map shows
+          every candidate and says how many; it will never point at one and call it Haldor.
+        </p>
+        <p class="note">
+          The height shown is <code>WorldGenerator.GetHeight</code> at the point, which is the y the
+          save stores &mdash; not the ground a building finally sits on, which comes from the built
+          heightmap and the location&rsquo;s own terrain edits.
+        </p>
+      </div>
+      <div class="card">
+        <h2 class="card-title">Offline and local</h2>
+        <p class="note">
+          This page came out of <code>vseed</code>'s own binary: no CDN, no web font, no external
+          request of any kind, and a Content-Security-Policy that forbids one. The server listens on
+          127.0.0.1 alone, refuses any other <code>Host</code>, has no CORS policy, and writes
+          nothing anywhere.
+        </p>
+        <div class="kv" id="statsKv"></div>
+      </div>
+    </section>
+  </aside>
+
+  <div class="splitter" id="splitter" role="separator" aria-orientation="vertical"
+       title="Drag to resize the panels; double-click to reset"></div>
+
+  <!-- -------------------------------------------------------------------- MAP -->
+  <section class="mapwrap">
+    <canvas id="map" tabindex="0" aria-label="World map. Drag to pan, wheel to zoom."></canvas>
+
+    <!-- Two kinds of control, and they must not look alike: Mode is one-of-three (a radio group,
+         so a reader hears "3 of 3, selected" and learns that Ruler turns Pan off), Layers are each
+         independently on or off. ON is a solid fill with dark text AND a filled glyph AND, for a
+         layer, the word - so the state never rests on a colour.
+         role="group", not role="toolbar": a toolbar role promises one tab stop and arrow-key
+         navigation over all eight controls, and this page gives eight tab stops and leaves the
+         arrows to the map. We do not claim what we do not do.
+         No whitespace inside a <button>: it is inline-flex and a stray text node becomes a flex
+         item. The initial attribute values below match MapView exactly (app.js: tool 'pan',
+         showGrid false, style {shade:true, water:true, game:false}). -->
+    <div class="maptools" role="group" aria-label="Map tools">
+      <span class="grp-label" id="modeLabel">Mode</span>
+      <span class="seg" role="radiogroup" aria-labelledby="modeLabel" id="toolModes">
+        <button class="tool tool-mode" type="button" role="radio" aria-checked="true" tabindex="0"
+                id="toolPan" data-tool="pan" title="Pan and inspect (Esc)"><span class="sw" aria-hidden="true"></span>Pan</button>
+        <button class="tool tool-mode" type="button" role="radio" aria-checked="false" tabindex="-1"
+                id="toolRuler" data-tool="ruler" title="Measure a distance (R)"><span class="sw" aria-hidden="true"></span>Ruler</button>
+        <button class="tool tool-mode" type="button" role="radio" aria-checked="false" tabindex="-1"
+                id="toolMark" data-tool="mark" title="Drop markers (M)"><span class="sw" aria-hidden="true"></span>Mark</button>
+      </span>
+      <span class="tool-sep"></span>
+      <span class="grp-label" id="layerLabel">Layers</span>
+      <span class="switches" role="group" aria-labelledby="layerLabel">
+        <button class="tool tool-switch" type="button" id="layGrid" aria-pressed="false"
+                title="Coordinate grid (G)"><span class="sw" aria-hidden="true"></span>Grid<span class="sw-txt" aria-hidden="true"></span></button>
+        <button class="tool tool-switch" type="button" id="layShade" aria-pressed="true"
+                title="Hillshade (H)"><span class="sw" aria-hidden="true"></span>Shade<span class="sw-txt" aria-hidden="true"></span></button>
+        <button class="tool tool-switch" type="button" id="layWater" aria-pressed="true"
+                title="Water depth (B)"><span class="sw" aria-hidden="true"></span>Depth<span class="sw-txt" aria-hidden="true"></span></button>
+        <button class="tool tool-switch" type="button" id="layGame" aria-pressed="false"
+                title="The game's own palette (P)"><span class="sw" aria-hidden="true"></span>In-game<span class="sw-txt" aria-hidden="true"></span></button>
+      </span>
+      <span class="tool-sep"></span>
+      <!-- Places is the one switch that has to go and compute before it can be on, so it also
+           carries aria-busy and says "working" rather than sitting at OFF while it runs. -->
+      <button class="tool tool-switch" type="button" id="layPlaces" aria-pressed="false" aria-busy="false"
+              title="Location markers (L)"><span class="sw" aria-hidden="true"></span>Places<span class="sw-txt" aria-hidden="true"></span></button>
+    </div>
+
+    <div class="mapzoom">
+      <button class="zbtn" id="btnZoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
+      <button class="zbtn" id="btnZoomOut" title="Zoom out (-)" aria-label="Zoom out">&minus;</button>
+      <button class="zbtn" id="btnZoomFit" title="Fit the world (0)" aria-label="Fit the world">&#9678;</button>
+    </div>
+
+    <div class="readout" id="readout" aria-live="off">
+      <span class="ro-coord" id="roCoord">&mdash;</span>
+      <span class="ro-sep"></span>
+      <span class="ro-biome" id="roBiome"></span>
+      <span class="ro-height" id="roHeight"></span>
+      <span class="ro-place" id="roPlace"></span>
+      <span class="spacer"></span>
+      <span class="ro-zoom" id="roZoom"></span>
+    </div>
+
+    <div class="maphint" id="mapHint" hidden></div>
+    <!-- The visible hint is a map overlay that hides itself again, and a live region whose text
+         changes while it is display:none is not announced at all. So the same message also goes
+         here, where the element is permanent and screen-reader-only. This is the only channel that
+         reports a state change made by a keyboard shortcut while focus is on the canvas. -->
+    <span class="sr-only" id="srLive" role="status" aria-live="polite"></span>
+  </section>
+</main>
+
+<dialog id="confirmDialog" class="dlg">
+  <h2 class="card-title" id="confirmTitle">This run needs a confirmation</h2>
+  <ul class="bullets" id="confirmList"></ul>
+  <div class="kv" id="confirmKv"></div>
+  <pre class="planblock" id="confirmPlan"></pre>
+  <div class="row-inline">
+    <button class="btn btn-primary" id="btnConfirmRun" type="button">Run it anyway</button>
+    <button class="btn" id="btnConfirmCancel" type="button">Cancel</button>
+  </div>
+  <p class="note">
+    The same thresholds the terminal confirms at, checked on the server: over an hour, over 100 million
+    seeds, over 1&nbsp;GB of output, over a tenth of what is free, the whole space, or
+    <code>on_limit: evict</code>.
+  </p>
+</dialog>
+
+<dialog id="evidenceDialog" class="dlg">
+  <h2 class="card-title" id="evidenceTitle">Evidence</h2>
+  <p class="note" id="evidenceHint"></p>
+  <pre class="planblock" id="evidenceBody"></pre>
+  <div class="row-inline">
+    <button class="btn" id="btnEvidenceClose" type="button">Close</button>
+  </div>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>

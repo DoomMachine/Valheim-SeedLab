@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- No NuGet: this machine may be offline and the user asked to be told before anything is
+         installed. Tests are plain console asserts driven by Program.cs, run with dotnet run. -->
+    <ProjectReference Include="..\..\src\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+    <ProjectReference Include="..\..\src\SeedLab.Seeds\SeedLab.Seeds.csproj" />
+    <ProjectReference Include="..\..\src\SeedLab.Saves\SeedLab.Saves.csproj" />
+  </ItemGroup>
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SeedLabAcceptanceTests</RootNamespace>
+  </PropertyGroup>
+</Project>

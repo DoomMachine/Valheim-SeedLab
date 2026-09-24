@@ -1,0 +1,45 @@
+{
+  // Compact progression - the five altars of a normal playthrough, all close to home.
+  //
+  // RUNS TODAY. Every goal is measured by placing locations exactly as ZoneSystem does.
+  //
+  // WHY bosses_classic AND NOT bosses: the full group also holds the Queen's entrance and Fader's
+  // altar. The Queen is never nearer than about 6 km, and FaderLocation is AshLands-only, which
+  // WorldGenerator cannot put within 7,900 m of the centre in ANY seed - so "all seven within 6 km"
+  // is not a hard preset, it is an impossible one, and 'vseed search' now refuses it by name.
+  //
+  // COST: the deepest type here is Dragonqueen at ordered index 7, so a seed runs 8 of the 183
+  // ordered entries - the cheapest a multi-boss query can be. The floor is still the 2048^2
+  // biome/height point grid that the candidate-zone draw reads, about 1.9 s of a seed's ~2.0 s.
+  "version": 1,
+  "defs": 1,
+  "name": "compact-progression",
+  "description": "Eikthyr, the Elder, Bonemass, Moder and Yagluth all within 3.8 km of the centre.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 384, "keep": 50 },
+  "goals": [
+    // all_types_distance = the largest of the per-type nearest distances, i.e. how far out you have
+    // to go before you have reached EVERY one of the five.
+    { "id": "five-bosses", "target": "group:bosses_classic", "metric": "all_types_distance",
+      "test": "near", "value": 3800, "importance": "must" },
+    // MEASURED: 101 of 512 placed seeds pass, 19.7 %. Median of this metric is 4,491 m,
+    // minimum over the sample 3,063 m, so 3,800 m is tight without being rare.
+    // CONFIRMED by 'vseed search compact-progression --seeds 256': 57 hits, 22.3 %.
+
+    // Eikthyr's altar is capped at m_maxDistance 1000, so it is always close; asking for really
+    // close is what separates seeds.
+    { "id": "eikthyr", "target": "location:Eikthyrnir", "metric": "nearest_distance",
+      "test": "near", "value": 400, "importance": "nice", "weight": 2 },
+
+    // A trader within reach of the same home. Haldor is m_unique, so this means "at least one of
+    // his ten candidates" - see 'vseed explain'.
+    { "id": "haldor", "target": "location:Vendor_BlackForest", "metric": "nearest_distance",
+      "test": "near", "value": 2000, "importance": "nice", "weight": 2 },
+
+    // Measured off the biome field, and free next to the placement above.
+    { "id": "swamp-near", "target": "biome:Swamp", "metric": "nearest_distance",
+      "test": "near", "value": 3000, "importance": "nice" },
+    { "id": "mountain-near", "target": "biome:Mountain", "metric": "nearest_distance",
+      "test": "near", "value": 3500, "importance": "nice" }
+  ]
+}

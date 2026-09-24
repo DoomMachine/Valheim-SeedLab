@@ -1,0 +1,48 @@
+{
+  // Boss rush - every one of the seven boss altars as close in as the generator allows.
+  //
+  // RUNS TODAY.
+  //
+  // WHAT CHANGED AND WHY. This preset used to ask for "count_within 6 km >= 7" over the boss group.
+  // That is not the goal it was named for: Eikthyr has m_quantity 3 and Yagluth 4, so three Eikthyr
+  // altars and four Yagluth altars satisfy "seven bosses within 6 km" with five of the seven TYPES
+  // missing. The metric that means what the name means is all_types_distance - the largest of the
+  // per-type nearest distances - and it is what this preset uses now.
+  //
+  // AND WHY THE RADIUS IS NOT 6 km. FaderLocation is AshLands-only and IsAshlands is
+  // |(x, z - 4000)| > 12000 + A, so no Ashlands point is within 7,900 m of the centre in any seed;
+  // the Queen's entrance sits around 6-8 km as well. "All seven within 6 km" is therefore
+  // impossible for all 4,294,967,296 worlds, and T0 now refuses it by name instead of scanning for
+  // it. What IS hard-but-possible is pulling the two outermost in towards 8.5 km.
+  //
+  // COST: FaderLocation is ordered 16, so a seed runs 17 of the 183 entries.
+  "version": 1,
+  "defs": 1,
+  "name": "boss-rush",
+  "description": "All seven boss altars within 8.6 km, and the classic five within 5 km.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 384, "keep": 50 },
+  "goals": [
+    { "id": "all-seven", "target": "group:bosses", "metric": "all_types_distance",
+      "test": "near", "value": 8600, "importance": "must" },
+    // MEASURED over 512 placed seeds: minimum 8,302 m, 5th percentile 8,560 m, median 8,989 m.
+    // With the five-boss goal below, 31 of 512 pass - 6.1 %.
+    // CONFIRMED by 'vseed search boss-rush --seeds 128': 5 hits, 3.9 % (a small sample of a
+    // few-per-cent rate, so 3.9 % and 6.1 % are the same number within its noise).
+
+    // The five that a playthrough actually races between.
+    { "id": "first-five", "target": "group:bosses_classic", "metric": "all_types_distance",
+      "test": "near", "value": 5000, "importance": "must" },
+
+    // The nearest altar of any boss - in practice Eikthyr's, which m_maxDistance caps at 1000 m.
+    // MEASURED median 302 m.
+    { "id": "bosses-close", "target": "group:bosses", "metric": "nearest_distance",
+      "test": "near", "value": 300, "importance": "nice", "weight": 2 },
+
+    // How many altars of any boss are inside a day's walk. This one IS a count, deliberately.
+    // All 27 altars of the seven types, counted. MEASURED: median 11 within 5 km, 90th
+    // percentile 13, maximum 17 - so 13 is a real discriminator rather than a number.
+    { "id": "altars-near", "target": "group:bosses", "metric": "count_within",
+      "radius": 5000, "test": "at_least", "value": 13, "importance": "nice" }
+  ]
+}

@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    vseed: the command-line tool. The primary deliverable.
+
+    It references only the finished libraries it actually calls. SeedLab.Search is referenced by
+    'vseed search', 'vseed explain' and 'vseed presets'. SeedLab.Data (and SeedLab.Contracts, which
+    carries its DTOs) is referenced by 'vseed data', which reports the shipped game data and the
+    DATA-STAMP. SeedLab.Locations is still deliberately NOT referenced: location goals reach
+    placement through SeedLab.Search.Locations.ILocationOracle rather than a hard project reference.
+
+    SeedLab.Locations is referenced by 'vseed locations' and by the landmark section of
+    'vseed seed'. It became usable the moment the dumper captured ZoneSystem.m_locations; before
+    that the engine had no table to run. 'vseed search' and 'vseed explain' still reach placement
+    through SeedLab.Search.Locations.ILocationOracle, whose one implementation lives in
+    SeedLab.LocationOracle - so SeedLab.Search itself still references neither the placement engine
+    nor the dumped data.
+
+    SeedLab.Web is referenced by 'vseed serve'. It brings the Microsoft.AspNetCore.App SHARED
+    FRAMEWORK with it, so vseed now needs the ASP.NET Core runtime as well as the .NET one - both
+    ship together in the same install. No NuGet package is involved.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>vseed</AssemblyName>
+    <RootNamespace>SeedLab.Cli</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+    <ProjectReference Include="..\SeedLab.Seeds\SeedLab.Seeds.csproj" />
+    <ProjectReference Include="..\SeedLab.Saves\SeedLab.Saves.csproj" />
+    <ProjectReference Include="..\SeedLab.Render\SeedLab.Render.csproj" />
+    <ProjectReference Include="..\SeedLab.Search\SeedLab.Search.csproj" />
+    <!-- The runtime layer: resource modes, the hardware probe, the cache root, the self-test gate. -->
+    <ProjectReference Include="..\SeedLab.Runtime\SeedLab.Runtime.csproj" />
+    <!-- The one implementation of ILocationOracle: boss, trader and dungeon goals for 'vseed search'. -->
+    <ProjectReference Include="..\SeedLab.LocationOracle\SeedLab.LocationOracle.csproj" />
+    <ProjectReference Include="..\SeedLab.Web\SeedLab.Web.csproj" />
+    <!-- 'vseed data': the dumped asset tables, the DATA-STAMP and the stale-data policy. -->
+    <ProjectReference Include="..\SeedLab.Data\SeedLab.Data.csproj" />
+    <!-- 'vseed locations' and 'vseed seed': the ported ZoneSystem location placement. -->
+    <ProjectReference Include="..\SeedLab.Locations\SeedLab.Locations.csproj" />
+    <ProjectReference Include="..\SeedLab.Contracts\SeedLab.Contracts.csproj" />
+  </ItemGroup>
+</Project>

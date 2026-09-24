@@ -1,0 +1,17 @@
+<Project>
+  <!-- Shared settings for every SeedLab project. The dumper plugin overrides TargetFramework. -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Authors>DoomMachine</Authors>
+    <Product>SeedLab</Product>
+    <Version>0.1.0</Version>
+    <!-- Numerics discipline: the port must evaluate float/double exactly as the game does.
+         C# forbids FMA contraction, and RyuJIT is IEEE-conformant, so no extra switches are needed;
+         the startup self-test against recorded game vectors is what actually proves it. -->
+  </PropertyGroup>
+</Project>

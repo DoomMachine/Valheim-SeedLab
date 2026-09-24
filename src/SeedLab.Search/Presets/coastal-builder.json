@@ -1,0 +1,48 @@
+{
+  // Coastal builder - a buildable shoreline right where you spawn.
+  //
+  // WHAT CHANGED, 2026-09-23. The old 'shoreline' goal was `world:coastline_length >= 400,000 m` as
+  // a NICE-to-have, and it ranked nothing: coastline_length spans only 8 % across the whole seed
+  // space (p10/p50/p90 = 2,625,271 / 2,712,816 / 2,796,511 m over 2,560 seeds at G12, CV 0.0245),
+  // and 400 km sits 4.75x BELOW the minimum of those 2,560 seeds - so its sub-score was exactly 1.0
+  // for every seed ever scored. The metric is retired; a query that still names it is refused by
+  // name with that measurement attached.
+  //
+  // THE REPLACEMENT MEASURES WHAT THIS PRESET WAS REACHING FOR. `shore_area_within` is the area of
+  // land within 100 m of water inside the disc - land you can put a dock, a longhouse and a karve
+  // on. Measured over 512 seeds (docs\studies\coastline-verdict.md section 2, 2026-09-23): at
+  // radius 1,000 m it is statistically INDEPENDENT of land_area_within at the same radius (Spearman
+  // -0.034), so the two must-haves below ask genuinely different questions, and its spread is 7x
+  // coastline's (CV 0.166, p90/p10 1.53). A solid landmass has little edge - the count of coast
+  // cells within 1 km is NEGATIVELY correlated with land within 1 km (rho -0.355).
+  //
+  // GRID 12, the game's own, and not 24. The 100 m band is a fixed physical width, so a coarse grid
+  // stops resolving it: measured, the value is 0.939x its own G12 value at G24, 0.793x at G48,
+  // 0.724x at G96 and exactly 0 at G164 and coarser. The Meadows and land goals are bulk counting
+  // metrics, so the engine still screens THEM at 24 m with a 1 % margin and only the survivors pay
+  // for the exact 12 m pass - run 'vseed search coastal-builder --dry-run' to see both stages priced.
+  //
+  // PREDICTED PASS RATE, and it is a prediction: shore >= 1,000,000 m2 within 1 km passed 21.1 % of
+  // the 512-seed sample measured at G24 (about 25 % at G12, where 1.0e6 sits near the 75th
+  // percentile), land >= 400,000 m2 within 600 m about 74 %, and the two are independent at this
+  // radius, so the joint rate is around 16-19 %. That is a product-of-independents estimate, not a
+  // measurement of the compiled query; 'vseed search coastal-builder --dry-run --calibrate' measures it.
+  //
+  // PARTLY TODAY. The design in 07-features.md section 5.3 also wants slope below 8 degrees and at
+  // least 60 % of the plot's perimeter on water. Neither slope nor perimeter fraction is implemented,
+  // so this preset measures the part that is defined today and says so instead of pretending.
+  "version": 1,
+  "defs": 1,
+  "name": "coastal-builder",
+  "description": "Buildable land close to spawn with a lot of usable shore. Slope is NOT measured.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 12, "screen": "auto", "screen_grid": 24, "keep": 100 },
+  "goals": [
+    { "id": "land-at-spawn", "target": "world:land_area_within", "metric": "land_area_within",
+      "radius": 600, "test": "at_least", "value": 400000, "importance": "must" },
+    { "id": "shoreline", "target": "world:shore_area_within", "metric": "shore_area_within",
+      "radius": 1000, "test": "at_least", "value": 1000000, "importance": "must" },
+    { "id": "meadows-at-spawn", "target": "biome:Meadows", "metric": "area_within",
+      "radius": 600, "test": "at_least", "value": 300000, "importance": "nice", "weight": 2 }
+  ]
+}

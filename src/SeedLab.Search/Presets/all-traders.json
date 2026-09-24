@@ -1,0 +1,51 @@
+{
+  // All traders - Haldor, Hildir and the Bog Witch all within reach of home.
+  //
+  // RUNS TODAY.
+  //
+  // READ THIS BEFORE TRUSTING A DISTANCE. All three are m_unique with m_quantity 10: the world is
+  // written with TEN candidates for each, and the game keeps whichever one a player generates the
+  // zone of first, deleting the rest (ZoneSystem.RemoveUnplacedLocations). That is exploration
+  // order, not the seed, so no offline tool can say where "the" trader is. This preset therefore
+  // asks two different questions and says which is which:
+  //
+  //   all_types_distance      at least ONE candidate of each of the three is within the radius.
+  //                           This is the honest optimistic reading and it is the must-have.
+  //   all_candidates_distance EVERY candidate of all three is within the radius, so whichever one
+  //                           the game keeps is too. This is the only form that GUARANTEES a
+  //                           distance, and it is a nice-to-have because very few seeds manage it.
+  //
+  // WHY NOT 3 km: Hildir_camp and BogWitch_Camp both carry m_minDistance 3000, so filter 1 rejects
+  // any point nearer than that - "all three traders within 3 km" is unreachable by construction.
+  // T0 knows those rings now and will say so.
+  //
+  // COST: BogWitch_Camp is ordered 21, so a seed runs 22 of 183 entries.
+  "version": 1,
+  "defs": 1,
+  "name": "all-traders",
+  "description": "A candidate of all three traders within 3,150 m, and Haldor within 1,900 m.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 384, "keep": 50 },
+  "goals": [
+    { "id": "all-three", "target": "group:traders", "metric": "all_types_distance",
+      "test": "near", "value": 3150, "importance": "must" },
+    // MEASURED over 512 placed seeds: this metric's minimum is 3,009 m (Hildir and the Bog Witch
+    // both carry m_minDistance 3000, so it cannot go below it), median 3,320 m. Together with the
+    // Haldor goal below, 60 of 512 seeds pass - 11.7 %.
+    // CONFIRMED by 'vseed search all-traders --seeds 128': 14 hits, 10.9 %.
+
+    // Haldor alone, close in. His ring is m_minDistance 1500.
+    { "id": "haldor", "target": "location:Vendor_BlackForest", "metric": "nearest_distance",
+      "test": "near", "value": 1900, "importance": "must" },
+    // MEASURED: his nearest candidate has minimum 1,504 m (m_minDistance 1500) and median 1,914 m.
+
+    // The guarantee: every one of Haldor's ten candidates inside this, so the survivor is too.
+    { "id": "haldor-guaranteed", "target": "location:Vendor_BlackForest", "metric": "all_candidates_distance",
+      "test": "near", "value": 8300, "importance": "nice", "weight": 3 },
+    // MEASURED: the furthest of his ten candidates has median 9,565 m and 5th percentile 8,261 m,
+    // so this is the top few per cent of seeds - which is why it is a score and not a filter.
+
+    { "id": "blackforest-near", "target": "biome:BlackForest", "metric": "nearest_distance",
+      "test": "near", "value": 1000, "importance": "nice" }
+  ]
+}

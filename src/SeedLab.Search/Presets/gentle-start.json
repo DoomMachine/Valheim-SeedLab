@@ -1,0 +1,61 @@
+{
+  // Gentle start - a big safe home island with plenty of Meadows around the spawn.
+  // WORKS TODAY.
+  //
+  // WHAT CHANGED, 2026-09-23, and it is a correction to this preset rather than to the engine.
+  // This preset used to ship FIVE must-have goals. Three of them - "no Swamp within 1.2 km", "no
+  // Plains within 1.2 km", "no Mistlands within 1.2 km" - rejected NOTHING, in any of the
+  // 4,294,967,296 seeds, and they are gone. They were not close calls; they are provable from the
+  // generator's own branch conditions:
+  //   Swamp     needs |p| > 2000            (WorldGenerator.GetBiome:812, neither endpoint carries
+  //                                          the WorldAngle wobble), so it cannot exist inside 2,000 m
+  //   Plains    needs |p| > 3000 + A, A in [-100, +100]  (GetBiome:820)  -> not inside 2,900 m
+  //   Mistlands needs |p| > 6000 + A                     (GetBiome:816)  -> not inside 5,900 m
+  // Each goal measured exactly 0 m2 inside its 1.2 km disc in every seed, so the preset's real
+  // must-set was two goals and its description was stating a property of the GENERATOR rather than
+  // of the seeds it found. The feasibility checker now reports goals like these as WARN-VACUOUS
+  // before a seed is touched; this file is the first thing it was pointed at.
+  //
+  // THE FOURTH CORRECTION. The old nice-to-have ranked on `biome:BlackForest nearest_distance near
+  // 800`. That metric takes ONE distinct value - 508.3 m - in 2,560 of 2,560 sampled seeds, so its
+  // sub-score was the same 0.365 for every seed the preset ever scored: it ranked nothing. It is
+  // replaced by the AREA of Black Forest within 1.2 km, which is the same intent ("copper in reach")
+  // measured on something that varies: median 1,617,336 m2 over 512 seeds at G12, CV 0.183
+  // (measured 2026-09-23, scratchpad\safe\calib).
+  //
+  // THE FIFTH. `meadows-close` asked for 500,000 m2 of Meadows within 1 km. The MINIMUM over those
+  // same 512 seeds is 1,028,448 m2 - more than twice the threshold - so that must-have passed 512 of
+  // 512 and filtered nothing either. It is now 1,600,000 m2, just under the measured median of
+  // 1,695,672 m2, so it keeps about half the seeds and the word "plenty" means something.
+  //
+  // GRID: 12, the game's own. The resolution study (2,560 seeds, 2026-09-23) measured what grid 96
+  // cost this preset: of the 1,565 seeds it would have reported as matches, 783 - HALF - are not
+  // matches at 12 m, and 20 of the 802 true matches were missed. spawn_island_area is a connected
+  // component; coarse grids merge islands across straits and drop the narrow ones, and NO margin
+  // fixes it (50 % at G24 still lost 8 of 802 while passing 2,068 of 2,560, i.e. it stopped filtering).
+  //
+  // WHY IT IS STILL AFFORDABLE. A height query at 12 m costs 6.8x a height query at 384 m, not
+  // 1,162x, because the lake/river/stream pre-generation is a fixed 570-617 ms that no grid reduces.
+  // And the two biome-area goals are bulk counting metrics inside small discs, so the engine screens
+  // them at 24 m with a 1 % margin (zero false negatives on 2,560 seeds) and only the survivors pay
+  // for the exact 12 m pass that decides the island. 'vseed search gentle-start --dry-run' prices both.
+  //
+  // MEASURED PASS RATE of the filter, 256 seeds at G12: spawn_island_area >= 3 km2 about 33 %
+  // (measured p50 2,258,064 m2, p75 3,705,336 m2), Meadows >= 1.6 Mm2 within 1 km about 55 %.
+  "version": 1,
+  "defs": 1,
+  "name": "gentle-start",
+  "description": "Large spawn island and plenty of Meadows around it. Swamp, Plains and Mistlands are already impossible this close to the centre in every seed - that is the generator, not the search.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 12, "screen": "auto", "screen_grid": 24, "keep": 200 },
+  "goals": [
+    { "id": "big-home", "target": "world:spawn_island_area", "metric": "spawn_island_area",
+      "test": "at_least", "value": 3000000, "importance": "must" },
+    { "id": "meadows-close", "target": "biome:Meadows", "metric": "area_within",
+      "radius": 1000, "test": "at_least", "value": 1600000, "importance": "must" },
+
+    // Copper in reach, ranked on something that actually varies between seeds.
+    { "id": "blackforest-close", "target": "biome:BlackForest", "metric": "area_within",
+      "radius": 1200, "test": "at_least", "value": 1600000, "importance": "nice", "weight": 2 }
+  ]
+}

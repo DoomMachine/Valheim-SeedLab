@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The search engine: criteria model, tiered evaluator, parallel scanner, checkpoints.
+
+    SeedLab.Render is referenced for FieldGrid and the water-level constant only, so that "the grid"
+    has exactly ONE definition shared with 'vseed map' and 'vseed seed' - a search hit must re-measure
+    identically when the user inspects it.
+
+    SeedLab.Locations is deliberately NOT referenced. Location goals go through
+    SeedLab.Search.Locations.ILocationOracle, so this project builds and runs with no dumped asset
+    table at all, and gains bosses/traders/dungeons the day one implementation of that interface
+    appears - with no change anywhere else.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>SeedLab.Search</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+    <ProjectReference Include="..\SeedLab.Render\SeedLab.Render.csproj" />
+    <ProjectReference Include="..\SeedLab.Seeds\SeedLab.Seeds.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Presets\*.json" />
+    <EmbeddedResource Include="Criteria\schema.md" />
+  </ItemGroup>
+</Project>

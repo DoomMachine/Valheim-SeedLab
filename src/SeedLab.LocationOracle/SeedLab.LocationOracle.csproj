@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The one implementation of SeedLab.Search.Locations.ILocationOracle.
+
+    It exists as its own assembly so that the seam stays a seam: SeedLab.Search still references
+    neither SeedLab.Locations nor SeedLab.Data, still compiles and runs with no dumped asset table,
+    and still refuses a boss goal with a reason rather than a wrong answer. Everything that needs
+    the game's own ZoneLocation parameters - the placement engine and the DATA-STAMP that fails
+    closed when the installed game does not match the dump - is on this side of the seam.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>SeedLab.LocationOracle</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SeedLab.Search\SeedLab.Search.csproj" />
+    <ProjectReference Include="..\SeedLab.Locations\SeedLab.Locations.csproj" />
+    <ProjectReference Include="..\SeedLab.Data\SeedLab.Data.csproj" />
+    <ProjectReference Include="..\SeedLab.Contracts\SeedLab.Contracts.csproj" />
+    <ProjectReference Include="..\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+  </ItemGroup>
+</Project>

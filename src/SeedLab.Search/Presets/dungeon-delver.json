@@ -1,0 +1,49 @@
+{
+  // Dungeon delver - crypts and caves packed close to home.
+  //
+  // RUNS TODAY.
+  //
+  // COST, AND WHAT IT BOUGHT. The deepest type here is Crypt4 at ordered index 66, so a seed runs
+  // 67 of the 183 entries. Frost caves (MountainCave02, ordered 106) were dropped from the shipped
+  // preset for exactly that reason: adding them raises the prefix to 107 and roughly doubles the
+  // placement half of a seed, for one more nice-to-have. Sunken crypts (ordered 5) and troll caves
+  // (ordered 61) are inside the prefix the burial chambers already pay for, so they are free.
+  // Add frost caves back with:
+  //   { "id": "frost-caves", "target": "group:frost_caves", "metric": "count_within",
+  //     "radius": 5000, "test": "at_least", "value": 3, "importance": "nice" }
+  //
+  // The chamber count is the must-have, and it is cheap to gate on: Crypt2 finishes at ordered 31,
+  // so a seed that already cannot reach the target is usually stopped well before Crypt4.
+  "version": 1,
+  "defs": 1,
+  "name": "dungeon-delver",
+  "description": "85 burial chambers within 2 km with all three types inside 660 m, plus crypts and caves.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 384, "keep": 50 },
+  "goals": [
+    { "id": "chambers", "target": "group:burial_chambers", "metric": "count_within",
+      "radius": 2000, "test": "at_least", "value": 85, "importance": "must" },
+    // MEASURED over 512 placed seeds: median 72 chambers within 2 km, 90th percentile 96,
+    // maximum 127. The old threshold of 10 passed every seed in the space.
+
+    // At least one of EACH of Crypt2, Crypt3 and Crypt4 close in - the count above would be
+    // satisfied by eighty-five of a single type, and this is what makes it three.
+    { "id": "every-chamber-type", "target": "group:burial_chambers", "metric": "all_types_distance",
+      "test": "near", "value": 660, "importance": "must" },
+    // MEASURED: the furthest of the three types' nearest chambers has median 688 m and minimum
+    // 545 m. With the count goal above, 48 of 512 seeds pass - 9.4 %.
+    // CONFIRMED by 'vseed search dungeon-delver --seeds 128': 14 hits, 10.9 %.
+
+    { "id": "sunken-crypts", "target": "group:sunken_crypts", "metric": "count_within",
+      "radius": 4000, "test": "at_least", "value": 74, "importance": "nice", "weight": 2 },
+    // MEASURED: median 64 within 4 km, 75th percentile 74.
+
+    { "id": "troll-caves", "target": "group:troll_caves", "metric": "count_within",
+      "radius": 4000, "test": "at_least", "value": 71, "importance": "nice" },
+    // MEASURED: median 65 within 4 km, 75th percentile 71.
+
+    { "id": "chambers-closest", "target": "group:burial_chambers", "metric": "nearest_distance",
+      "test": "near", "value": 546, "importance": "nice", "weight": 2 }
+    // MEASURED: the nearest chamber of any of the three types has median 584 m and minimum 509 m.
+  ]
+}

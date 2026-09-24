@@ -1,0 +1,40 @@
+{
+  // Iron rich - sunken crypts close to home, for a short iron age.
+  //
+  // RUNS TODAY. SunkenCrypt4 is ordered 5 of 183, so this is the cheapest location preset there is:
+  // a seed places six entries. The floor under it is still the 2048^2 biome-and-height point grid
+  // that ZoneSystem's candidate-zone draw reads, about 1.9 s per seed per thread.
+  //
+  // The old threshold - 6 crypts within 3 km - was not a filter: SunkenCrypt4 has m_quantity 175
+  // and MEASURED over 512 placed seeds there is a median of 113 of them within 5 km and 64 within
+  // 4 km. Six was satisfied by every seed in the space.
+  //
+  // NOTE THE GRID. This preset measures its Swamp goals at 24 m, which is 64x the cells of the
+  // 192 m presets and correspondingly slower - but the crypt goals do not touch that grid at all,
+  // so on this preset the sampling grid is no longer what costs the time.
+  "version": 1,
+  "defs": 1,
+  "name": "iron-rich",
+  "description": "At least 80 sunken crypts within 4 km, with the nearest inside 2.1 km.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 24, "keep": 100 },
+  "goals": [
+    // MEASURED: median 64 within 4 km, 75th percentile 74, 90th 85. 80 keeps about one seed in six
+    // (91 of 512 placed seeds, 17.8 %). CONFIRMED by 'vseed search iron-rich --seeds 128':
+    // 24 hits, 18.8 %.
+    { "id": "crypts", "target": "location:SunkenCrypt4", "metric": "count_within",
+      "radius": 4000, "test": "at_least", "value": 80, "importance": "must" },
+
+    // MEASURED: the nearest crypt has median 2,114 m and minimum 2,028 m - Swamp itself cannot
+    // start closer than 2,000 m (GetBiome's 'dist > 2000' test), so this is nearly the floor.
+    { "id": "crypts-close", "target": "location:SunkenCrypt4", "metric": "nearest_distance",
+      "test": "near", "value": 2100, "importance": "nice", "weight": 2 },
+
+    // Swamp area is a NECESSARY condition for crypts and is now measured alongside them rather
+    // than as a stand-in for them.
+    { "id": "swamp-area", "target": "biome:Swamp", "metric": "area_within",
+      "radius": 4000, "test": "at_least", "value": 4000000, "importance": "nice", "weight": 2 },
+    { "id": "swamp-near", "target": "biome:Swamp", "metric": "nearest_distance",
+      "test": "near", "value": 2500, "importance": "nice" }
+  ]
+}

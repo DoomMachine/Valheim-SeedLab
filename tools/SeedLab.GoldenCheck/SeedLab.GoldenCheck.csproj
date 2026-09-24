@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Compares the port's INTERNAL pre-generation state against goldens\worldgen-*.json written by
+       the running game (spec 04 section 3.6.1). BCL only - System.Text.Json ships in net10.0. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SeedLab.GoldenCheck</RootNamespace>
+    <AssemblyName>SeedLab.GoldenCheck</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+  </ItemGroup>
+</Project>

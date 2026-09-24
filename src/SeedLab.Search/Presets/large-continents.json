@@ -1,0 +1,18 @@
+{
+  // Large continents - one big landmass you can walk across.
+  // WORKS TODAY.
+  "version": 1,
+  "defs": 1,
+  "name": "large-continents",
+  "description": "A largest island of at least 8 km2, without too many scraps around it.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 24, "keep": 100 },
+  "goals": [
+    { "id": "big-island", "target": "world:largest_island_area", "metric": "largest_island_area",
+      "test": "at_least", "value": 8000000, "importance": "must" },
+    { "id": "few-islands", "target": "world:island_count", "metric": "island_count",
+      "min_area": 10000, "test": "at_most", "value": 150, "importance": "nice" },
+    { "id": "land-rich", "target": "world:land_share", "metric": "land_share",
+      "test": "at_least", "value": 0.35, "importance": "nice" }
+  ]
+}

@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The local web UI. A library, not an exe: 'vseed serve' owns the process, this owns the server.
+
+    FrameworkReference, not a package. Microsoft.AspNetCore.App is a SHARED FRAMEWORK that ships
+    with the .NET runtime (10.0.12 is installed on this machine, and Microsoft.AspNetCore.App.Ref is
+    in C:\Program Files\dotnet\packs), so referencing it needs no NuGet source and no restore of
+    anything that is not already on disk. SeedLab takes no packages and this does not change that.
+
+    The front end is EMBEDDED, not copied to disk. Three files, listed one by one with explicit
+    logical names so the paths cannot drift, and served from a fixed allowlist in StaticAssets:
+    that is what makes "refuse to serve any file outside its own content root" true by construction
+    rather than by a path check that has to be got right.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>SeedLab.Web</RootNamespace>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\SeedLab.Render\SeedLab.Render.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\SeedLab.Seeds\SeedLab.Seeds.csproj" />
+    <!--
+      The real search engine. SeedLab.Search takes exactly the same three references this project
+      already had (WorldGen, Render, Seeds) and touches no file of its own unless a ResultWriter is
+      handed to it - which this server never does - so referencing it keeps "writes nothing" true.
+      Locations are NOT referenced here: SeedLab.Locations needs the dumped asset table and the boss /
+      trader curation that lives in the CLI, so they arrive through WebServerOptions.Locations, the
+      same provider seam the seed panel's figures already use.
+    -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\SeedLab.Search\SeedLab.Search.csproj" />
+    <!--
+      The runtime layer: the hardware probe, the worker plan, the cache root, the auto-throttle and the
+      estimator. Decision 12 says the GUI must be able to do everything the CLI can, and every one of
+      those is a thing the CLI does before a run - so the page reaches them through exactly the same
+      objects rather than a second implementation. It is a plain library with no dependencies of its own.
+    -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\SeedLab.Runtime\SeedLab.Runtime.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot\index.html" LogicalName="seedlab.web.index.html" />
+    <EmbeddedResource Include="wwwroot\app.css" LogicalName="seedlab.web.app.css" />
+    <EmbeddedResource Include="wwwroot\app.js" LogicalName="seedlab.web.app.js" />
+    <EmbeddedResource Include="wwwroot\favicon.svg" LogicalName="seedlab.web.favicon.svg" />
+  </ItemGroup>
+</Project>

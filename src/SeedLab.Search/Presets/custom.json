@@ -1,0 +1,75 @@
+{
+  // An empty skeleton with every field spelled out. Copy it and delete what you do not need.
+  // "vseed search --metrics" lists every target and metric with the tier that answers it.
+  "version": 1,          // query-file format version; this build reads 1
+  "defs": 1,             // metric-definition version (07-features.md section 2)
+  "name": "custom",
+  "description": "Say what you are looking for, so the results file still explains itself in a month.",
+
+  "world": {
+    "gen_version": 2     // 0 | 1 | 2 -> WorldGenerator.VersionSetup. Every 1.0.15 world is 2.
+  },
+
+  "search": {
+    "order": "shuffled",                  // shuffled (default) | sequential
+    // "key": "0x5EEDF00D1234ABCD",       // omit it and the key comes from the query hash: still deterministic
+    "range": [-2147483648, 2147483647],   // the whole int32 seed space
+    "budget": { "seeds": 100000 },        // and/or "wall": "8h" - whichever comes first
+    "keep": 1000,                         // A REAL CAP ON THE FILE: only the best 1000 records are
+                                          // ever written, whatever the scan finds, and the run reports
+                                          // the true match count beside them ("top 1000 of 131,076").
+                                          // "all" streams every match instead - pair it with
+                                          // output.rotate, because every seed matches a query with no
+                                          // must-have goal and a whole-space run of one would be 7.36 TB.
+    "grid": 12,                           // metres. 12 is the game's own grid and the default.
+                                          // A coarser grid is a DIFFERENT measurement, not an
+                                          // approximation of this one.
+    "screen": "auto",                     // auto (default) | on | off. "auto" puts a cheap coarse pass
+                                          // in front of the exact one when the query's must-haves are
+                                          // counting metrics: measured zero false negatives on 2,560
+                                          // seeds at 24 m with a 1 % margin, 1.2x survivors to
+                                          // re-measure. Every record written is measured at "grid".
+    "screen_grid": 24,                    // the coarse grid for that screen; never coarser than 96,
+                                          // where the safe margin passes 90 % of seeds and stops filtering
+    // "region": 2000,                    // measure inside this disc only. EXACT and the biggest lever
+                                          // in the tool: measured 8.16 ms/seed for a 1 km goal at 12 m
+                                          // against 1,324 ms for the whole world - 162x, no loss
+    "approx": false,                      // this build ships no heuristic filter, so leave it false
+    "block_size": 256                     // seeds per work block; smaller means finer checkpoints
+  },
+
+  "output": {
+    "path": "results.jsonl",              // .jsonl | .json | .csv
+    "explain": true,
+    // "rotate": "1GB",                   // unbounded runs only: cut the stream into 1 GB segments with
+                                          // a results.manifest.json. Refused with .json (a split array
+                                          // is not valid JSON)
+    // "compress": "gz",                   // gzip each closed segment; on by default when rotating
+    // "reduce": "top:1000",              // reduce a segment when it closes, keep the reduction, delete
+                                          // the raw segment. Only reductions that merge exactly are
+                                          // allowed: top:N and count. A median or percentile is refused,
+                                          // because it cannot be rebuilt from per-segment answers
+    // "on_limit": "stop",                // stop (default) | evict. "stop" ends cleanly at the ceiling
+                                          // and prints the resume command; "evict" keeps going and drops
+                                          // the worst records, and needs an explicit confirmation
+    // "max_bytes": "10GB"                // the ceiling itself
+  },
+
+  "goals": [
+    {
+      "id": "example",                    // unique; the report and the CSV columns are named after it
+      "target": "biome:Meadows",          // biome:<name> | world:<metric> | location:<prefab> | group:<name>
+      "metric": "area_within",            // see --metrics
+      "radius": 1000,                     // for the *_within metrics
+      // "height": 150,                   // for area_above_height
+      // "min_area": 10000,               // for island_count
+      "test": "at_least",                 // near | far | at_least | at_most | between
+      "value": 500000,
+      // "max": 900000,                   // for "between"
+      "from": "center",                   // center | spawn (spawn needs the dumped location table)
+      "importance": "nice",               // must (a hard filter) | nice (a weighted score)
+      "weight": 1,
+      "pad": 0.25                         // for "between": how far outside the range the score reaches 0
+    }
+  ]
+}

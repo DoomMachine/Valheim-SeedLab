@@ -1,0 +1,92 @@
+{
+  // Balanced world - a bit of everything, nothing extreme, and the places that matter in reach.
+  //
+  // RUNS TODAY, and it now places locations: the five altars of a normal playthrough, Haldor and
+  // the burial chambers. Any location goal has to build the 2048^2 biome-and-height point grid the
+  // candidate-zone draw reads - about 1.9 s per seed on one thread - and the chamber goal then runs
+  // 67 of the 183 ordered entries on top of that. MEASURED on 16 threads with no cheap filter in
+  // front of it, a 67-entry query runs at 2.7 seeds/s. The biome-only version is shipped as
+  // 'balanced-biomes' and measured at 20.4 seeds/s.
+  //
+  // WHAT CHANGED, AND WHY THE HOME ISLAND IS NO LONGER A FILTER. This preset used to filter on
+  // spawn_island_area >= 4 km2 as a MUST at grid 192. The resolution study (2,560 seeds,
+  // 2026-09-23) measured what a coarse grid does to that metric: spawn_island_area is a connected
+  // component, coarse grids merge islands across straits and drop narrow ones, its median error at
+  // 164 m is 44 %, and NO margin at any grid removes the false negatives (50 % at G24 still lost 8
+  // of 802 true matches while passing 2,068 of 2,560 seeds). A must-have on it at 192 m was
+  // therefore rejecting real matches and reporting seeds that are not matches - silently, which is
+  // the worst way to be wrong.
+  //
+  // The two honest ways out are to run the whole preset at grid 12, or to stop using the metric as
+  // a filter. Running at 12 m would put a 4.2 s/seed height pass in front of a query that already
+  // costs ~2 s/seed in placement, for a goal that was never the point of "balanced"; so the home
+  // island now RANKS instead of filtering. It keeps its weight, so a seed with a big home island
+  // still wins - the tool simply no longer claims a guarantee its grid cannot support. If you want
+  // the guarantee, use 'gentle-start', which is a spawn-island preset and runs at 12 m.
+  //
+  // The biome area goals below are all nice-to-haves, i.e. ranking, and bulk areas at 192 m are
+  // accurate to a median of 0.0015 in share units - fine for ranking. They are measured ON THIS
+  // GRID and are not comparable with a 12 m result; every record says so.
+  //
+  // MEASURED PASS RATE at this revision: see the header of 'vseed search balanced --seeds 256'.
+  // The filter is now the five altars alone.
+  "version": 1,
+  "defs": 1,
+  "name": "balanced",
+  "description": "All nine biomes in usable quantity, a home island worth building on, and the five bosses in reach.",
+  "world": { "gen_version": 2 },
+  "search": { "order": "shuffled", "grid": 192, "keep": 200 },
+  "goals": [
+    // ---- the filter -------------------------------------------------------------------------
+    // Measured: the largest of the five per-altar nearest distances has median 4,491 m, so 4,600 m
+    // keeps a bit under three seeds in five. Location placement uses the game's own hard-coded
+    // 2048 x 2048 @ 12 m point grid, so this goal is EXACT at any 'grid' setting.
+    { "id": "five-bosses", "target": "group:bosses_classic", "metric": "all_types_distance",
+      "test": "near", "value": 4600, "importance": "must" },
+
+    // ---- the ranking ------------------------------------------------------------------------
+    // Every biome's area at this grid, with a threshold near its measured median so the sub-score
+    // actually discriminates instead of sitting at 1.0 for every seed. AshLands is deliberately
+    // absent: its area is 42,946,560 m2 in EVERY one of the 831 seeds measured - IsAshlands is a
+    // fixed circle, so there is nothing to rank.
+    { "id": "meadows",     "target": "biome:Meadows",     "metric": "area", "test": "at_least", "value": 10650000, "importance": "nice" },
+    { "id": "blackforest", "target": "biome:BlackForest", "metric": "area", "test": "at_least", "value": 46150000, "importance": "nice" },
+    { "id": "swamp",       "target": "biome:Swamp",       "metric": "area", "test": "at_least", "value": 9180000,  "importance": "nice" },
+    { "id": "mountain",    "target": "biome:Mountain",    "metric": "area", "test": "at_least", "value": 11020000, "importance": "nice" },
+    { "id": "plains",      "target": "biome:Plains",      "metric": "area", "test": "at_least", "value": 44640000, "importance": "nice" },
+    { "id": "mistlands",   "target": "biome:Mistlands",   "metric": "area", "test": "at_least", "value": 59600000, "importance": "nice" },
+    { "id": "deepnorth",   "target": "biome:DeepNorth",   "metric": "area", "test": "at_least", "value": 23920000, "importance": "nice" },
+    { "id": "ocean",       "target": "biome:Ocean",       "metric": "area", "test": "at_most",  "value": 98100000, "importance": "nice" },
+
+    // The home island: a ranking goal, for the reason in the header. Measured at this grid the
+    // median is 3.80 km2, so 4 km2 puts the half-way seed at a sub-score of 0.95 and a 8 km2
+    // island at 1.0 - it still decides between two seeds that are otherwise equal.
+    { "id": "home-island", "target": "world:spawn_island_area", "metric": "spawn_island_area",
+      "test": "at_least", "value": 4000000, "importance": "nice", "weight": 3 },
+
+    { "id": "big-home", "target": "world:spawn_island_area", "metric": "spawn_island_area",
+      "test": "at_least", "value": 8000000, "importance": "nice", "weight": 3 },
+
+    // Haldor is m_unique: this is "at least one of his ten candidates", never "Haldor is here".
+    // 'vseed explain' prints which semantics every location goal used.
+    { "id": "haldor", "target": "location:Vendor_BlackForest", "metric": "nearest_distance",
+      "test": "near", "value": 1900, "importance": "nice", "weight": 2 },
+
+    // Eikthyr's altar is capped at m_maxDistance 1000, so this ranks rather than filters.
+    { "id": "eikthyr", "target": "location:Eikthyrnir", "metric": "nearest_distance",
+      "test": "near", "value": 300, "importance": "nice", "weight": 2 },
+
+    // Burial chambers for the early game. THIS GOAL IS WHAT COSTS THE MOST HERE: Crypt4 is
+    // ordered 66, so it takes the placement prefix from 8 entries to 67 and MEASURED adds about
+    // 1.2 s to a seed that would otherwise spend ~2.0 s. It is kept because a "balanced world"
+    // with no crypts near home is not one - delete it and the preset gets 1.6x faster.
+    // MEASURED: median 72 chambers within 2 km.
+    { "id": "chambers", "target": "group:burial_chambers", "metric": "count_within",
+      "radius": 2000, "test": "at_least", "value": 71, "importance": "nice", "weight": 2 },
+
+    // Early progression should not be a boat trip. Measured: Swamp is never more than 2,308 m away
+    // at this grid, so this one is a tie-breaker, not a filter.
+    { "id": "swamp-near", "target": "biome:Swamp", "metric": "nearest_distance",
+      "test": "near", "value": 2100, "importance": "nice", "weight": 2 }
+  ]
+}
