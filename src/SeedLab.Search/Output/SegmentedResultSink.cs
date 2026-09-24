@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using SeedLab.Runtime.Storage;
 using SeedLab.Search.Evaluation;
 
 namespace SeedLab.Search.Output
@@ -92,7 +93,18 @@ namespace SeedLab.Search.Output
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             _ext = System.IO.Path.GetExtension(_basePath);
             _stem = _basePath.Substring(0, _basePath.Length - _ext.Length);
-            ManifestPath = _stem + ".manifest.json";
+            ManifestPath = ManifestPathFor(_basePath);
+        }
+
+        /// <summary>
+        /// The manifest a rotated run writes beside <paramref name="basePath"/>: "results.jsonl" ->
+        /// "results.manifest.json". For a start-of-run check of the one file such a run replaces.
+        /// </summary>
+        public static string ManifestPathFor(string basePath)
+        {
+            string full = System.IO.Path.GetFullPath(basePath);
+            string ext = System.IO.Path.GetExtension(full);
+            return full.Substring(0, full.Length - ext.Length) + ".manifest.json";
         }
 
         public string Path => _basePath;
@@ -145,6 +157,12 @@ namespace SeedLab.Search.Output
 
         private long _keptAfterReduction;
 
+        /// <summary>A rotation's manifest write failed; the next flush writes it even with no segment open.</summary>
+        private bool _manifestPending;
+
+        /// <summary><see cref="Finish"/> has closed the last segment: a manifest written from now on is the complete one.</summary>
+        private bool _finished;
+
         public void Add(SeedResult r)
         {
             string text = _fmt.Text(_format, r);
@@ -170,7 +188,13 @@ namespace SeedLab.Search.Output
         /// </summary>
         public void Flush()
         {
-            if (!_segmentOpen || _file == null) return;
+            if (!_segmentOpen || _file == null)
+            {
+                // No segment open - the last rotation closed it - but its manifest write may have
+                // failed, and nothing else would write it again before Finish (review of 2026-09-24).
+                if (_manifestPending) WriteManifest(complete: false);
+                return;
+            }
 
             if (_policy.Compress)
             {
@@ -189,11 +213,32 @@ namespace SeedLab.Search.Output
             WriteManifest(complete: false);
         }
 
+        /// <summary>
+        /// Closes the last segment and writes the manifest marked complete, waiting for a held manifest
+        /// on the patient schedule. Throws a <see cref="FileAccessException"/> when it still cannot be
+        /// written - every record is on disk by then, so a front end reports the run and offers
+        /// <see cref="RetryManifest"/> rather than calling the run failed.
+        /// </summary>
         public void Finish()
         {
             if (_segmentOpen) CloseSegment();
-            WriteManifest(complete: true);
+            _finished = true;
+            WriteManifest(complete: true, RetrySchedule.Patient, OnFinishAttempt);
         }
+
+        /// <summary>Hears each attempt of <see cref="Finish"/>'s manifest write, so a front end can say it is waiting.</summary>
+        public Action<RetryAttempt>? OnFinishAttempt;
+
+        /// <summary>
+        /// Writes the manifest again - after <see cref="Finish"/> could not (another program held it), on
+        /// <paramref name="retry"/> (<see cref="RetrySchedule.Quick"/> when not given). Needs no open
+        /// file: the manifest is built from the segments already closed, so this works after
+        /// <see cref="Dispose"/> too.
+        /// </summary>
+        public void RetryManifest(RetrySchedule? retry = null) => WriteManifest(complete: _finished, retry ?? RetrySchedule.Quick);
+
+        /// <summary>The segments closed so far - what the manifest lists.</summary>
+        public int SegmentCount => _segments.Count;
 
         public void Dispose()
         {
@@ -216,7 +261,8 @@ namespace SeedLab.Search.Output
             _index++;
             string name = _stem + "." + _index.ToString("0000", CultureInfo.InvariantCulture) + _ext
                           + (_policy.Compress ? ".gz" : "");
-            _file = new FileStream(name, FileMode.Create, FileAccess.Write, FileShare.Read);
+            _file = FileRetry.Run(name, "write to", () => new FileStream(name, FileMode.Create, FileAccess.Write, FileShare.Read),
+                                  RetrySchedule.Quick);
             _sink = _policy.Compress
                 ? new GZipStream(_file, CompressionLevel.Fastest, leaveOpen: true)
                 : (Stream)_file;
@@ -302,14 +348,40 @@ namespace SeedLab.Search.Output
 
             _segments.Add(info);
             Length = -1;
-            WriteManifest(complete: false);
+
+            // The segment is closed and recorded, so a manifest that cannot be written now - another
+            // program has it open - loses nothing: it is marked pending, the next flush writes it with
+            // this segment in it even when no segment is open, and a flush that cannot is the warning
+            // the run reports (2026-09-24). Throwing from here would have ended the run from inside the
+            // collector's Add.
+            //
+            // One attempt, no wait (review of 2026-09-24): the next flush retries anyway, and each
+            // rotation spent the quick schedule's 1.6 s here with the collector - and so every worker
+            // at the pending cap - standing still. Measured: 31.3 s for a 6,000-seed run whose manifest
+            // was held, against 2.1 s unheld.
+            try
+            {
+                WriteManifest(complete: false, RetrySchedule.Once);
+            }
+            catch (FileAccessException)
+            {
+                _manifestPending = true;
+            }
         }
 
         /// <summary>
         /// The map of ~7,000 segments. Rewritten atomically at every rotation and every flush, so a
-        /// killed run still leaves a manifest that describes everything that closed.
+        /// killed run still leaves a manifest that describes everything that closed. The rename is
+        /// retried while another program holds the manifest (<see cref="RetrySchedule.Quick"/>, or the
+        /// patient schedule for the final one) and then throws a <see cref="FileAccessException"/>.
         /// </summary>
-        private void WriteManifest(bool complete)
+        private void WriteManifest(bool complete, RetrySchedule? retry = null, Action<RetryAttempt>? onAttempt = null)
+        {
+            WriteManifestNow(complete, retry, onAttempt);
+            _manifestPending = false;
+        }
+
+        private void WriteManifestNow(bool complete, RetrySchedule? retry, Action<RetryAttempt>? onAttempt)
         {
             StringBuilder sb = new StringBuilder(4096);
             sb.Append("{\n");
@@ -346,20 +418,13 @@ namespace SeedLab.Search.Output
 
             sb.Append("  ]\n}\n");
 
-            string tmp = ManifestPath + ".tmp";
-            using (FileStream fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-            {
-                byte[] b = Encoding.UTF8.GetBytes(sb.ToString());
-                fs.Write(b, 0, b.Length);
-                fs.Flush(true);
-            }
-
-            File.Move(tmp, ManifestPath, overwrite: true);
+            byte[] b = Encoding.UTF8.GetBytes(sb.ToString());
+            DurableWrite.Stream(ManifestPath, s => s.Write(b, 0, b.Length), retry, tempPath: ManifestPath + ".tmp", onAttempt: onAttempt);
         }
 
         private static string Sha256Of(string path)
         {
-            using FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using FileStream fs = SharedRead.Open(path);
             using SHA256 sha = SHA256.Create();
             return Convert.ToHexString(sha.ComputeHash(fs)).ToLowerInvariant();
         }

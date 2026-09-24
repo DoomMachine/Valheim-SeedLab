@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using SeedLab.Runtime.Storage;
 
 namespace SeedLab.Search.Output
 {
@@ -122,13 +123,27 @@ namespace SeedLab.Search.Output
         // ---- the snapshot ---------------------------------------------------------------------------
         //
         // A bounded run's results file is rewritten wholesale from this set, so the set IS the
-        // resumable state. It is written beside the checkpoint, atomically, in the same step - a
-        // checkpoint whose heap is missing would resume into a file holding only the tail of the run
-        // and still report the full match count, which is exactly the silent data loss the audit
-        // found in the streaming path.
+        // resumable state. It is written beside the checkpoint, before it, under the generation name
+        // the checkpoint on disk does not use (CheckpointStore.NextSnapshotPath), so the checkpoint's
+        // own rename is the one moment the pair changes - a checkpoint whose heap is missing, or
+        // newer than it, would resume into a file holding the wrong set and still report the full
+        // match count, which is exactly the silent data loss the audit found in the streaming path.
 
-        /// <summary>Writes the set (and its counters) to <paramref name="path"/>, temp file then rename.</summary>
-        public void SaveSnapshot(string path)
+        /// <summary>
+        /// The <c>next_block</c> the snapshot this set was loaded from recorded, or -1 when it was not
+        /// loaded from one or the snapshot predates the field (2026-09-24).
+        /// </summary>
+        public long SnapshotNextBlock { get; private set; } = -1;
+
+        /// <summary>
+        /// Writes the set (and its counters) to <paramref name="path"/>, temp file then rename, retrying
+        /// on <paramref name="retry"/> while another program holds the file (<see cref="RetrySchedule.Quick"/>
+        /// when not given). <paramref name="nextBlock"/> is the checkpoint's resume point, recorded so
+        /// that a snapshot and a checkpoint from different moments can be told apart on load.
+        /// <paramref name="onAttempt"/> hears each attempt (<see cref="DurableWrite.Stream"/>).
+        /// </summary>
+        public void SaveSnapshot(string path, long nextBlock = -1, RetrySchedule? retry = null,
+                                 Action<RetryAttempt>? onAttempt = null)
         {
             StringBuilder sb = new StringBuilder(64 * 1024);
             sb.Append("{\"v\":1,\"keep\":").Append(_keep.ToString(CultureInfo.InvariantCulture));
@@ -136,6 +151,7 @@ namespace SeedLab.Search.Output
             sb.Append(",\"dropped\":").Append(Dropped.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"first_drop_score\":").Append(RecordFormatter.N(FirstDropScore));
             sb.Append(",\"first_drop_at\":").Append(FirstDropAtMatch.ToString(CultureInfo.InvariantCulture));
+            if (nextBlock >= 0) sb.Append(",\"next_block\":").Append(nextBlock.ToString(CultureInfo.InvariantCulture));
             sb.Append("}\n");
             foreach (Entry e in Ordered())
             {
@@ -145,23 +161,19 @@ namespace SeedLab.Search.Output
                 sb.Append("}\n");
             }
 
-            string tmp = path + ".tmp";
-            string? dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path));
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            using (FileStream fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-            {
-                byte[] b = Encoding.UTF8.GetBytes(sb.ToString());
-                fs.Write(b, 0, b.Length);
-                fs.Flush(true);
-            }
-
-            File.Move(tmp, path, overwrite: true);
+            // The temp keeps its <snapshot>.tmp name: CheckpointStore.CleanOrphans knows it.
+            byte[] b = Encoding.UTF8.GetBytes(sb.ToString());
+            DurableWrite.Stream(path, s => s.Write(b, 0, b.Length), retry, tempPath: path + ".tmp", onAttempt: onAttempt);
         }
 
-        /// <summary>Reads a snapshot back. Throws when the file is not a snapshot of this keep size.</summary>
+        /// <summary>
+        /// Reads a snapshot back, sharing read, write and delete with a run that may be saving beside
+        /// it. Throws when the file is not a snapshot of this keep size. Whether it belongs with a
+        /// particular checkpoint is <see cref="Execution.CheckpointStore.LoadKeptSet"/>'s question.
+        /// </summary>
         public static BoundedResultSet LoadSnapshot(string path, int keep)
         {
-            string[] lines = File.ReadAllLines(path);
+            string[] lines = SharedRead.AllLines(path);
             if (lines.Length == 0) throw new InvalidOperationException("the kept-results snapshot '" + path + "' is empty");
 
             BoundedResultSet set = new BoundedResultSet(keep);
@@ -181,6 +193,7 @@ namespace SeedLab.Search.Output
                 set.FirstDropScore = h.TryGetProperty("first_drop_score", out JsonElement fd)
                                      && fd.ValueKind == JsonValueKind.Number ? fd.GetDouble() : double.NaN;
                 set.FirstDropAtMatch = h.TryGetProperty("first_drop_at", out JsonElement fa) ? fa.GetInt64() : -1;
+                set.SnapshotNextBlock = h.TryGetProperty("next_block", out JsonElement nb) ? nb.GetInt64() : -1;
             }
 
             for (int i = 1; i < lines.Length; i++)

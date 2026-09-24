@@ -217,6 +217,64 @@ namespace SeedLab.Data
             }
         }
 
+        /// <summary>
+        /// <see cref="InstalledGameCheck"/> if something has already asked for it, else null - for a
+        /// report that must not hash <c>assembly_valheim.dll</c> a second time just to say so.
+        /// </summary>
+        public StampCheck? InstalledGameCheckIfDone => _check;
+
+        /// <summary>The data <see cref="Load"/> opened in this process, or null when nothing has asked for it.</summary>
+        public static GameData? Loaded => s_default;
+
+        // ---- what this process has verified ----------------------------------------------------------
+
+        private static readonly object s_verifiedGate = new object();
+        private static readonly List<string> s_verified = new List<string>();
+        private static readonly HashSet<string> s_verifiedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// How many data files this process has read AND found identical to the SHA-256 recorded for
+        /// them in <c>manifest.json</c> (2026-09-24). Files are verified lazily, on first use, so this
+        /// is what the command actually relied on - not the whole dump - and it is counted as the check
+        /// happens, so a report of it hashes nothing again. A file that failed the check never counts:
+        /// its load threw.
+        /// </summary>
+        public static int VerifiedFileCount
+        {
+            get
+            {
+                lock (s_verifiedGate) return s_verified.Count;
+            }
+        }
+
+        /// <summary>The files behind <see cref="VerifiedFileCount"/>, full paths, in the order they were checked.</summary>
+        public static IReadOnlyList<string> VerifiedFiles
+        {
+            get
+            {
+                lock (s_verifiedGate) return s_verified.ToArray();
+            }
+        }
+
+        /// <summary>Called by the loaders when a file's bytes matched the manifest's SHA-256.</summary>
+        internal static void NoteVerified(string path)
+        {
+            string full;
+            try
+            {
+                full = Path.GetFullPath(path);
+            }
+            catch (Exception)
+            {
+                full = path;
+            }
+
+            lock (s_verifiedGate)
+            {
+                if (s_verifiedSet.Add(full)) s_verified.Add(full);
+            }
+        }
+
         /// <summary>Gate for anything that reads the asset tables. See <see cref="DataPolicy"/>.</summary>
         public void RequireUsableForAssetData(string whatWasAsked)
             => DataPolicy.RequireMatchForAssetData(InstalledGameCheck, whatWasAsked);

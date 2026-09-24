@@ -27,6 +27,7 @@ nothing installed, through a first search, to reading the result and opening it 
 - [What it can and cannot tell you](#what-it-can-and-cannot-tell-you)
 - [Build it](#build-it)
 - [The commands](#the-commands)
+- [The session log, and a file another program holds](#the-session-log-and-a-file-another-program-holds)
 - [The web UI](#the-web-ui)
 - [Searching, and what it really costs](#searching-and-what-it-really-costs)
 - [Seeds: 853 quadrillion texts, 4.29 billion worlds](#seeds-853-quadrillion-texts-429-billion-worlds)
@@ -168,8 +169,9 @@ vseed <command> --help       one command's options
 ```
 
 `--json` gives every data command a machine-readable form on stdout, with warnings on stderr, so it
-pipes into `jq` cleanly. Exit codes: `0` ok, `1` a check failed, `2` bad command line, `3` not found,
-`4` internal fault. Global options work on either side of the command name:
+pipes into `jq` cleanly. Exit codes: `0` ok, `1` a check failed, `2` bad command line, `3` not found -
+or a file or folder SeedLab needs is in use, read-only or not allowed - and `4` internal fault. Global
+options work on either side of the command name:
 
 | | |
 |---|---|
@@ -197,9 +199,13 @@ exit 1 with `seedlab/natives: 263779/263780 exact`. A pass writes a stamp in `<c
 and costs nothing again.
 
 **`vseed clean`** reports what SeedLab is holding on disk, per category, with the volume's free
-space, and removes the caches with `--yes` (`--what checkpoints,maps,tiles,scratch,runs,selftest,all`).
-It also compares the dumper's raw output folder against `data\` and tells you when it is redundant —
-without ever deleting it.
+space, and removes the caches with `--yes` (`--what checkpoints,maps,tiles,scratch,runs,selftest,logs,all`).
+"Freed" counts only files that were really deleted; one another program has open is left alone and
+listed with the probable cause, and the command's own session log is always kept. The table's "this
+run" column says `removed` only for a category whose every file went — `partly removed`, or
+`kept (in use)` when none did (the `logs` row usually, since the command keeps its own). It also compares
+the dumper's raw output folder against `data\` and tells you when it is redundant — without ever
+deleting it.
 
 ### `vseed seed` — everything about one world
 
@@ -414,6 +420,82 @@ Bench  (16 logical cores, .NET 10.0.12)
 
 ---
 
+## The session log, and a file another program holds
+
+Every command that starts SeedLab's runtime — `seed`, `at`, `map`, `locations`, `search`, `explain`,
+`serve`, `selftest`, `bench` and `clean` — keeps a log of what it did:
+
+```
+%LOCALAPPDATA%\SeedLab\logs\vseed.log        (with --cache-dir: <that folder>\logs\vseed.log)
+```
+
+- **It is rewritten every time**, the way the game's BepInEx rewrites `BepInEx\LogOutput.log` each
+  time Valheim starts. So it always describes the **last** command — if you want to keep it or send
+  it to someone, **copy it before you run another `vseed` command.**
+- **It holds your folder paths** — on Windows usually `C:\Users\<your account name>\...` — on almost
+  every line, and the command exactly as you typed it. Read it, or replace the name, before you post
+  it anywhere public. (It records no computer name, no user name as such and no keys; of the
+  environment, only the name of the variable the cache folder came from.)
+- **What is in it:** when the session started (your local time and UTC), the vseed version, the
+  command exactly as you typed it, the machine, the cache folder, an access check of every SeedLab
+  folder, the self-test result, the warnings and errors the command printed (a question you answered
+  "no" shows only as the exit code), the retries behind a file that was busy, the full detail of an
+  unexpected error (the terminal shows that only with `--debug`), an integrity line (the self-test,
+  how many game-data files matched their SHA-256 in `manifest.json`, and whether the data's
+  DATA-STAMP matches the installed game), and at the end the exit code and how long it took.
+- **Two at once:** while one `vseed` is still running — a `vseed serve` you left open, a long search —
+  a second one cannot rewrite that log, so it writes `vseed.log.1` instead (then `.2`, up to `.4`; a
+  sixth at once runs without a log and says so). A numbered log nobody is using is deleted by the next
+  command that starts.
+- `hash`, `invert`, `space`, `presets`, `data`, `worlds` and `world` start no runtime, keep no log,
+  and leave the last one alone; so do `--help` and `--version`.
+
+### When a file is in use, read-only or not allowed
+
+Windows will not let a program replace a file while **any** other program has it open — a virus
+scanner checking it, OneDrive or Dropbox syncing it, a search indexer, a spreadsheet with the
+results open, an image viewer showing the last map. A search used to die of that with a bare
+`Access to the path is denied.` that named no file. Now:
+
+- **Before a run starts**, `vseed search` checks the results file (and a rotated run's manifest), the
+  checkpoint's folder and, with `--resume`, the checkpoint, its snapshot and the survivor list;
+  `vseed map` checks `-o`. A file that
+  cannot be used is named, with what probably has it and what to do. In a terminal you are asked
+  `[r]etry / [a]bort` — close the program, type `r`, press Enter. With `--json`, or when nothing is
+  reading the keyboard, the command stops with exit 3 and writes nothing. `--dry-run` says so and goes
+  on. The startup block sums it up: `file access checked: 11 paths OK; integrity confirmed (...)`.
+- **That check describes the moment it was made. It cannot stop another program from opening a file
+  an hour later** — that is what the retries are for. Every save is tried again for about 1.6 s; a
+  checkpoint save that still fails is a `warning:` that names the file, and the run goes on and tries
+  again at the next checkpoint. The warning says "It passed SeedLab's access check at <time>, so
+  something changed after that" only when **the file itself** passed that check and fails it now. A
+  file whose folder alone was checked (a checkpoint without `--resume`) gets no such line, and a
+  program that has the file open while letting others write to it — which passes the check and still
+  blocks the save — is said to be one the check cannot see.
+- The **last** save of a run that stops early waits about 15 s, and says so as the wait begins. If it
+  still fails, an `error:` says what is on disk and what `--resume` will do. That includes a
+  checkpoint that is there but could not be read either, because the same program holds it: it is
+  still the resume point, and `--resume` continues from it once that program lets go. A terminal
+  then offers `[r]etry / [g]ive up`. Answer `g` to give up: Ctrl-C at that question does not end
+  `vseed` before the results file is finished and the report printed. Giving up costs time, not
+  results — the older checkpoint still resumes to the same bytes — but **at worst, when no save of
+  the run ever worked, that time is the whole run**: there is then nothing on disk to resume from,
+  and the error says so.
+- `vseed map` waits the same ~15 s for a viewer that opened the output after the check, says so,
+  and in a terminal asks `[r]etry / [g]ive up` with the finished image kept, so a retry is a rename,
+  not a render. A `--keep all --rotate` search that finishes while its manifest is held prints its
+  report, says that every record is written and only the manifest is not, and exits 3 (a terminal
+  offers `[r]etry / [g]ive up` first).
+- A full drive is named as one, with exit 3 — it used to print "this is a bug". It still ends the
+  command: waiting does not free space.
+- On the web page the same check refuses a search by name ("press Find seeds again once the file is
+  free"), warnings are listed under the Find seeds button, and a last save that failed gets a
+  **Retry saving** button. A page that is reloaded, or opened again on a run that has ended, is shown
+  every warning and the save as it stands after any retry. `docs\search.md` and `docs\web.md` have
+  the details.
+
+---
+
 ## The web UI
 
 ```
@@ -422,7 +504,8 @@ vseed serve
 
 A pan-and-zoom map of any seed on `http://127.0.0.1:8731`, with the seed panel, a click-anywhere
 point panel, a ruler, location markers and a search panel. It is bound to loopback only, refuses any
-`Host` header that is not `127.0.0.1`/`localhost`, and serves four files embedded in `vseed.exe`
+`Host` header that is not `127.0.0.1`/`localhost`, refuses a change (a `POST` — start, Stop, Retry
+saving) sent by any other web page you have open, and serves four files embedded in `vseed.exe`
 itself — no CDN, no web font, no external request of any kind.
 
 **The search panel is the CLI, not a subset of it.** The page's goals become the same query file
@@ -434,15 +517,20 @@ terminal reproduces the run.
 
 **What it writes** (it used to say "nothing", which stopped being true when every search flag became
 reachable from the page): the results file you name on the Search panel, inside one results
-directory the server owns; the checkpoint and its kept-set snapshot, in the cache root; and the tile
-cache's disk tier, also in the cache root. Your saves and Steam Cloud folders are still never
-touched. `docs\web.md` has the exact rules.
+directory the server owns; the checkpoint and its kept-set snapshot, in the cache root; the tile
+cache's disk tier, also in the cache root; and the session log, `<cache root>\logs\vseed.log`,
+emptied at the next start. Your saves and Steam Cloud folders are still never touched.
+`docs\web.md` has the exact rules.
 
 `vseed serve --selftest` checks the server against the ground truth and prints every result. Run on
-2026-09-23 on this build: **13 checks, all PASS**, exit 0 — tiles against the game's own texture
-(262,144 of 262,144 pixels on both worlds), the mosaic, the markers (60 of 60 bit-identical), the
-search panel against a direct engine run (200 hits identical in order and score), and loopback,
-`Host`, CORS, CSP and path-traversal behaviour. See `docs\web.md`.
+2026-09-23: **all PASS**, exit 0 — tiles against the game's own texture (262,144 of 262,144 pixels
+on both worlds), the mosaic, the markers (60 of 60 bit-identical), the search panel against a direct
+engine run (200 hits identical in order and score), and loopback, `Host`, CORS, CSP and
+path-traversal behaviour. (This line used to say 13 checks. The code of the commit before
+2026-09-24's file-access work has 12 PASS rows, the tile row counted once per world; what the
+2026-09-23 build printed was not kept.) Re-run on
+2026-09-24 with the cross-site guard, Retry saving and the replay check added: **15 PASS rows and 3
+`MEASURED`**, exit 0. See `docs\web.md`.
 
 ---
 

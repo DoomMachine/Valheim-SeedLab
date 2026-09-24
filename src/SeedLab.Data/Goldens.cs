@@ -435,6 +435,8 @@ namespace SeedLab.Data
                         + ". " + StrictJson.ReDumpHint)
                     { File = path };
                 }
+
+                GameData.NoteVerified(path);
             }
 
             return bytes;

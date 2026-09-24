@@ -62,6 +62,8 @@ namespace SeedLab.Data
                         + "or re-run tools\\SeedLab.Dumper in the game to produce a fresh dump.")
                     { File = path };
                 }
+
+                GameData.NoteVerified(path);
             }
 
             Validate(bytes, schema, path);

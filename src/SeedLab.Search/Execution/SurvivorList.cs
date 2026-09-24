@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.IO;
+using SeedLab.Runtime.Storage;
 
 namespace SeedLab.Search.Execution
 {
@@ -79,13 +80,17 @@ namespace SeedLab.Search.Execution
                     + "tighten a cheap must-have goal, or run --strategy sample instead.");
             }
 
-            string dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
-            Directory.CreateDirectory(dir);
-            string tmp = path + ".tmp";
-
-            using (FileStream fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-            using (BinaryWriter w = new BinaryWriter(fs))
+            // Temp-then-rename, the same discipline the checkpoint uses: a half-written survivor list
+            // must never be readable as a complete one.
+            //
+            // One rename that REPLACES the old list (2026-09-24). This used to delete the old list and
+            // then move the new one into place: two steps, so a failure between them - another program
+            // holding the new temp file, a virus scanner reading it - lost the list, and stage one's
+            // whole scan had to be run again. The rename is retried on the patient schedule because
+            // nothing else will write this file again, and a failure after that names the file.
+            DurableWrite.Stream(path, fs =>
             {
+                using BinaryWriter w = new BinaryWriter(fs, System.Text.Encoding.UTF8, leaveOpen: true);
                 w.Write(Magic);
                 w.Write(1);                       // version
                 w.Write(h.From);
@@ -97,13 +102,8 @@ namespace SeedLab.Search.Execution
                 WriteFixed(w, h.Stamp);
                 w.Write(seeds.Length);
                 foreach (int s in seeds) w.Write(s);
-                fs.Flush(true);
-            }
-
-            // Temp-then-rename, the same discipline the checkpoint uses: a half-written survivor list
-            // must never be readable as a complete one.
-            if (File.Exists(path)) File.Delete(path);
-            File.Move(tmp, path);
+                w.Flush();
+            }, RetrySchedule.Patient, tempPath: path + ".tmp");
         }
 
         /// <summary>
@@ -125,7 +125,7 @@ namespace SeedLab.Search.Execution
         public static int[] Read(string path, string expectQueryHash, string expectStamp,
                                  long expectFrom, long expectTo, long expectScanned, out Header h)
         {
-            using FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using FileStream fs = SharedRead.Open(path);
             using BinaryReader r = new BinaryReader(fs);
             if (r.ReadUInt32() != Magic)
             {

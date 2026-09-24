@@ -5,6 +5,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using SeedLab.Runtime.Storage;
 
 namespace SeedLab.Web.Tiles
 {
@@ -65,8 +66,41 @@ namespace SeedLab.Web.Tiles
                     // is correct, only colder. Failing the server over it would be the wrong trade.
                     _diskDir = null;
                 }
+
+                if (_diskDir != null) SweepOldTemps(_diskDir);
             }
         }
+
+        /// <summary>
+        /// The "&lt;hash&gt;.png.tmp" files an earlier build left when a write or its rename failed -
+        /// nothing ever removed them (2026-09-24). Writes now go through <see cref="DurableWrite"/>,
+        /// whose temp names the cache root's reaper knows; these are the old kind. A tile is written in
+        /// milliseconds, so one older than a minute belongs to no write that is still going on.
+        /// </summary>
+        private static void SweepOldTemps(string dir)
+        {
+            try
+            {
+                foreach (string f in Directory.EnumerateFiles(dir, "*.png.tmp"))
+                {
+                    try
+                    {
+                        if (DateTime.UtcNow - File.GetLastWriteTimeUtc(f) > TimeSpan.FromMinutes(1)) File.Delete(f);
+                    }
+                    catch (Exception)
+                    {
+                        // In use or not ours to delete; the next start tries again.
+                    }
+                }
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        /// <summary>A tile, not a write in progress: <see cref="DurableWrite"/>'s temp names also end in ".png".</summary>
+        private static bool IsTile(string path) =>
+            !Path.GetFileName(path).StartsWith(DurableWrite.TempPrefix, StringComparison.Ordinal);
 
         /// <summary>The directory the second tier uses, or null when there is no disk tier.</summary>
         public string? DiskDirectory => _diskDir;
@@ -86,7 +120,10 @@ namespace SeedLab.Web.Tiles
             long total = 0;
             try
             {
-                foreach (string f in Directory.EnumerateFiles(_diskDir, "*.png")) total += new FileInfo(f).Length;
+                foreach (string f in Directory.EnumerateFiles(_diskDir, "*.png"))
+                {
+                    if (IsTile(f)) total += new FileInfo(f).Length;
+                }
             }
             catch (Exception)
             {
@@ -251,10 +288,11 @@ namespace SeedLab.Web.Tiles
             try
             {
                 // Temp + rename, so a killed process can never leave a half-written PNG that a later
-                // run would hand back as a tile.
-                string tmp = path + ".tmp";
-                File.WriteAllBytes(tmp, png);
-                File.Move(tmp, path, true);
+                // run would hand back as a tile. Through DurableWrite since 2026-09-24: a write that fails
+                // removes its temp file, and one a kill leaves is named so that the cache root's reaper
+                // removes it - the old "<hash>.png.tmp" was left for good. Tried ONCE: this is a cache on
+                // a tile request's path, and waiting out a scanner here would only slow the map down.
+                DurableWrite.Bytes(path, png, RetrySchedule.Once);
                 Interlocked.Increment(ref _diskWrites);
             }
             catch (Exception)
@@ -283,6 +321,7 @@ namespace SeedLab.Web.Tiles
                 long total = 0;
                 foreach (string f in Directory.EnumerateFiles(_diskDir, "*.png"))
                 {
+                    if (!IsTile(f)) continue;
                     FileInfo fi = new FileInfo(f);
                     files.Add(fi);
                     total += fi.Length;

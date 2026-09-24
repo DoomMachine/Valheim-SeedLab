@@ -38,8 +38,15 @@ namespace SeedLab.Search.Output
         public BoundedResultSet Set => _set;
 
         /// <summary>
-        /// Where the kept set is snapshotted, so a resumed run continues the same best-N rather than
-        /// starting a new one. Set by the run; null means "this run is not resumable".
+        /// Where the kept set was last snapshotted, so a resumed run continues the same best-N rather
+        /// than starting a new one: the generation the last checkpoint written names. Set by the run;
+        /// null means "this run is not resumable".
+        ///
+        /// <para><b>Only the run writes the snapshot</b> (2026-09-24). <see cref="Flush"/> used to write
+        /// it too, under the same name, before the run wrote it again and then the checkpoint - so a
+        /// checkpoint save that failed after the flush left a newer snapshot beside an older
+        /// checkpoint, and the resume that followed duplicated records. The snapshot is now part of
+        /// the checkpoint save alone (<see cref="Execution.CheckpointStore.NextSnapshotPath"/>).</para>
         /// </summary>
         public string? SnapshotPath
         {
@@ -90,7 +97,6 @@ namespace SeedLab.Search.Output
             }
 
             _writer.Flush();
-            if (_snapshotPath != null) _set.SaveSnapshot(_snapshotPath);
         }
 
         public void Finish()
@@ -101,18 +107,41 @@ namespace SeedLab.Search.Output
 
         public void Dispose() => _writer.Dispose();
 
-        /// <summary>Removes a completed run's snapshot. A checkpoint that outlives its run is litter.</summary>
+        /// <summary>
+        /// Removes a completed run's snapshot - both generations and their temp files. A checkpoint that
+        /// outlives its run is litter.
+        /// </summary>
         public void DeleteSnapshot()
         {
             if (_snapshotPath == null) return;
-            try
+            string ckpt = _snapshotPath.EndsWith(".top2", StringComparison.Ordinal)
+                ? _snapshotPath.Substring(0, _snapshotPath.Length - 5)
+                : _snapshotPath.EndsWith(".top", StringComparison.Ordinal)
+                    ? _snapshotPath.Substring(0, _snapshotPath.Length - 4)
+                    : _snapshotPath;
+            List<string> files = new List<string> { _snapshotPath, _snapshotPath + ".tmp" };
+            if (!ReferenceEquals(ckpt, _snapshotPath))
             {
-                if (File.Exists(_snapshotPath)) File.Delete(_snapshotPath);
-                if (File.Exists(_snapshotPath + ".tmp")) File.Delete(_snapshotPath + ".tmp");
+                foreach (string g in Execution.CheckpointStore.SnapshotGenerations(ckpt))
+                {
+                    files.Add(g);
+                    files.Add(g + ".tmp");
+                }
             }
-            catch (IOException)
+
+            foreach (string p in files)
             {
-                // Litter, not data loss: a locked snapshot is not worth failing a finished run for.
+                try
+                {
+                    if (File.Exists(p)) File.Delete(p);
+                }
+                catch (IOException)
+                {
+                    // Litter, not data loss: a locked snapshot is not worth failing a finished run for.
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
             }
         }
     }

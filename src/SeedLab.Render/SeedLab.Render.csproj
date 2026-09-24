@@ -7,6 +7,11 @@
     SeedLab.Data is deliberately NOT referenced: the only game data the renderer needs is the biome
     colour table, and that is the MEASURED prefab table from 05-validation.md section 2.1, hard-coded
     in MapPalette with its evidence. Add the reference if a dumped table ever supersedes it.
+
+    SeedLab.Runtime is referenced for DurableWrite only (2026-09-24): PngEncoder.WriteFile writes a
+    temp file and renames it over the target, so a kill never leaves a torn PNG and an image viewer
+    holding the previous map is waited for and then named, instead of failing with a bare "Access to
+    the path is denied.". Runtime references nothing, so this adds no cycle.
   -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -15,5 +20,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.WorldGen\SeedLab.WorldGen.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\src/SeedLab.Runtime\SeedLab.Runtime.csproj" />
   </ItemGroup>
 </Project>

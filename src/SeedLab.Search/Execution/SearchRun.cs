@@ -2,7 +2,9 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
+using SeedLab.Runtime.Storage;
 using SeedLab.Search.Evaluation;
 using SeedLab.Search.Locations;
 using SeedLab.Search.Output;
@@ -137,11 +139,123 @@ namespace SeedLab.Search.Execution
         /// <summary>True when the sink capped the file rather than streaming every match.</summary>
         public bool Bounded;
 
-        /// <summary>The checkpoint this run left behind, or null when it completed and retired it.</summary>
+        /// <summary>
+        /// The checkpoint this run left behind, or null when it completed and retired it - or when its
+        /// last save failed and there is no checkpoint on disk a resume could read (<see cref="CheckpointError"/>).
+        /// </summary>
         public string? CheckpointPath;
 
         /// <summary>The most blocks that were ever queued for the collector. The memory bound, measured.</summary>
         public int PeakPendingBlocks;
+
+        /// <summary>
+        /// What went wrong along the way without stopping the run, in order, each a sentence for the
+        /// user that names the file: a checkpoint save that failed (the first of a run of failures, and
+        /// every tenth after it), the save that worked again, a finished run's checkpoint that could not
+        /// be deleted. Each was also handed to <see cref="RunOptions.OnWarning"/> as it happened.
+        /// </summary>
+        public List<string> Warnings = new List<string>();
+
+        /// <summary>Checkpoint saves on the interval that failed after their retries. 0 on a healthy run.</summary>
+        public int FailedSaves;
+
+        /// <summary>
+        /// The last save of a run that did not finish, when it could not be written - null when it was,
+        /// or when no save was due. The run itself is not failed by it: the checkpoint still on disk is
+        /// an older, consistent resume point. <see cref="SearchSession.RetryFinalSave"/> tries the same
+        /// save again, and clears this when it works.
+        /// </summary>
+        public CheckpointError? CheckpointError;
+
+        /// <summary>
+        /// A finished run's checkpoint files that could not be deleted (another program had them open).
+        /// Nothing resumes from them; they are safe to delete. Empty on a healthy run.
+        /// </summary>
+        public List<string> CheckpointLeftovers = new List<string>();
+
+        /// <summary>
+        /// The sentence about <see cref="CheckpointLeftovers"/> - "the run finished, but its checkpoint
+        /// could not be deleted ... it is safe to delete" - or null. A report must say this rather than
+        /// that the checkpoint was "kept" because the run "has not finished": it has.
+        /// </summary>
+        public string? RetireWarning;
+    }
+
+    /// <summary>
+    /// The last checkpoint of a run that did not finish could not be saved: which file, why, and what
+    /// is on disk instead - so a front end can say exactly what a resume will do, and offer to try again
+    /// (<see cref="SearchSession.RetryFinalSave"/>).
+    /// </summary>
+    public sealed class CheckpointError
+    {
+        /// <summary>The run's checkpoint.</summary>
+        public string CheckpointPath = "";
+
+        /// <summary>The file that could not be written: the checkpoint, or its kept-results snapshot.</summary>
+        public string Path = "";
+
+        public FileProblem Problem;
+
+        /// <summary>The file, the probable cause and what to do, as <see cref="FileAccessException"/> said it.</summary>
+        public FileDiagnosis Diagnosis = null!;
+
+        /// <summary>The block the run had reached: what the failed save would have recorded.</summary>
+        public long RunBlock;
+
+        public long RunSeeds;
+
+        /// <summary>The resume point of the checkpoint still on disk, or -1 when there is none or it could not be read.</summary>
+        public long OnDiskBlock = -1;
+
+        public long OnDiskSeeds;
+
+        /// <summary>When the checkpoint on disk was written (local time), or null when there is none.</summary>
+        public DateTime? OnDiskWritten;
+
+        /// <summary>
+        /// The checkpoint is on disk but could not be read when the save failed - another program had
+        /// it open without letting others read it - so its block is not known here. It is a resume
+        /// point all the same: once it can be read again, <c>--resume</c> starts from it.
+        ///
+        /// <para><b>Why it is told apart</b> (review of 2026-09-24). Any failure to read it used to count
+        /// as "no checkpoint": the user was told that resuming would start the run from the beginning,
+        /// and the report and the page dropped the resume command - for a checkpoint that was intact
+        /// the whole time and resumed at its block once the holder let go. A sentence like that sends a
+        /// user to delete hours of work.</para>
+        /// </summary>
+        public bool OnDiskUnreadable;
+
+        /// <summary>Why the checkpoint on disk could not be read, as a clause, when <see cref="OnDiskUnreadable"/>.</summary>
+        public string OnDiskCause = "";
+
+        /// <summary>A resume would start from a checkpoint on disk: one that was read, or one that is there but held.</summary>
+        public bool Resumable => OnDiskBlock >= 0 || OnDiskUnreadable;
+
+        /// <summary>Saves attempted: the run's own, plus one per <see cref="SearchSession.RetryFinalSave"/>.</summary>
+        public int Attempts = 1;
+
+        /// <summary>The whole paragraph: what failed, why, and what a resume will do instead.</summary>
+        public string Message =>
+            "the last checkpoint of this run could not be saved. " + Diagnosis.Message + " "
+            + (OnDiskBlock >= 0
+                ? "The resume point on disk is from block " + N(OnDiskBlock) + " ("
+                  + N(OnDiskSeeds) + " seeds"
+                  + (OnDiskWritten.HasValue
+                      ? ", saved " + OnDiskWritten.Value.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)
+                      : "")
+                  + "); resuming starts there and repeats the " + N(Math.Max(0, RunBlock - OnDiskBlock))
+                  + " block" + (RunBlock - OnDiskBlock == 1 ? "" : "s") + " after it."
+                : OnDiskUnreadable
+                    ? "The checkpoint already on disk"
+                      + (OnDiskWritten.HasValue
+                          ? " (saved " + OnDiskWritten.Value.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + ")"
+                          : "")
+                      + " could not be read just now either - " + OnDiskCause + " - so which block it resumes from "
+                      + "cannot be said here. It is still there: once it can be read again, resuming starts from it and "
+                      + "repeats the blocks after it."
+                    : "There is no checkpoint on disk that a resume could use, so resuming would start the run from the beginning.");
+
+        private static string N(long v) => v.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
     }
 
     /// <summary>
@@ -194,6 +308,27 @@ namespace SeedLab.Search.Execution
         private long _locationSkips;
         private long _locationsPlaced;
         private double _locationSeconds;
+
+        // ---- the saves --------------------------------------------------------------------------------
+        private string? _committedSnapshot;  // the snapshot the checkpoint ON DISK names
+        private bool _committedKnown;
+        private DateTime? _lastSavedLocal;
+        private DateTime? _firstFailedLocal;
+        private int _failedInARow;
+        private FinalSave? _final;
+
+        /// <summary>A final save that failed, kept whole so that <see cref="RetryFinalSave"/> repeats exactly it.</summary>
+        private sealed class FinalSave
+        {
+            public readonly object Gate = new object();
+            public Checkpoint Checkpoint = null!;
+            public string Path = "";
+            public BoundedResultSet? Set;
+            public long NextBlock;
+            public long Seeds;
+            public int Attempts = 1;
+            public SearchOutcome Outcome = null!;
+        }
 
         public SearchRun(CompiledQuery q, ScanPlan plan, ILocationOracle oracle, int threads)
         {
@@ -301,17 +436,27 @@ namespace SeedLab.Search.Execution
             _startBlock = startBlock;
             _peakPending = 0;
             _busyWorkers = 0;
+            _committedSnapshot = null;
+            _committedKnown = false;
+            _lastSavedLocal = null;
+            _firstFailedLocal = null;
+            _failedInARow = 0;
+            _final = null;
+            List<string> warnings = new List<string>();
+            int failedSaves = 0;
+            DateTime runStartedLocal = DateTime.Now;
 
             // A resumed bounded run has to continue the SAME best-N, or its file would hold the best
             // of the tail of the scan under the name "top N". The kept set travels with the
-            // checkpoint, written in the same atomic step; restore it here so that even a caller that
-            // only knows about the checkpoint (the legacy entry point above) resumes correctly.
+            // checkpoint, which names it; restore it here so that even a caller that only knows about
+            // the checkpoint (the legacy entry point above) resumes correctly - and only when it is from
+            // the checkpoint's own moment (CheckpointStore.LoadKeptSet).
             if (sink is BoundedResultSink restore && startBlock > 0 && restore.Set.TotalMatches == 0)
             {
                 bool have = checkpoint?.KeptSnapshot != null && System.IO.File.Exists(checkpoint.KeptSnapshot);
                 if (have)
                 {
-                    restore.Restore(BoundedResultSet.LoadSnapshot(checkpoint!.KeptSnapshot!, restore.Set.Keep));
+                    restore.Restore(CheckpointStore.LoadKeptSet(checkpoint!, restore.Set.Keep));
                 }
                 else if ((checkpoint?.SeedsPassed ?? 0) > 0)
                 {
@@ -355,70 +500,109 @@ namespace SeedLab.Search.Execution
             long sliceMatches = options.ResumedPassed;
             double sliceSeconds = 0;
 
-            while (emit < _plan.Blocks)
+            // ---- the collector, which must never leave the workers behind ------------------------------
+            //
+            // Measured before this try existed (2026-09-24): one checkpoint save that failed - another
+            // program had the file open - threw out of this loop past the lines that stop and join the
+            // workers. They filled the pending queue and then waited on it forever: harmless in the
+            // terminal, whose process exits, but in 'vseed serve' four workers stayed alive, holding
+            // their buffers and their blocks, for the life of the server. Whatever ends this loop now,
+            // the finally stops them and waits for them.
+            try
             {
-                if (done.TryRemove(emit, out List<SeedResult>? hits))
+                while (emit < _plan.Blocks)
                 {
-                    foreach (SeedResult r in hits)
+                    if (done.TryRemove(emit, out List<SeedResult>? hits))
                     {
-                        sink?.Add(r);
-                        OnResult?.Invoke(r);
-                        Keep(top, r, _q.Query.Search.Keep);
-                        emittedPassed++;
+                        foreach (SeedResult r in hits)
+                        {
+                            sink?.Add(r);
+                            OnResult?.Invoke(r);
+                            Keep(top, r, _q.Query.Search.Keep);
+                            emittedPassed++;
+                        }
+
+                        emit++;
+                        roomReady.Set();
+
+                        // The ceiling. Checked here, at a block boundary, so the run stops on a boundary
+                        // the checkpoint can express and the resume command it prints is exact.
+                        if (options.MaxResultBytes > 0 && options.OnLimit == OnLimit.Stop && sink != null
+                            && sink.FileBytes >= options.MaxResultBytes)
+                        {
+                            _limitHit = true;
+                            _stop = true;
+                        }
                     }
 
-                    emit++;
-                    roomReady.Set();
-
-                    // The ceiling. Checked here, at a block boundary, so the run stops on a boundary
-                    // the checkpoint can express and the resume command it prints is exact.
-                    if (options.MaxResultBytes > 0 && options.OnLimit == OnLimit.Stop && sink != null
-                        && sink.FileBytes >= options.MaxResultBytes)
+                    // Progress is on the same clock as everything else, and outside the "we had to wait"
+                    // branch: a run whose collector always has the next block ready would otherwise never
+                    // report anything at all.
+                    if (options.OnProgress != null && (DateTime.UtcNow - lastProgress).TotalMilliseconds >= 500)
                     {
-                        _limitHit = true;
-                        _stop = true;
+                        lastProgress = DateTime.UtcNow;
+                        options.OnProgress(Snapshot(sw, emit, emittedPassed, options.ResumedSeconds, sink, done.Count));
                     }
+
+                    // ---- durability on a CLOCK, not on "a block happened just now" ------------------
+                    //
+                    // The audit measured the old behaviour: a hard kill 300 s into a 16-thread run left a
+                    // 0-byte results file and no checkpoint, because both were inside the block-emitted
+                    // branch and the emitting had stalled. Anything that is time-based must be time-based
+                    // from outside that branch, or it is a promise the tool does not keep.
+                    //
+                    // A save that fails after its retries - another program kept the file busy, it is
+                    // read-only - is a WARNING (2026-09-24): the run goes on, the checkpoint on disk is
+                    // still an older consistent pair, and the next interval tries again. The clock is
+                    // reset either way, or a held file would be retried every 50 ms. Only the diagnosed
+                    // access failure is caught: anything else (a full disk) still ends the run.
+                    if (checkpointPath != null && checkpoint != null
+                        && (DateTime.UtcNow - lastCheckpoint) >= ckp.Interval
+                        && (DateTime.UtcNow - runStarted) >= ckp.MinRunTime)
+                    {
+                        try
+                        {
+                            sink?.Flush();
+                            SaveCheckpoint(checkpoint, checkpointPath, emit, emittedPassed,
+                                           sw.Elapsed.TotalSeconds + options.ResumedSeconds, sink, ckp, ckp.PeriodicRetry);
+                            wroteCheckpoint = true;
+                            if (_failedInARow > 0) Warn(options, warnings, Recovered(_failedInARow));
+                            _failedInARow = 0;
+                            _firstFailedLocal = null;
+                        }
+                        catch (FileAccessException ex)
+                        {
+                            failedSaves++;
+                            _failedInARow++;
+                            _firstFailedLocal ??= DateTime.Now;
+                            if (_failedInARow == 1 || _failedInARow % 10 == 0)
+                            {
+                                Warn(options, warnings, SaveFailed(ex.Diagnosis, _failedInARow, ckp.Interval, runStartedLocal));
+                            }
+                        }
+                        finally
+                        {
+                            lastCheckpoint = DateTime.UtcNow;
+                        }
+
+                        ObserveSlice(options, sw, emit, emittedPassed, sink, ref sliceSeeds, ref sliceMatches,
+                                     ref sliceSeconds);
+                    }
+
+                    if (done.ContainsKey(emit)) continue;
+                    if (AllDone(workers)) break;
+
+                    blockReady.Wait(50);
+                    blockReady.Reset();
                 }
-
-                // Progress is on the same clock as everything else, and outside the "we had to wait"
-                // branch: a run whose collector always has the next block ready would otherwise never
-                // report anything at all.
-                if (options.OnProgress != null && (DateTime.UtcNow - lastProgress).TotalMilliseconds >= 500)
-                {
-                    lastProgress = DateTime.UtcNow;
-                    options.OnProgress(Snapshot(sw, emit, emittedPassed, options.ResumedSeconds, sink, done.Count));
-                }
-
-                // ---- durability on a CLOCK, not on "a block happened just now" ----------------------
-                //
-                // The audit measured the old behaviour: a hard kill 300 s into a 16-thread run left a
-                // 0-byte results file and no checkpoint, because both were inside the block-emitted
-                // branch and the emitting had stalled. Anything that is time-based must be time-based
-                // from outside that branch, or it is a promise the tool does not keep.
-                if (checkpointPath != null && checkpoint != null
-                    && (DateTime.UtcNow - lastCheckpoint) >= ckp.Interval
-                    && (DateTime.UtcNow - runStarted) >= ckp.MinRunTime)
-                {
-                    sink?.Flush();
-                    SaveCheckpoint(checkpoint, checkpointPath, emit, emittedPassed,
-                                   sw.Elapsed.TotalSeconds + options.ResumedSeconds, sink, ckp);
-                    lastCheckpoint = DateTime.UtcNow;
-                    wroteCheckpoint = true;
-                    ObserveSlice(options, sw, emit, emittedPassed, sink, ref sliceSeeds, ref sliceMatches,
-                                 ref sliceSeconds);
-                }
-
-                if (done.ContainsKey(emit)) continue;
-                if (AllDone(workers)) break;
-
-                blockReady.Wait(50);
-                blockReady.Reset();
             }
-
-            _stop = true;                 // every block below _plan.Blocks is claimed; let the workers go
-            roomReady.Set();
-            blockReady.Set();
-            foreach (Thread th in workers) th.Join();
+            finally
+            {
+                _stop = true;             // every block below _plan.Blocks is claimed; let the workers go
+                roomReady.Set();
+                blockReady.Set();
+                foreach (Thread th in workers) th.Join();
+            }
 
             // Blocks that finished after the first gap are discarded: the checkpoint's promise is
             // "every block below next_block is on disk", and a gap would break it. They are pure
@@ -445,8 +629,22 @@ namespace SeedLab.Search.Execution
             long emittedSeeds = Math.Min(_plan.Limit, emit * (long)_plan.BlockSize);
             bool complete = emit >= _plan.Blocks;
 
-            sink?.Flush();
+            try
+            {
+                sink?.Flush();
+            }
+            catch (FileAccessException ex)
+            {
+                // A rotated run's manifest; its Finish writes it again, on the patient schedule, and the
+                // front end says so - and says it if that fails too - so a warning here only said the same
+                // thing twice (seen 2026-09-24). The log keeps it.
+                SessionLog.Current?.Warn("search   the manifest was not written at the end of the scan; the results' "
+                                         + "finish tries again: " + ex.Diagnosis.Message);
+            }
 
+            CheckpointError? saveError = null;
+            List<string> leftovers = new List<string>();
+            string? retireWarning = null;
             if (checkpointPath != null && checkpoint != null)
             {
                 bool worthIt = wroteCheckpoint || !complete
@@ -455,15 +653,57 @@ namespace SeedLab.Search.Execution
                 {
                     // A finished run's checkpoint is litter: the audit found two of them sitting in
                     // the repository, left by runs that had completed months of work ago. The kept-set
-                    // snapshot goes with it - and the sink has to be told to stop writing it, or the
-                    // caller's own Finish() would put it straight back.
+                    // snapshots go with it. What could not be deleted is SAID, as a finished run's
+                    // leftover - never left for the report to call "kept: this run has not finished".
                     if (sink is BoundedResultSink done2) done2.SnapshotPath = null;
-                    CheckpointStore.Retire(checkpointPath);
+                    leftovers = CheckpointStore.Retire(checkpointPath);
+                    if (leftovers.Count > 0)
+                    {
+                        retireWarning = RetireText(leftovers);
+                        Warn(options, warnings, retireWarning);
+                    }
+
                     checkpointPath = null;
                 }
                 else if (worthIt)
                 {
-                    SaveCheckpoint(checkpoint, checkpointPath, emit, emittedPassed, seconds, sink, ckp);
+                    // The last save of a run that did not finish: nothing repeats it, so it waits
+                    // longer, and a failure is reported in the outcome - not thrown, because the run
+                    // itself did its work and the checkpoint on disk is still an older consistent pair.
+                    //
+                    // The wait is SAID, at its first failed attempt (review of 2026-09-24): after a
+                    // budget stop the terminal used to sit silent for about 15 s before the error, which
+                    // reads as a hang to anyone who is not watching the session log.
+                    bool announced = false;
+                    RetrySchedule finalRetry = ckp.FinalRetry;
+                    Action<RetryAttempt> waiting = a =>
+                    {
+                        if (a.Succeeded || announced || a.Attempt >= a.Attempts) return;
+                        announced = true;
+                        Notice(options, "saving the last checkpoint: " + a.Path + " is busy - another program may have "
+                                        + "it open. SeedLab keeps trying for up to " + Interval(finalRetry.Total) + ".");
+                    };
+                    try
+                    {
+                        SaveCheckpoint(checkpoint, checkpointPath, emit, emittedPassed, seconds, sink, ckp, finalRetry, waiting);
+                    }
+                    catch (FileAccessException ex)
+                    {
+                        saveError = BuildError(ex, checkpointPath, emit, emittedSeeds, 1);
+                        _final = new FinalSave
+                        {
+                            Checkpoint = checkpoint,
+                            Path = checkpointPath,
+                            Set = sink is BoundedResultSink fb && ckp.SnapshotPath != null ? fb.Set : null,
+                            NextBlock = emit,
+                            Seeds = emittedSeeds,
+                        };
+                        // Resumable only if what is on disk IS a checkpoint a resume can read: a file at
+                        // that path that does not parse would be refused by --resume, so it is not
+                        // offered as one (2026-09-24, found by the hosts' tests). One that is there but
+                        // held is still offered - it resumes once it is let go.
+                        if (!saveError.Resumable) checkpointPath = null;
+                    }
                 }
                 else
                 {
@@ -475,7 +715,7 @@ namespace SeedLab.Search.Execution
             if (top.Count > _q.Query.Search.Keep) top.RemoveRange(_q.Query.Search.Keep, top.Count - _q.Query.Search.Keep);
 
             BoundedResultSink? bounded = sink as BoundedResultSink;
-            return new SearchOutcome
+            SearchOutcome outcome = new SearchOutcome
             {
                 Evaluated = emittedSeeds,
                 Passed = emittedPassed,
@@ -521,8 +761,158 @@ namespace SeedLab.Search.Execution
                 Bounded = sink?.IsBounded ?? false,
                 CheckpointPath = checkpointPath,
                 PeakPendingBlocks = _peakPending,
+                Warnings = warnings,
+                FailedSaves = failedSaves,
+                CheckpointError = saveError,
+                CheckpointLeftovers = leftovers,
+                RetireWarning = retireWarning,
             };
+            if (_final != null) _final.Outcome = outcome;
+            return outcome;
         }
+
+        /// <summary>
+        /// Tries the failed last save of this run again (<see cref="SearchOutcome.CheckpointError"/>):
+        /// the same checkpoint and the same kept set, exactly as the run left them, on
+        /// <paramref name="retry"/> (<see cref="RetrySchedule.Quick"/> when not given - a person pressed
+        /// Retry and can press it again). Any number of times. True when the save is on disk now - the
+        /// outcome's <see cref="SearchOutcome.CheckpointError"/> is then cleared and its
+        /// <see cref="SearchOutcome.CheckpointPath"/> set - or when there was nothing to retry; false
+        /// with the outcome's error replaced by the new diagnosis when it failed again.
+        /// </summary>
+        public bool RetryFinalSave(RetrySchedule? retry = null)
+        {
+            FinalSave? f = _final;
+            if (f == null || f.Outcome == null) return true;
+            lock (f.Gate)
+            {
+                if (f.Outcome.CheckpointError == null) return true;
+                f.Attempts++;
+                try
+                {
+                    CommitCheckpoint(f.Checkpoint, f.Path, f.Set, f.NextBlock, retry ?? RetrySchedule.Quick);
+                }
+                catch (FileAccessException ex)
+                {
+                    f.Outcome.CheckpointError = BuildError(ex, f.Path, f.NextBlock, f.Seeds, f.Attempts);
+                    f.Outcome.CheckpointPath = f.Outcome.CheckpointError.Resumable ? f.Path : null;
+                    return false;
+                }
+
+                f.Outcome.CheckpointError = null;
+                f.Outcome.CheckpointPath = f.Path;
+                return true;
+            }
+        }
+
+        private static void Warn(RunOptions options, List<string> warnings, string text)
+        {
+            warnings.Add(text);
+            Notice(options, text);
+        }
+
+        /// <summary>A line for the front end only, not for <see cref="SearchOutcome.Warnings"/>: "waiting for a file".</summary>
+        private static void Notice(RunOptions options, string text)
+        {
+            try
+            {
+                options.OnWarning?.Invoke(text);
+            }
+            catch (Exception)
+            {
+                // A front end that can no longer show it - a page that was closed - must not end the
+                // run over a warning; a real one stays in SearchOutcome.Warnings.
+            }
+        }
+
+        private string SaveFailed(FileDiagnosis d, int inARow, TimeSpan interval, DateTime runStartedLocal)
+        {
+            string since = _lastSavedLocal.HasValue
+                ? "since the last checkpoint that was saved, at " + Clock(_lastSavedLocal.Value)
+                : "since this run started, at " + Clock(runStartedLocal);
+            if (inARow == 1)
+            {
+                return "the checkpoint could not be saved at " + Clock(DateTime.Now) + ". " + d.Message
+                       + " The run goes on and tries again at every checkpoint (every " + Interval(interval)
+                       + "); until one is saved, a crash would lose the work " + since + ".";
+            }
+
+            return "the checkpoint still cannot be saved: " + inARow + " saves in a row have failed since "
+                   + Clock(_firstFailedLocal ?? DateTime.Now) + " - " + d.Cause + " (" + d.Path + "). "
+                   + d.Advice + " A crash now would lose the work " + since + ".";
+        }
+
+        private static string Recovered(int failed) =>
+            "the checkpoint was saved again at " + Clock(DateTime.Now) + ", after " + failed + " failed save"
+            + (failed == 1 ? "" : "s") + "; the resume point is up to date.";
+
+        private static string RetireText(List<string> left)
+        {
+            FileDiagnosis d = FileRetry.Diagnose(left[0], null, null, "delete");
+            return "the run finished, but its checkpoint could not be deleted - " + d.Cause + ". Nothing will "
+                   + "resume from it, so it is safe to delete: " + string.Join(", ", left);
+        }
+
+        private static CheckpointError BuildError(FileAccessException ex, string checkpointPath, long runBlock,
+                                                  long runSeeds, int attempts)
+        {
+            CheckpointError e = new CheckpointError
+            {
+                CheckpointPath = checkpointPath,
+                Path = ex.Path,
+                Problem = ex.Problem,
+                Diagnosis = ex.Diagnosis,
+                RunBlock = runBlock,
+                RunSeeds = runSeeds,
+                Attempts = attempts,
+            };
+
+            // What a resume would really start from: the file on disk, read now, not what the run
+            // believes it last wrote. Three answers, not two (review of 2026-09-24): not there or not a
+            // checkpoint - nothing to resume; read - its block; there but held so it cannot be read now
+            // - still a resume point, of a block this cannot tell.
+            if (!File.Exists(checkpointPath)) return e;
+            try
+            {
+                Checkpoint disk = Checkpoint.Load(checkpointPath);
+                e.OnDiskBlock = disk.NextBlock;
+                e.OnDiskSeeds = disk.SeedsEvaluated;
+                e.OnDiskWritten = File.GetLastWriteTime(checkpointPath);
+            }
+            catch (Exception rex) when (FileRetry.IsTransient(rex))
+            {
+                e.OnDiskBlock = -1;
+                e.OnDiskUnreadable = true;
+                FileDiagnosis read = FileRetry.Diagnose(checkpointPath, rex, null, "read");
+                e.OnDiskCause = read.Problem == FileProblem.InUse
+                    ? (ex.Problem == FileProblem.InUse && CheckpointStore.SamePath(ex.Path, checkpointPath)
+                        ? "the same program has it open"
+                        : "another program has it open")
+                    : read.Problem == FileProblem.NoPermission
+                        ? "this account is not allowed to read it"
+                        : read.Cause;
+                try
+                {
+                    e.OnDiskWritten = File.GetLastWriteTime(checkpointPath);
+                }
+                catch (Exception)
+                {
+                }
+            }
+            catch (Exception)
+            {
+                e.OnDiskBlock = -1;
+            }
+
+            return e;
+        }
+
+        private static string Clock(DateTime t) => t.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+
+        private static string Interval(TimeSpan t) =>
+            t.TotalSeconds >= 1
+                ? t.TotalSeconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " s"
+                : ((long)t.TotalMilliseconds).ToString(System.Globalization.CultureInfo.InvariantCulture) + " ms";
 
         private void Worker(ConcurrentDictionary<long, List<SeedResult>> done, ManualResetEventSlim blockReady,
                             ManualResetEventSlim roomReady, Stopwatch sw, double wallSeconds, int maxPending)
@@ -632,7 +1022,8 @@ namespace SeedLab.Search.Execution
         }
 
         private void SaveCheckpoint(Checkpoint c, string path, long nextBlock, long passed, double seconds,
-                                    IResultSink? sink, CheckpointPolicy policy)
+                                    IResultSink? sink, CheckpointPolicy policy, RetrySchedule retry,
+                                    Action<RetryAttempt>? onAttempt = null)
         {
             c.NextBlock = nextBlock;
             c.SeedsEvaluated = Math.Min(_plan.Limit, nextBlock * (long)_plan.BlockSize);
@@ -644,16 +1035,85 @@ namespace SeedLab.Search.Execution
             c.ProbeAccepts = Interlocked.Read(ref _probeAccepts);
             c.EarlyExits = Interlocked.Read(ref _earlyExits);
 
-            // A bounded run's resumable state is its kept set, not a byte offset: snapshot it in the
-            // same step, so the checkpoint and the set on disk always describe the same moment.
-            if (sink is BoundedResultSink b && policy.SnapshotPath != null)
+            // A bounded run's resumable state is its kept set, not a byte offset: it is saved with the
+            // checkpoint, so the checkpoint and the set it names always describe the same moment.
+            BoundedResultSink? b = sink as BoundedResultSink;
+            BoundedResultSet? set = b != null && policy.SnapshotPath != null ? b.Set : null;
+            CommitCheckpoint(c, path, set, nextBlock, retry, onAttempt);
+            if (b != null && set != null) b.SnapshotPath = c.KeptSnapshot;
+        }
+
+        /// <summary>
+        /// The save itself, of a checkpoint whose fields are filled in: the kept set (when there is
+        /// one) to the snapshot generation the checkpoint on disk does NOT name, then the checkpoint -
+        /// the commit point - naming it, then the generation nothing names any more is deleted.
+        ///
+        /// <para><b>Why in that order</b> (2026-09-24). Until then the snapshot had one name and was
+        /// replaced before the checkpoint, twice per save: a checkpoint rename that failed (another
+        /// program had it open) or a kill between the renames left a newer snapshot beside an older
+        /// checkpoint, and the resume that followed re-ran the blocks between them into a set that
+        /// already held them - measured, 24 of 50 kept records wrong. Now a failure or a kill anywhere
+        /// before the checkpoint's rename leaves the old checkpoint naming the old snapshot, untouched,
+        /// and the new snapshot is a file nothing names (overwritten by the next save, deleted when the
+        /// run is retired). The snapshot also records <c>next_block</c>, so a pair from two moments is
+        /// refused on load (<see cref="CheckpointStore.LoadKeptSet"/>).</para>
+        ///
+        /// <para><b>Which generation the checkpoint on disk names is KNOWN, never guessed</b> (review of
+        /// 2026-09-24). A resumed run takes it from the checkpoint it loaded; a fresh run reads the
+        /// stale file it is about to replace. That read used to treat "another program holds it and it
+        /// cannot be read" as "it names nothing", wrote the first generation - the one the held
+        /// checkpoint named, half the time - and then failed the checkpoint's rename against the same
+        /// holder: the pair this order exists to protect, out of step, and the next --resume refused.
+        /// Now a checkpoint that cannot be read fails the save before anything is written, like any
+        /// other held file, and is read again at the next save.</para>
+        /// </summary>
+        private void CommitCheckpoint(Checkpoint c, string path, BoundedResultSet? set, long nextBlock, RetrySchedule retry,
+                                      Action<RetryAttempt>? onAttempt = null)
+        {
+            if (set != null)
             {
-                b.SnapshotPath = policy.SnapshotPath;
-                b.Set.SaveSnapshot(policy.SnapshotPath);
-                c.KeptSnapshot = policy.SnapshotPath;
+                if (!_committedKnown)
+                {
+                    // The checkpoint a resume loaded names its snapshot in memory still - this is the
+                    // run's first save, and nothing has assigned KeptSnapshot since the load. A stale
+                    // file of an earlier run is read, and a held one throws (FileAccessException) with
+                    // _committedKnown left false, so the next save reads it again.
+                    _committedSnapshot = c.LoadedFrom != null && CheckpointStore.SamePath(c.LoadedFrom, path)
+                        ? c.KeptSnapshot
+                        : CheckpointStore.CommittedSnapshot(path, retry, onAttempt);
+                    _committedKnown = true;
+                }
+
+                string target = CheckpointStore.NextSnapshotPath(path, _committedSnapshot);
+                set.SaveSnapshot(target, nextBlock, retry, onAttempt);
+                c.KeptSnapshot = target;
             }
 
-            c.Save(path);
+            c.Save(path, retry, onAttempt);
+            _lastSavedLocal = DateTime.Now;
+            if (set == null) return;
+
+            string? previous = _committedSnapshot;
+            _committedSnapshot = c.KeptSnapshot;
+            if (previous == null || c.KeptSnapshot == null || CheckpointStore.SamePath(previous, c.KeptSnapshot)) return;
+
+            // The generation the checkpoint no longer names. Only one of this checkpoint's own two
+            // names is deleted - a checkpoint that pointed somewhere else is not this run's to tidy.
+            // Best effort: a reader holding it only means the next save's write to it is retried.
+            foreach (string g in CheckpointStore.SnapshotGenerations(path))
+            {
+                if (!CheckpointStore.SamePath(g, previous)) continue;
+                try
+                {
+                    File.Delete(g);
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
         }
 
         private Progress Snapshot(Stopwatch sw, long emit, long passed, double resumedSeconds, IResultSink? sink,

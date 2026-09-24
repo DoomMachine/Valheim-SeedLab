@@ -69,7 +69,9 @@ $refLen  = (Get-Item "$ref\run.jsonl").Length
 $refLines = (Get-Content "$ref\run.jsonl" | Measure-Object -Line).Lines
 Write-Output "reference run : $([math]::Round($refSeconds,1)) s, $refLen B, $refLines records, sha $($refHash.Substring(0,16))"
 if ((Get-Content "$ref\leg.out" -Raw) -match "threads=\d+\s+block_size=\S+ \(\w+\)") { Write-Output "  $($Matches[0])" }
-Write-Output ("  checkpoint left behind: " + (Test-Path "$ref\run.ckpt") + "  snapshot left behind: " + (Test-Path "$ref\run.ckpt.top"))
+# The kept-set snapshot alternates between run.ckpt.top and run.ckpt.top2 (2026-09-24); either one
+# left behind by a finished run is litter.
+Write-Output ("  checkpoint left behind: " + (Test-Path "$ref\run.ckpt") + "  snapshot left behind: " + ((Test-Path "$ref\run.ckpt.top") -or (Test-Path "$ref\run.ckpt.top2")))
 Write-Output ""
 
 # ---- killed runs, at several points -----------------------------------------------------------
@@ -117,6 +119,6 @@ foreach ($killAt in @(3, 6, 10)) {
   Write-Output "  resumed in $legs leg(s): $l B, $n records, sha $($h.Substring(0,16)) -> $same"
   $repaired = (Get-Content "$d\leg.out" -Raw)
   if ($repaired -match "repaired torn tail\s+([\d,]+) B") { Write-Output "  $($Matches[0])" }
-  Write-Output ("  checkpoint retired on completion: " + (-not (Test-Path "$d\run.ckpt")) + "  snapshot retired: " + (-not (Test-Path "$d\run.ckpt.top")))
+  Write-Output ("  checkpoint retired on completion: " + (-not (Test-Path "$d\run.ckpt")) + "  snapshot retired: " + (-not ((Test-Path "$d\run.ckpt.top") -or (Test-Path "$d\run.ckpt.top2"))))
   Write-Output ""
 }

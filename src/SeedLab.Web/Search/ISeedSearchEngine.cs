@@ -42,5 +42,18 @@ namespace SeedLab.Web.Search
         IAsyncEnumerable<SearchEvent> ReadEvents(CancellationToken ct);
 
         void Cancel();
+
+        /// <summary>
+        /// Tries again the last checkpoint save of a run that has ended, when that save failed - the
+        /// page's "Retry saving". Safe to call at any time: a run still going, or one with nothing to
+        /// save, says so and changes nothing.
+        /// </summary>
+        SearchRetryResult RetrySave();
+
+        /// <summary>
+        /// The last save as it stands now - <c>{checkpointError, checkpointPath, resumeCommand}</c> - or
+        /// null while the run is going. Unlike the frozen <c>done</c> event, it follows a Retry saving.
+        /// </summary>
+        object? SaveState { get; }
     }
 }

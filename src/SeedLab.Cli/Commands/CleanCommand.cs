@@ -32,18 +32,22 @@ namespace SeedLab.Cli.Commands
 
   SeedLab writes to exactly one place: the cache root (--cache-dir, or SEEDLAB_CACHE_DIR,
   or %LOCALAPPDATA%\SeedLab). Checkpoints, rendered maps, web tile caches, run manifests,
-  per-process scratch and the self-test stamp all live there, and deleting the whole root
-  at any moment loses nothing you asked to keep.
+  per-process scratch, the self-test stamp and the session log all live there, and
+  deleting the whole root at any moment loses nothing you asked to keep.
 
 Options:
   --dry-run            report only; say what WOULD be removed (this is also the default)
   --yes                actually remove it
-  --what <categories>  comma-separated: maps,tiles,scratch,checkpoints,runs,selftest,all
+  --what <categories>  comma-separated: maps,tiles,scratch,checkpoints,runs,selftest,logs,all
                        (default: maps,tiles,scratch - the caches, not your resume points)
   --json
 
   Checkpoints are NOT in the default set: one of them may be the resume point of a search
   you are part-way through. 'vseed clean --what checkpoints --yes' removes them.
+
+  'freed' counts only the files that were really deleted. A file another program has open
+  - a vseed that is still running, a viewer, a sync tool - is left alone and listed, and
+  this command's own session log is always kept (the next session rewrites it).
 
   The report also checks %USERPROFILE%\AppData\valheim-dumper, the raw output of the
   dumper plugin, against SeedLab's own data\ folder. It is never deleted by this command.";
@@ -75,7 +79,10 @@ Options:
             DiskUsageReport report = rt.Cache.MeasureUsage();
             DumperFolder dumper = DumperFolder.Inspect();
 
-            if (o.Json) return Json(o, rt, report, dumper, categories, dryRun);
+            // The removal comes first, for both outputs: '--json --yes' used to return before it and
+            // delete nothing while reporting nothing either (found 2026-09-24).
+            Removal removal = Remove(rt, report, categories, dryRun);
+            if (o.Json) return Json(o, rt, report, dumper, categories, dryRun, removal);
 
             o.Header("SeedLab on disk");
             o.Field("cache root", rt.Cache.Path + "   (" + rt.Cache.SourceDetail + ")");
@@ -87,9 +94,7 @@ Options:
                     e.Name,
                     Bytes.Human(e.Bytes),
                     e.Files.ToString(CultureInfo.InvariantCulture),
-                    categories.Contains("all") || categories.Contains(e.Name)
-                        ? (dryRun ? "would be removed" : "removed")
-                        : "kept",
+                    categories.Contains("all") || categories.Contains(e.Name) ? removal.Outcome(e.Name, dryRun) : "kept",
                     e.Path,
                 });
             }
@@ -108,42 +113,22 @@ Options:
             }
 
             // ---- the removal ------------------------------------------------------------------------
-            long removed = 0;
-            int removedFiles = 0;
-            List<string> failed = new List<string>();
-            foreach (DiskUsageEntry e in report.Entries)
-            {
-                if (!categories.Contains("all") && !categories.Contains(e.Name)) continue;
-                if (dryRun) { removed += e.Bytes; removedFiles += e.Files; continue; }
-                try
-                {
-                    if (Directory.Exists(e.Path))
-                    {
-                        foreach (string f in Directory.EnumerateFiles(e.Path, "*", SearchOption.AllDirectories))
-                        {
-                            try { File.Delete(f); removedFiles++; } catch (Exception) { }
-                        }
-
-                        foreach (string d in Directory.GetDirectories(e.Path))
-                        {
-                            try { Directory.Delete(d, recursive: true); } catch (Exception) { }
-                        }
-                    }
-
-                    removed += e.Bytes;
-                }
-                catch (Exception ex)
-                {
-                    failed.Add(e.Path + " (" + ex.GetType().Name + ")");
-                }
-            }
-
             o.Header(dryRun ? "What --yes would remove" : "Removed");
-            o.Field(dryRun ? "would free" : "freed", Bytes.Human(removed) + " in "
-                    + removedFiles.ToString(CultureInfo.InvariantCulture) + " files");
-            if (failed.Count > 0)
+            o.Field(dryRun ? "would free" : "freed", Bytes.Human(removal.Bytes) + " in "
+                    + removal.Files.ToString(CultureInfo.InvariantCulture) + " files");
+            foreach (string k in removal.Kept) o.Note("kept " + k);
+            if (removal.Failed.Count > 0)
             {
-                foreach (string f in failed) o.Note("could not remove " + f);
+                o.Note("");
+                o.Note("could not remove " + removal.Failed.Count.ToString(CultureInfo.InvariantCulture)
+                       + (removal.Failed.Count == 1 ? " file" : " files") + " - left exactly as they were, and not counted above:");
+                foreach ((string path, string why) in removal.Failed)
+                {
+                    o.Note("  " + path);
+                    o.Note("      " + why);
+                }
+
+                o.Note("Close whatever has them open and run this again.");
             }
 
             if (dryRun)
@@ -188,8 +173,165 @@ Options:
             return ExitCodes.Ok;
         }
 
+        /// <summary>What a clean removed, or would remove - counted file by file as each delete succeeds.</summary>
+        private sealed class Removal
+        {
+            public long Bytes;
+            public int Files;
+
+            /// <summary>Files left on purpose, each with why: this command's own session log.</summary>
+            public readonly List<string> Kept = new List<string>();
+
+            /// <summary>Files a delete failed on, each with the probable cause in words.</summary>
+            public readonly List<(string Path, string Why)> Failed = new List<(string, string)>();
+
+            /// <summary>Per category: files removed (or, dry, that would be).</summary>
+            public readonly Dictionary<string, int> RemovedIn = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            /// <summary>Per category: files left where they were - kept on purpose, or a delete that failed.</summary>
+            public readonly Dictionary<string, int> LeftIn = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            public void Count(Dictionary<string, int> into, string category) =>
+                into[category] = (into.TryGetValue(category, out int n) ? n : 0) + 1;
+
+            /// <summary>
+            /// The table's "this run" column, from what really happened to the category's files: "removed"
+            /// only when every one went. It used to be decided by the category alone, so the logs row said
+            /// "removed" above "freed 0 B" and "kept ...\vseed.log - this command's own session log"
+            /// (review of 2026-09-24) - and this command always keeps its own log.
+            /// </summary>
+            public string Outcome(string category, bool dryRun)
+            {
+                int removed = RemovedIn.TryGetValue(category, out int r) ? r : 0;
+                int left = LeftIn.TryGetValue(category, out int l) ? l : 0;
+                if (removed == 0 && left == 0) return "nothing to remove";
+                if (dryRun) return left == 0 ? "would be removed" : removed == 0 ? "would be kept (in use)" : "would be partly removed";
+                return left == 0 ? "removed" : removed == 0 ? "kept (in use)" : "partly removed";
+            }
+        }
+
+        /// <summary>
+        /// Deletes the selected categories' files (or, for a dry run, counts them), adding each file's
+        /// size to what was freed only when ITS delete succeeded.
+        ///
+        /// <para><b>Why file by file</b> (2026-09-24). This used to delete what it could, swallow every
+        /// failure, and then add the category's whole measured size to "freed" - so a file another
+        /// program held was skipped in silence and still counted. Now: a held file is listed with its
+        /// probable cause, and not counted. This session's own log is never deleted - it is open for
+        /// writing right now, and the next session empties it anyway.</para>
+        /// </summary>
+        private static Removal Remove(CliRuntime rt, DiskUsageReport report, HashSet<string> categories, bool dryRun)
+        {
+            Removal r = new Removal();
+            string? ownLog = rt.Log.Path;
+            foreach (DiskUsageEntry e in report.Entries)
+            {
+                if (!categories.Contains("all") && !categories.Contains(e.Name)) continue;
+                if (!Directory.Exists(e.Path)) continue;
+
+                List<string> files;
+                try
+                {
+                    files = new List<string>(Directory.EnumerateFiles(e.Path, "*", SearchOption.AllDirectories));
+                }
+                catch (Exception ex)
+                {
+                    r.Failed.Add((e.Path, "the folder could not be listed: " + (FileRetry.DiagnoseEscaped(ex, "list")?.Cause ?? ex.Message)));
+                    r.Count(r.LeftIn, e.Name);
+                    continue;
+                }
+
+                foreach (string f in files)
+                {
+                    if (ownLog != null && string.Equals(Path.GetFullPath(f), ownLog, StringComparison.OrdinalIgnoreCase))
+                    {
+                        r.Kept.Add(f + " - this command's own session log, open while it runs; the next session rewrites it");
+                        r.Count(r.LeftIn, e.Name);
+                        continue;
+                    }
+
+                    long len = 0;
+                    try
+                    {
+                        len = new FileInfo(f).Length;
+                    }
+                    catch (Exception)
+                    {
+                    }
+
+                    if (dryRun)
+                    {
+                        r.Bytes += len;
+                        r.Files++;
+                        r.Count(r.RemovedIn, e.Name);
+                        continue;
+                    }
+
+                    try
+                    {
+                        File.Delete(f);
+                        r.Bytes += len;
+                        r.Files++;
+                        r.Count(r.RemovedIn, e.Name);
+                    }
+                    catch (Exception ex)
+                    {
+                        r.Failed.Add((f, WhyNot(f, ex, e.Name)));
+                        r.Count(r.LeftIn, e.Name);
+                    }
+                }
+
+                if (dryRun) continue;
+
+                // The folders the files were in, deepest first; one that still holds a file it could not
+                // delete stays, which is correct.
+                List<string> dirs;
+                try
+                {
+                    dirs = new List<string>(Directory.GetDirectories(e.Path, "*", SearchOption.AllDirectories));
+                }
+                catch (Exception)
+                {
+                    dirs = new List<string>();
+                }
+
+                dirs.Sort((x, y) => y.Length.CompareTo(x.Length));
+                foreach (string d in dirs)
+                {
+                    try
+                    {
+                        Directory.Delete(d, recursive: false);
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+            }
+
+            if (!dryRun)
+            {
+                rt.Log.Info("clean    removed " + r.Files.ToString(CultureInfo.InvariantCulture) + " files, "
+                            + Bytes.Human(r.Bytes) + "; could not remove " + r.Failed.Count.ToString(CultureInfo.InvariantCulture));
+                foreach ((string path, string why) in r.Failed) rt.Log.Warn("clean    could not remove " + path + " - " + why);
+            }
+
+            return r;
+        }
+
+        /// <summary>Why a delete failed, in words - from the file itself, the way a failed save is diagnosed.</summary>
+        private static string WhyNot(string file, Exception ex, string category)
+        {
+            FileDiagnosis d = FileRetry.Diagnose(file, ex, null, "delete");
+            if (d.Problem == FileProblem.InUse && string.Equals(category, "logs", StringComparison.OrdinalIgnoreCase))
+            {
+                return "in use - most likely another vseed that is still running writes this log";
+            }
+
+            return d.Cause;
+        }
+
         private static int Json(Out o, CliRuntime rt, DiskUsageReport report, DumperFolder dumper,
-                                HashSet<string> categories, bool dryRun)
+                                HashSet<string> categories, bool dryRun, Removal removal)
         {
             o.J.WriteStartObject();
             o.J.WriteString("cache_root", rt.Cache.Path);
@@ -210,6 +352,23 @@ Options:
             o.J.WriteEndArray();
             o.J.WriteNumber("total_bytes", report.TotalBytes);
             o.J.WriteNumber("total_files", report.TotalFiles);
+
+            // What was really deleted (or, dry, would be), file by file, and what was not and why.
+            o.J.WriteNumber(dryRun ? "would_free_bytes" : "freed_bytes", removal.Bytes);
+            o.J.WriteNumber(dryRun ? "would_remove_files" : "removed_files", removal.Files);
+            o.J.WriteStartArray("kept");
+            foreach (string k in removal.Kept) o.J.WriteStringValue(k);
+            o.J.WriteEndArray();
+            o.J.WriteStartArray("could_not_remove");
+            foreach ((string path, string why) in removal.Failed)
+            {
+                o.J.WriteStartObject();
+                o.J.WriteString("path", path);
+                o.J.WriteString("why", why);
+                o.J.WriteEndObject();
+            }
+
+            o.J.WriteEndArray();
             o.J.WriteNumber("free_bytes", report.Volume.FreeBytes);
             o.J.WriteStartObject("dumper_folder");
             o.J.WriteString("path", dumper.Path);

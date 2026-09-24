@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.IO.Compression;
+using SeedLab.Runtime.Storage;
 
 namespace SeedLab.Render.Png
 {
@@ -14,12 +15,20 @@ namespace SeedLab.Render.Png
     {
         private static readonly byte[] Signature = { 137, 80, 78, 71, 13, 10, 26, 10 };
 
-        /// <summary>Encodes <paramref name="rgb"/> (width*height*3 bytes, row 0 at the top) to a PNG file.</summary>
+        /// <summary>
+        /// Encodes <paramref name="rgb"/> (width*height*3 bytes, row 0 at the top) to a PNG file.
+        ///
+        /// <para><b>Temp and rename</b> (2026-09-24). This used to open the target itself with
+        /// <c>FileMode.Create</c>: a kill mid-write left a torn PNG, and an image viewer that still had
+        /// the previous map open failed the command with an error that named no file. It now goes
+        /// through <see cref="DurableWrite.Stream"/>: the old file stays whole until the new one is
+        /// complete, a viewer is waited for briefly, and a file still held after that is reported by
+        /// name with its probable cause (<see cref="FileAccessException"/>).</para>
+        /// </summary>
         public static void WriteFile(string path, byte[] rgb, int width, int height,
-                                     CompressionLevel level = CompressionLevel.Optimal)
+                                     CompressionLevel level = CompressionLevel.Optimal, RetrySchedule? retry = null)
         {
-            using FileStream fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16);
-            Write(fs, rgb, width, height, level);
+            DurableWrite.Stream(path, s => Write(s, rgb, width, height, level), retry);
         }
 
         public static void Write(Stream output, byte[] rgb, int width, int height,

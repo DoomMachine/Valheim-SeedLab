@@ -37,7 +37,7 @@ namespace SeedLab.Runtime.Storage
 
     /// <summary>
     /// The ONE wipeable place SeedLab is allowed to leave things: checkpoints, rendered maps, web tile
-    /// caches, run manifests, per-process scratch and the self-test stamp. Nothing is written beside the
+    /// caches, run manifests, per-process scratch, the self-test stamp and the session log. Nothing is written beside the
     /// user's working directory by default - that was defect 5 and defect 6 in the audit.
     ///
     /// <para>Per OS: <c>%LOCALAPPDATA%\SeedLab</c> on Windows, <c>$XDG_CACHE_HOME/seedlab</c> (or
@@ -67,6 +67,12 @@ namespace SeedLab.Runtime.Storage
         public string ScratchParent => Sub("scratch");
         public string SelfTest => Sub("selftest");
 
+        /// <summary>
+        /// The session log (<see cref="SessionLog"/>): <c>vseed.log</c>, emptied at the start of every
+        /// session, and <c>vseed.log.1</c> .. <c>.4</c> while sessions overlap (2026-09-24).
+        /// </summary>
+        public string Logs => Sub("logs");
+
         private string Sub(string name) => System.IO.Path.Combine(Path, name);
 
         /// <summary>The categories a usage report and <c>vseed clean</c> both walk.</summary>
@@ -77,7 +83,8 @@ namespace SeedLab.Runtime.Storage
             ("maps", Maps),
             ("tiles", Tiles),
             ("scratch", ScratchParent),
-            ("selftest", SelfTest)
+            ("selftest", SelfTest),
+            ("logs", Logs)
         };
 
         public static CacheRoot Open(CacheRootOptions? options = null)

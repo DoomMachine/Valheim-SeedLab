@@ -2,8 +2,9 @@
 
 Everything that has to know about **this machine** rather than about Valheim's world generation:
 the hardware probe, the three resource modes and the worker/memory guard, the auto-throttle that gets
-out of the game's way, the cache root and its lifecycle, the cost estimator with live re-calibration,
-and the startup self-test that fails closed on a machine SeedLab has not verified.
+out of the game's way, the cache root and its lifecycle, the session log and the file-access checks,
+the cost estimator with live re-calibration, and the startup self-test that fails closed on a machine
+SeedLab has not verified.
 
 It exists because of one decision in `docs\studies\decisions-1.md` section 7 - *"the software will
 run on other machines, which may not be as beefy as mine"*, and such a tool *"is not meant for terribly
@@ -15,7 +16,7 @@ request, and so the self-test can run before a single generator type is loaded. 
 `Environment.ProcessorCount`, `GC.GetGCMemoryInfo`, `DriveInfo`, `RuntimeInformation`, `Process` and
 `System.Runtime.Intrinsics.X86`. No WMI, no registry, no P/Invoke.
 
-Tests: `dotnet run --project tests\SeedLab.Runtime.Tests -c Release` (122 checks, exit 0/1).
+Tests: `dotnet run --project tests\SeedLab.Runtime.Tests -c Release` (173 checks, exit 0/1).
 This machine: `dotnet run --project tests\SeedLab.Runtime.Tests -c Release -- --probe`.
 
 ---
@@ -131,7 +132,7 @@ DiskUsageReport usage = cache.MeasureUsage(outputPath);
 
 One wipeable place per OS - `%LOCALAPPDATA%\SeedLab`, `$XDG_CACHE_HOME/seedlab` (or `~/.cache/seedlab`),
 `~/Library/Caches/SeedLab` - overridden by `SEEDLAB_CACHE_DIR` or `--cache-dir`, with
-`checkpoints/ runs/ maps/ tiles/ scratch/ selftest/` inside it. Deleting the whole root at any moment
+`checkpoints/ runs/ maps/ tiles/ scratch/ selftest/ logs/` inside it. Deleting the whole root at any moment
 must never lose anything the user asked to keep.
 
 * **Scratch** is `scratch/pid-<pid>-<process start, UTC>` plus an `owner.txt` recording both. It is
@@ -145,6 +146,58 @@ must never lose anything the user asked to keep.
 * **`DiskUsageReport`** is "what am I using on disk", by category, with the volume's free space - the
   report behind `vseed clean` and the web UI's storage panel. It walks only SeedLab's own directories
   plus paths the caller names.
+
+### When another program has a file open (2026-09-24)
+
+A run died of `Access to the path is denied.` - no file named, no cause. Measured: ANY open handle on
+the target makes the rename of a temp-and-rename fail, whatever it shares (a reader that shares read,
+write and delete included), and a read-only file or a folder permission throws the very same exception
+with the very same HResult. Retrying only the rename 10 ms later fixed 9 of 9 failures against a reader
+that opened the file every 50 ms. So:
+
+* **`FileRetry`** retries an operation that failed for a transient reason (an access denial, a sharing
+  or lock violation) on a **`RetrySchedule`** - `Quick` (~1.6 s, for saves a run repeats every interval)
+  or `Patient` (~15 s, for saves nothing repeats) - and then throws a **`FileAccessException`** (an
+  `IOException`) whose message comes from **`FileRetry.Diagnose`**: the file by full path, what
+  probably happened (another program has it open / marked read-only / the folder's security settings /
+  the folder is gone) and what to do. Never an HResult or a type name in that sentence; the session log
+  gets those. `DurableWrite.Replace(temp, target)` is the rename for every temp-and-rename site in
+  SeedLab, each keeping its own temp name; `DurableWrite.Stream/Text/Bytes` use it.
+  **`FileRetry.DiagnoseEscaped(ex)`** is for a failure that reached a host WITHOUT the retry: a
+  `FileAccessException` gives its own diagnosis, a raw sharing violation or access denial whose
+  message names the file (`'...'`) is diagnosed from that file, and anything else - the rename's
+  path-less "Access to the path is denied." included - gives null, so the host says what it can and
+  points at the session log instead of guessing a file.
+* **`AccessCheck`** - `Directory` (creates it, probes with a temp file that deletes itself on close;
+  with `create: false` a missing folder is not created and the nearest folder above it is probed -
+  for a check that must leave nothing behind, a `--dry-run` or a refused run),
+  `FileForWrite` (opens without truncating, sharing everything, so it trips on a holder that denies
+  writing - a spreadsheet), `FileForRead` - records every result with its time, and
+  `StartCheckFor(path)` tells a later failure what the check said: when it passed, whether it was the
+  file itself (`Examined`) or only its folder, and whether the same check made again NOW fails. Only
+  then does the diagnosis say "It passed SeedLab's access check at 14:03:12, so something changed after
+  that"; a file that passes again and is in use is held by a program that lets others write, which the
+  check cannot see, and is said to be; a folder-only check says nothing about the file (review of
+  2026-09-24: it used to claim a change in all three cases). A start check cannot predict a scanner
+  that opens a file an hour later; the retry is the fix, the check is the diagnosis.
+* **`FileProblem.DiskFull`** - `FileRetry.IsDiskFull(ex)` (HResult 0x80070070 or 0x80070027) and
+  `DiagnoseEscaped` name a full drive as one, from the path the message carries; never retried.
+  `FileProblems.Name(p)` is the one JSON spelling of a problem (`in_use`, `disk_full`, ...).
+* **`DurableWrite.WriteTemp`** is the first half of `Stream` - the complete, flushed temp file, not
+  yet renamed - for a caller that asks before giving up on the rename (`vseed map` keeps the rendered
+  image while it asks). `Stream`, `Checkpoint.Save`, `BoundedResultSet.SaveSnapshot` and a rotated
+  run's manifest take an `onAttempt` hook, so a front end can say "waiting" at the first failure.
+* **`SessionLog`** - `<cache root>\logs\vseed.log`, emptied at the start of every session, the way
+  BepInEx writes `LogOutput.log` (`FileMode.Create`, write access, sharing read only): a second live
+  session writes `vseed.log.1` .. `.4`, then none; unlike BepInEx it deletes numbered logs no session is
+  using, flushes every line, and never throws. Lines are
+  `yyyy-MM-dd HH:mm:ss.fff zzz  LEVEL  text`. `RuntimeContext.Start` opens it straight after the cache
+  root and writes the session's header (time with its UTC offset, program and version, the command
+  line, pid, OS and .NET, the cache root), the access check of the root and every category, the reap,
+  the self-test and every `RuntimeOptions.Log` line; `Dispose` writes the end with `ExitCode`.
+  `SessionLog.Current` is the log for code too deep to be handed one. Read it sharing read AND write.
+* **`SharedRead`** opens the files a run writes (checkpoints, snapshots, survivor lists) sharing read,
+  write and delete, so a reader never stops a writer's delete or open.
 
 ## 5. The estimator - `SeedLab.Runtime.Estimation`
 

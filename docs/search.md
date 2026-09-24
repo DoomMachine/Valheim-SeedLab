@@ -35,6 +35,22 @@ Four things make it usable rather than a slot machine:
   Verified by killing runs at three points, bounded and streaming, and comparing SHA-256: every
   resumed file was byte-identical to the uninterrupted one. The checkpoint lives in the **cache
   root**, keyed by the query hash, and a completed run deletes it.
+- **A file another program holds does not end the run** (since 2026-09-24). A virus scanner, a
+  sync tool or an editor that has the checkpoint open makes its save fail; the save is retried for
+  about 1.6 s, and a save that still fails is a warning naming the file and the probable cause - the
+  run goes on and the next checkpoint tries again. The last save of a run that stops early waits
+  about 15 s, and if it still fails the run reports it instead of dying: an older checkpoint on disk
+  is still a correct resume point, and the save can be tried again. (When no save of the run ever
+  worked there is no older checkpoint, and the report says that resuming starts from the beginning.)
+  A bounded run's snapshot and checkpoint change together or not at all: each save writes the
+  snapshot under whichever of `<ckpt>.top` / `<ckpt>.top2` the checkpoint on disk does not name,
+  then renames the checkpoint naming it, and a snapshot whose `next_block` or match count disagrees
+  with its checkpoint is refused on resume. (Before, a failed or killed save left a newer snapshot
+  beside an older checkpoint, and the resume duplicated 12 and lost 12 of 50 kept records.) Which
+  generation the checkpoint on disk names is known, never guessed: a resumed run takes it from the
+  checkpoint it loaded, and a fresh run reads the stale file it replaces - a held one that cannot be
+  read fails that save before anything is written (review of 2026-09-24: guessing wrote over the
+  named snapshot, and the next `--resume` was refused).
 - **The block is the resume granularity, and ONE worker computes a whole block.** A block's wall
   time is `block size × per-seed cost`; the thread count does not divide it. At 12 m over the whole
   world a seed is about 4.2 s, so a 256-seed block is ~18 minutes that no checkpoint interval can
@@ -193,12 +209,86 @@ that an unconstrained derived plan differs, and that the constrained one agrees 
 | `--on-limit stop\|evict` | at the ceiling: stop cleanly and print the resume command (default), or keep going and drop the lowest-scoring records (bounded runs only, and it must be confirmed). |
 
 Everything else SeedLab writes goes to the **cache root** (`--cache-dir`, `$SEEDLAB_CACHE_DIR`, or
-`%LOCALAPPDATA%\SeedLab`): checkpoints, rendered maps, web tiles, run manifests, scratch and the
-self-test stamp. `vseed clean` reports it and empties it.
+`%LOCALAPPDATA%\SeedLab`): checkpoints, rendered maps, web tiles, run manifests, scratch, the
+self-test stamp and the session log (`logs\vseed.log`). `vseed clean` reports it and empties it.
 
 This is the headline change from earlier builds, where `--keep` capped an in-memory table while
 every match was streamed to disk: `vseed search custom --all --out r.json` would have written a
 measured **7.36 TB**. It cannot any more — the same command is now refused before it starts.
+
+## A file another program holds (2026-09-24)
+
+Windows refuses to replace a file while any other program has it open, whatever that program asked
+for — a virus scanner, a sync tool, a search indexer, an editor or a viewer. A search used to die of
+it an hour in, with `Access to the path is denied.` and no file named. What the terminal does now:
+
+- **Before a seed is scanned** it checks what the run will use: the results file (which a spreadsheet
+  may hold open) and its folder, the checkpoint's folder, and on `--resume` the checkpoint, its
+  kept-results snapshot and a funnel's survivor list (plus the data's `manifest.json` when the query
+  places locations). The checks create and truncate nothing. They run after the preflight's own
+  refusals, so a query that cannot be answered is refused for that reason first. A check that fails:
+  - in a terminal: the diagnosis and `[r]etry / [a]bort?` — `r` checks again, `a` stops (exit 3);
+  - `--json` or stdin redirected: `REFUSED - SeedLab cannot use a file this run needs.`, the
+    diagnosis, `Nothing was scanned and nothing was written.`, exit 3 — never a prompt a script
+    would hang on;
+  - `--dry-run`: a `warning:` per file, and the estimate goes on.
+
+  The startup block's line `file access checked: N paths OK; integrity confirmed (...)` counts the
+  cache root's folders and these, and adds what this process has verified: the self-test, the data
+  files matched against `manifest.json`, and the DATA-STAMP. **A check that passed is a fact about
+  that moment only** — it cannot stop a scanner opening a file later. A rotated run
+  (`--keep all --rotate`) also checks its manifest, `<results stem>.manifest.json`.
+- **What a later failure says about the start check.** "It passed SeedLab's access check at
+  <time>, so something changed after that" is said only when the file ITSELF passed the check and
+  the same check fails when the failure is diagnosed ("Its folder passed ..." when it was the folder
+  that did and does not now). The write check opens a file sharing everything, so a program that
+  has it open while letting others write passes it and still blocks the rename; a file that passed
+  and passes again, and is in use, gets "but a program that has the file open while letting other
+  programs write to it passes that check and still stops SeedLab replacing it - so that program may
+  have had it open since before then". A file whose folder alone was checked - the checkpoint of a
+  run without `--resume`, the snapshots - gets no note.
+- **During the run** a checkpoint save that still fails after its ~1.6 s of retries is printed as
+  `warning: the checkpoint could not be saved at <time>. SeedLab could not save <file>: <why>. ...`
+  (the progress line is ended first), then every 10th failure in a row, then
+  `warning: the checkpoint was saved again at <time>, after N failed saves`. The run goes on; the
+  report adds `checkpoint saves  N failed along the way ...`.
+- **The last save** of a run that stops early (Ctrl-C, the budget, the ceiling) waits ~15 s, and
+  its first failed attempt prints `warning: saving the last checkpoint: <file> is busy - another
+  program may have it open. SeedLab keeps trying for up to 14.6 s.` If it still fails:
+  `error: the last checkpoint of this run could not be saved.` with the file, the cause, and what is
+  on disk, one of three:
+  - `The resume point on disk is from block N (..., saved hh:mm:ss); resuming starts there and
+    repeats the K blocks after it.`
+  - `The checkpoint already on disk (saved hh:mm:ss) could not be read just now either - the same
+    program has it open - ...` - it is still the resume point (the report keeps the resume command),
+    and `--resume` continues from it once that program lets go (tested: the same bytes);
+  - `There is no checkpoint on disk that a resume could use, so resuming would start the run from the
+    beginning.` - no save of this run worked, and nothing else is there.
+
+  In a terminal, `[r]etry / [g]ive up?` repeats the identical save as often as asked; answer `g` to
+  give up. Ctrl-C at that question does not end `vseed`: the results file is still finished and the
+  report printed. The exit code is not changed: an older checkpoint is a correct resume point, and
+  resuming from it produces the same bytes (tested).
+- **A finished run whose checkpoint could not be deleted** says so, and that the file is safe to
+  delete — never "kept: this run has not finished".
+- **A rotated run whose manifest is held when it finishes.** Every record is on disk by then, so the
+  report is printed; `error: the run finished and all N records it found are written, in K segment
+  files beside <results> - only the manifest that lists them could not be saved ...` follows (after the
+  ~15 s wait, which is said as it starts), a terminal offers `[r]etry / [g]ive up`, and the command
+  exits **3**: the one file that indexes the segments is missing or describes an earlier moment. A
+  manifest held at a rotation costs that rotation nothing (one attempt); the next flush writes it,
+  even with no segment open.
+- `--json` carries `checkpoint_retired`, `resumable_checkpoint` (null when nothing on disk can be
+  resumed), `checkpoint_leftovers`, `checkpoint_error` (`path`, `checkpoint`, `problem` — `in_use`,
+  `read_only`, `no_permission`, `folder_missing`, `disk_full`, `unknown` — `message`, `run_block`,
+  `on_disk_block`, `on_disk_unreadable`, `attempts`), `results_error` (`path`, `problem`, `message`,
+  or null), `failed_saves` and `warnings`. The page's `checkpointError.problem` uses the same values.
+- A failure anywhere else in a command — a file held when the results file is opened, a map's
+  output — ends it with exit 3 and the file named when the error carries its path (a path-less
+  access denial says "a file or folder" and points at the session log). A full drive is said as one,
+  exit 3. Any other input/output error still says "this is a bug", exit 4. Every line of it is also
+  in the session log, `<cache root>\logs\vseed.log`, with the exception detail the terminal leaves
+  out.
 
 ## The grid is part of the answer
 
@@ -301,8 +391,11 @@ fire while their tests passed for the wrong reason.
   hard kills and resumes, and (`proof blocks`) that a completed run's file is the same bytes at
   every block size and that a run resumed on another thread count keeps its checkpoint's size.
   `SeedLab.Search.Tests` does build sessions, run the preflight and the grid policy, and run a scan
-  with no sink; only its section 14 writes a results file and resumes a checkpoint from disk, to
-  prove where a funnel's stage 2 checkpoints. None of its checks hard-kills a run or exercises the
+  with no sink; only its sections 14, 15 and 17 write a results file and resume a checkpoint from
+  disk, to prove where a funnel's stage 2 checkpoints, what a checkpoint another program holds does to
+  a run (warnings, the last save, the `.top`/`.ckpt` pair), and - section 17, through the built
+  `vseed` and `vseed serve` - what the terminal and the page say and do about a held file, and the
+  session log. None of its checks hard-kills a run or exercises the
   bounds, rotation and ceilings, so this is a separate suite on purpose.
 - The metrics it measures are the same `WorldField` / `WorldSummary` code the acceptance suite
   proves against the game's own output, so a passing seed's *numbers* are the verified ones.

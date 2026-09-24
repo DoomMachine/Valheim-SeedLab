@@ -348,6 +348,31 @@ namespace SeedLab.Web.Search
         public string Kind { get; }
     }
 
+    /// <summary>
+    /// The answer to "Retry saving" (<c>POST /api/search/{id}/retry-save</c>): whether the last
+    /// checkpoint of a run that stopped early is on disk now, and if not, why - in the same words the
+    /// run's <c>done</c> event used.
+    /// </summary>
+    public sealed class SearchRetryResult
+    {
+        /// <summary>True when the checkpoint is on disk now - or when there was nothing left to save.</summary>
+        public bool Saved { get; set; }
+
+        /// <summary>The run has not ended yet; nothing was tried.</summary>
+        public bool Running { get; set; }
+
+        /// <summary>What happened, as a sentence for the page.</summary>
+        public string Message { get; set; } = "";
+
+        /// <summary>The checkpoint a resume would start from, or null when there is none on disk.</summary>
+        public string? CheckpointPath { get; set; }
+
+        public string? ResumeCommand { get; set; }
+
+        /// <summary>The save that failed again, when it did (<c>message</c>, <c>path</c>, <c>onDiskBlock</c>, ...).</summary>
+        public object? CheckpointError { get; set; }
+    }
+
     /// <summary>One line on the wire. <c>Type</c> is the SSE event name.</summary>
     public sealed class SearchEvent
     {

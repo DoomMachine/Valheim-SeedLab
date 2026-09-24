@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using SeedLab.Runtime.Storage;
 using SeedLab.Search.Criteria;
 
 namespace SeedLab.Search.Execution
@@ -64,7 +65,14 @@ namespace SeedLab.Search.Execution
         /// <summary>
         /// The kept-set snapshot a bounded run resumes from, or null. A bounded run's results file is
         /// its best-N set rather than an append log, so the set - not a byte offset - is the state a
-        /// resume needs, and it is written in the same atomic step as this file.
+        /// resume needs.
+        ///
+        /// <para><b>This field is what makes the pair atomic</b> (2026-09-24). The snapshot is written
+        /// first, under whichever of <c>&lt;ckpt&gt;.top</c> and <c>&lt;ckpt&gt;.top2</c> the checkpoint
+        /// on disk does NOT name, and only then is this file renamed into place naming it - so the
+        /// rename of this file is the one moment the pair changes, and a failure or a kill before it
+        /// leaves the old checkpoint naming the old, untouched snapshot. See
+        /// <see cref="CheckpointStore.NextSnapshotPath"/>.</para>
         /// </summary>
         public string? KeptSnapshot;
 
@@ -78,7 +86,15 @@ namespace SeedLab.Search.Execution
         /// </summary>
         public string? LoadedFrom;
 
-        public void Save(string path)
+        /// <summary>
+        /// Writes <c>&lt;path&gt;.tmp</c>, flushes it to the device and renames it over
+        /// <paramref name="path"/> (<see cref="DurableWrite.Stream"/>), retrying while another program
+        /// holds the file on <paramref name="retry"/> - <see cref="RetrySchedule.Quick"/> when not given.
+        /// <paramref name="onAttempt"/> hears each attempt, so a caller can say it is waiting.
+        /// </summary>
+        /// <exception cref="FileAccessException">The file stayed unavailable for the whole schedule; the
+        /// message names it and says why. The checkpoint already on disk is untouched.</exception>
+        public void Save(string path, RetrySchedule? retry = null, Action<RetryAttempt>? onAttempt = null)
         {
             StringBuilder sb = new StringBuilder(1024);
             sb.Append("{\n");
@@ -105,22 +121,18 @@ namespace SeedLab.Search.Execution
             sb.Append("  \"kept_snapshot\": ").Append(KeptSnapshot == null ? "null" : J(KeptSnapshot)).Append('\n');
             sb.Append("}\n");
 
-            string tmp = path + ".tmp";
-            string? dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path));
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            using (FileStream fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-            {
-                byte[] b = Encoding.UTF8.GetBytes(sb.ToString());
-                fs.Write(b, 0, b.Length);
-                fs.Flush(true);
-            }
-
-            File.Move(tmp, path, overwrite: true);
+            // The temp keeps its <ckpt>.tmp name: CheckpointStore.CleanOrphans knows it.
+            byte[] b = Encoding.UTF8.GetBytes(sb.ToString());
+            DurableWrite.Stream(path, s => s.Write(b, 0, b.Length), retry, tempPath: path + ".tmp", onAttempt: onAttempt);
         }
 
+        /// <summary>
+        /// Reads a checkpoint, sharing read, write and delete (<see cref="SharedRead"/>) so that a run
+        /// saving or retiring the same file is not stopped by the read.
+        /// </summary>
         public static Checkpoint Load(string path)
         {
-            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+            using JsonDocument doc = JsonDocument.Parse(SharedRead.AllText(path));
             JsonElement r = doc.RootElement;
             Checkpoint c = new Checkpoint
             {

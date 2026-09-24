@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using SeedLab.Runtime.Storage;
 using SeedLab.Search.Criteria;
 using SeedLab.Search.Evaluation;
 
@@ -85,7 +86,14 @@ namespace SeedLab.Search.Output
             }
 
             bool resuming = resumeLength >= 0 && File.Exists(path) && new FileInfo(path).Length >= resumeLength;
-            _fs = new FileStream(path, resuming ? FileMode.Open : FileMode.Create, FileAccess.Write, FileShare.Read);
+            // Held for the whole run, sharing read only. A program that already has the file open and
+            // does not share writing - a spreadsheet showing the previous run's CSV - makes this fail;
+            // it is retried briefly and then named with its cause (2026-09-24), where it used to be a
+            // bare sharing error reported as a bug.
+            _fs = FileRetry.Run(path, "write to",
+                                () => new FileStream(path, resuming ? FileMode.Open : FileMode.Create, FileAccess.Write,
+                                                     FileShare.Read),
+                                RetrySchedule.Quick);
             if (resuming)
             {
                 _fs.SetLength(resumeLength);

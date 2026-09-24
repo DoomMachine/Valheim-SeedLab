@@ -29,6 +29,15 @@ namespace SeedLab.Search.Execution
         public Action<Progress>? OnProgress;
 
         /// <summary>
+        /// Called on the collector thread with each warning as it happens - a checkpoint save that
+        /// failed and the run went on, the save that worked again, a finished run's checkpoint that
+        /// could not be deleted - so a front end can show it at once rather than at the end. Every
+        /// one is also kept in <see cref="SearchOutcome.Warnings"/>. Failures in a row are not
+        /// repeated: the first, then every tenth, then the recovery (2026-09-24).
+        /// </summary>
+        public Action<string>? OnWarning;
+
+        /// <summary>
         /// The most finished-but-not-yet-written blocks the scan may hold in memory.
         ///
         /// <para><b>This bound is the fix for a measured 7.6 GB blow-up.</b> Blocks are claimed by 16

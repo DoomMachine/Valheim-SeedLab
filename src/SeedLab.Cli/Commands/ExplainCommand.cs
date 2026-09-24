@@ -93,6 +93,9 @@ namespace SeedLab.Cli.Commands
                     Console.Error.WriteLine("  " + SearchCommand.Wrap(refusal, "      "));
                 }
 
+                // In the session log as well, like the search's own refusals: the log is where a user
+                // who sends it to someone says what the command said (2026-09-24).
+                rt.Log.Error("refused  vseed explain: " + string.Join(" | ", session.Preflight.Refusals));
                 return ExitCodes.CheckFailed;
             }
 

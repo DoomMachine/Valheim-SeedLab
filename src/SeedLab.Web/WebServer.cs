@@ -117,6 +117,12 @@ namespace SeedLab.Web
         public Action<string>? Log { get; set; }
 
         /// <summary>
+        /// Lines the host adds to the startup block, after the runtime's own - <c>vseed serve</c>'s
+        /// "file access checked: ...; integrity confirmed" and any folder that failed it.
+        /// </summary>
+        public IReadOnlyList<string>? StartupLines { get; set; }
+
+        /// <summary>
         /// Called with the bound URL once the socket is listening, before the run blocks.
         ///
         /// <para>It exists so a caller that started the server on port 0 can find out which port the
@@ -192,6 +198,11 @@ namespace SeedLab.Web
             _runtime = _options.Runtime ?? RuntimeContext.Start(new RuntimeOptions
             {
                 Log = line => (_options.Log ?? Console.Out.WriteLine)("  " + line),
+
+                // A host with no runtime of its own gets a session log from this one; a process that
+                // already keeps one (a session is open) is not given a second, numbered log beside it
+                // for the same session (2026-09-24).
+                WriteSessionLog = SeedLab.Runtime.Storage.SessionLog.Current == null,
             });
 
             _worlds = new WorldCache(_options.WorldCacheSeeds);
@@ -302,6 +313,11 @@ namespace SeedLab.Web
             log("  mode        " + SeedLab.Runtime.Execution.ResourceModes.Describe(_runtime.EffectiveMode)
                 + (_runtime.Throttle.IsThrottled ? "  [auto-throttled by " + _runtime.Throttle.ThrottledBy + "]" : ""));
             foreach (string line in _runtime.StartupLines()) log("  " + line);
+            if (_options.StartupLines != null)
+            {
+                foreach (string line in _options.StartupLines) log("  " + line);
+            }
+
             log("  press Ctrl+C to stop");
 
             _options.OnStarted?.Invoke(Url);
@@ -342,6 +358,34 @@ namespace SeedLab.Web
                 await next().ConfigureAwait(false);
             });
 
+            // Cross-site requests, refused for every POST (2026-09-24). The Host check above cannot stop
+            // them: a page on ANY site the user visits can send a form or a fetch to 127.0.0.1, and the
+            // browser puts this server's own host in the Host header. Stop, and since this day "Retry
+            // saving", take no body, so nothing else stood between such a page and them. A browser says
+            // where a request came from: Sec-Fetch-Site ("same-origin" from this page, "none" when the
+            // user typed it) and Origin (this server's own scheme, host and port). Either one pointing
+            // elsewhere is refused before any route runs. A tool that sends neither - curl, a script,
+            // the self-test - is not a browser page and is let through, as before.
+            //
+            // Only POST: every GET here is read-only and already unreadable cross-site (no CORS), and the
+            // self-test sends GETs with a foreign Origin on purpose, to prove no CORS header comes back.
+            app.Use(async (ctx, next) =>
+            {
+                if (HttpMethods.IsPost(ctx.Request.Method) && CrossSite(ctx.Request) is string why)
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await ctx.Response.WriteAsJsonAsync(new
+                    {
+                        error = "refused: this request came from another web page (" + why + "). SeedLab only "
+                                + "accepts changes from its own page.",
+                        kind = "refused",
+                    }, Json).ConfigureAwait(false);
+                    return;
+                }
+
+                await next().ConfigureAwait(false);
+            });
+
             MapStatic(app);
             MapMeta(app);
             MapRuntime(app);
@@ -358,6 +402,33 @@ namespace SeedLab.Web
                     "Not found. This server has no file system: it serves four embedded assets and its API, "
                     + "and nothing else exists to be reached.").ConfigureAwait(false);
             });
+        }
+
+        /// <summary>
+        /// Why a request is cross-site, or null when it is not: <c>Sec-Fetch-Site</c> present and not
+        /// "same-origin" or "none", or <c>Origin</c> present and not this server's own origin (its
+        /// scheme and the Host the check above already accepted - so a page opened as localhost and one
+        /// opened as 127.0.0.1 are each their own origin, as the browser sees them). "Origin: null" (a
+        /// sandboxed frame, a file:// page) is cross-site.
+        /// </summary>
+        internal static string? CrossSite(HttpRequest request)
+        {
+            string site = request.Headers["Sec-Fetch-Site"].ToString();
+            if (site.Length > 0
+                && !string.Equals(site, "same-origin", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(site, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Sec-Fetch-Site: " + site;
+            }
+
+            string origin = request.Headers.Origin.ToString();
+            if (origin.Length > 0)
+            {
+                string own = request.Scheme + "://" + request.Host.Value;
+                if (!string.Equals(origin.TrimEnd('/'), own, StringComparison.OrdinalIgnoreCase)) return "Origin: " + origin;
+            }
+
+            return null;
         }
 
         // -------------------------------------------------------------------------------------------
@@ -828,11 +899,13 @@ namespace SeedLab.Web
             });
 
             // The run's live state without an EventSource: for a page that lost its stream, and for
-            // checking the panel against the terminal from a shell.
+            // checking the panel against the terminal from a shell. `save` is the last save as it stands
+            // now (null while the run goes on): a tab that rejoins draws its "Not saved" box from this,
+            // not from the done event, which a later Retry saving does not change (2026-09-24).
             app.MapGet("/api/search/{id}", (string id) =>
             {
                 if (!_searches.TryGet(id, out ISearchRun run)) return Results.NotFound(new { error = "no run called '" + id + "'." });
-                return Results.Json(new { id, progress = run.Progress }, Json);
+                return Results.Json(new { id, progress = run.Progress, save = run.SaveState }, Json);
             });
 
             // The shipped query files, exactly as 'vseed search <name>' would run them.
@@ -872,6 +945,17 @@ namespace SeedLab.Web
                 if (!_searches.TryGet(id, out ISearchRun run)) return Results.NotFound();
                 run.Cancel();
                 return Results.Json(new { id, cancelled = true }, Json);
+            });
+
+            // "Retry saving": the last checkpoint of a run that stopped early could not be written (a
+            // virus scanner, a sync tool or an editor had it open). The page offers this once the run has
+            // ended; it repeats the identical save, as often as the button is pressed, and answers with
+            // the outcome - the run's event stream has closed by then, so the reply IS the result.
+            app.MapPost("/api/search/{id}/retry-save", (string id) =>
+            {
+                if (!_searches.TryGet(id, out ISearchRun run)) return Results.NotFound(new { error = "no run called '" + id + "'." });
+                SearchRetryResult r = run.RetrySave();
+                return Results.Json(r, Json, statusCode: r.Running ? StatusCodes.Status409Conflict : StatusCodes.Status200OK);
             });
         }
 

@@ -66,10 +66,32 @@ namespace SeedLab.Cli.Infra
             _w.WriteLine("  " + s);
         }
 
-        /// <summary>Warnings and progress; always stderr so --json stdout stays clean.</summary>
-        public static void Warn(string s) => Console.Error.WriteLine("warning: " + s);
+        /// <summary>
+        /// Warnings and progress; always stderr so --json stdout stays clean. Both also go to the
+        /// session log (2026-09-24), so the log holds what the user was told - a warning that scrolled
+        /// away is still there to be read, or handed to someone who can help.
+        /// </summary>
+        public static void Warn(string s)
+        {
+            Console.Error.WriteLine("warning: " + s);
+            SeedLab.Runtime.Storage.SessionLog.Current?.Warn("printed  warning: " + s);
+        }
 
-        public static void Info(string s) => Console.Error.WriteLine(s);
+        public static void Info(string s)
+        {
+            Console.Error.WriteLine(s);
+            if (!string.IsNullOrWhiteSpace(s)) SeedLab.Runtime.Storage.SessionLog.Current?.Info("printed  " + s.Trim());
+        }
+
+        /// <summary>
+        /// A line that already carries its own "warning: " or "error: " (the data stamp's, a refusal's)
+        /// on stderr, and into the session log at <paramref name="level"/>.
+        /// </summary>
+        public static void Said(string s, SeedLab.Runtime.Storage.SessionLogLevel level)
+        {
+            Console.Error.WriteLine(s);
+            if (!string.IsNullOrWhiteSpace(s)) SeedLab.Runtime.Storage.SessionLog.Current?.Write(level, "printed  " + s.Trim());
+        }
 
         /// <summary>A simple column table with right-aligned numeric columns.</summary>
         public void Table(IReadOnlyList<string> headers, IReadOnlyList<string[]> rows, bool[]? rightAlign = null)

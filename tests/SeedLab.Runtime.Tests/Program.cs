@@ -39,6 +39,9 @@ namespace SeedLab.RuntimeTests
             Section("6. The machine self-test fails closed");
             SelfTestChecks.Run(Check);
 
+            Section("7. The session log, access checks, and a busy file waited out or named");
+            SessionLogChecks.Run(Check);
+
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));
             Console.WriteLine((_fail == 0 ? "PASS" : "FAIL") + "  " + _pass + " checks passed, " + _fail + " failed");

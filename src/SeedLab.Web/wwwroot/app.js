@@ -1633,6 +1633,9 @@ const Search = {
   pfTimer: 0,
   runtimeTimer: 0,
   lastChangeAt: null,
+  warned: new Set(),   // the run's warnings already listed, by time and text
+  finalSave: null,     // the last save as the server has it NOW, for a tab that rejoined an ended run
+  checking: false,     // a lost stream is being checked against GET /api/search/{id}
 };
 
 const GRID_LADDER = [
@@ -2564,6 +2567,7 @@ async function postSearch(query) {
   renderResults();
   renderFeed();
   showSearchError(null);
+  clearRunNotes();
   $('searchProgress').hidden = false;
   $('progressFill').style.width = '0%';
   $('progressText').textContent = 'starting…';
@@ -2597,6 +2601,7 @@ async function postSearch(query) {
 
   Search.id = started.id;
   Search.running = true;
+  Search.finalSave = null;
   try { localStorage.setItem('seedlab.searchRun', Search.id); } catch (e) { /* private mode */ }
   $('btnRunSearch').disabled = true;
   $('btnCancelSearch').disabled = false;
@@ -2662,12 +2667,20 @@ async function rejoinSearch() {
   Search.id = id;
   const running = state.progress && state.progress.status === 'running';
   Search.running = running;
+  // The done event is frozen when the run ends; a Retry saving that worked afterwards changes the
+  // server's state and not that event, so an ended run's save box is drawn from this (2026-09-24).
+  Search.finalSave = running ? null : (state.save || null);
   $('btnRunSearch').disabled = running;
   $('btnCancelSearch').disabled = !running;
   $('searchProgress').hidden = false;
   showSearchError(running
     ? 'rejoined the search this tab started; it is still running on the server.'
     : 'showing the last search this tab ran. Run another to replace it.', true);
+  // The server replays the run's warnings to a tab that rejoins, so the list starts empty here and
+  // is filled by that replay - never from the done event as well, or each would be listed twice. (Since
+  // 2026-09-24 the replay keeps every warning and the done event however long the run was; it used to
+  // drop both after 4,000 events.)
+  clearRunNotes();
   openStream();
 }
 
@@ -2718,14 +2731,63 @@ function openStream() {
     renderResults();
   });
 
-  es.addEventListener('done', (ev) => {
-    const d = JSON.parse(ev.data);
-    renderProgress(d, true);
-    stopStream();
-    if (d.status === 'failed') showSearchError(d.message);
+  // A warning the run gave and went on from - a checkpoint another program held, saved again later.
+  // Each one is ADDED to the list: one replacing the other is how a warning used to vanish. A stream
+  // that reconnects is replayed the run from its start, so each is listed once, by time and text.
+  es.addEventListener('warning', (ev) => {
+    const w = JSON.parse(ev.data);
+    addRunWarning(w.message, w.atUtc);
   });
 
-  es.onerror = () => { /* the stream closes when the run ends; nothing to report */ };
+  es.addEventListener('done', (ev) => {
+    const d = JSON.parse(ev.data);
+    // For a tab that rejoined an ended run, the save as the server has it now wins over the event.
+    const fin = Search.finalSave;
+    const shown = fin
+      ? Object.assign({}, d, { checkpointError: fin.checkpointError, checkpointPath: fin.checkpointPath,
+        resumeCommand: fin.resumeCommand })
+      : d;
+    renderProgress(shown, true);
+    stopStream();
+    if (d.status === 'failed') showSearchError(d.message);
+    if (shown.checkpointError) showSaveError(false, shown.checkpointError.message);
+    else if (d.checkpointError && shown.checkpointPath) {
+      showSaveError(true, shown.checkpointPath + ' was saved again after the run ended, so a resume continues from where it stopped.');
+    }
+  });
+
+  // The browser reconnects a stream that closed without a done event, for as long as the tab is open.
+  // That is right while the run goes on (a dropped connection), and wrong once the server has no such
+  // run (it was restarted, or has since run newer searches) or the run has ended: then the stream is
+  // closed and the run's last state drawn from GET /api/search/{id} (review of 2026-09-24).
+  es.onerror = () => { checkLostStream(es); };
+}
+
+async function checkLostStream(es) {
+  if (Search.checking || Search.es !== es) return;
+  Search.checking = true;
+  try {
+    const r = await fetch('/api/search/' + encodeURIComponent(Search.id), { headers: { 'Accept': 'application/json' } });
+    if (Search.es !== es) return;
+    if (r.status === 404) {
+      stopStream();
+      showSearchError('this server no longer knows that search (it was restarted, or has run newer searches since). '
+        + 'A checkpoint it saved is still on disk: run the query again with --resume, or press Find seeds.', true);
+      return;
+    }
+    if (!r.ok) return;
+    const state = await r.json();
+    const p = state.progress || {};
+    if (p.status && p.status !== 'running') {
+      stopStream();
+      renderProgress(Object.assign({}, p, state.save || {}), true);
+      if (state.save && state.save.checkpointError) showSaveError(false, state.save.checkpointError.message);
+    }
+  } catch (e) {
+    // The server itself is gone; the browser keeps trying, and a restarted server answers 404 above.
+  } finally {
+    Search.checking = false;
+  }
 }
 
 function renderPlan(d) {
@@ -2848,6 +2910,82 @@ async function cancelSearch() {
   $('btnCancelSearch').disabled = true;
   $('progressText').textContent = 'stopping at the next block boundary…';
   try { await fetch('/api/search/' + Search.id + '/cancel', { method: 'POST' }); } catch (e) { /* gone */ }
+}
+
+function clearRunNotes() {
+  const list = $('searchWarnings');
+  list.textContent = '';
+  list.hidden = true;
+  Search.warned = new Set();
+  $('saveError').hidden = true;
+  $('saveError').classList.remove('is-saved');
+  $('saveRetryNote').textContent = '';
+  $('btnRetrySave').disabled = false;
+  $('btnRetrySave').hidden = false;
+}
+
+function addRunWarning(msg, atUtc) {
+  if (!msg) return;
+  const key = (atUtc || '') + '|' + msg;
+  if (Search.warned.has(key)) return;
+  Search.warned.add(key);
+  const list = $('searchWarnings');
+  list.appendChild(el('li', null, msg));
+  list.hidden = false;
+}
+
+/**
+ * The last checkpoint of a run that stopped early: not saved (with the reason, the file and what a
+ * resume will do - the server's own sentence) and the Retry saving button, or saved after a retry.
+ */
+function showSaveError(saved, msg) {
+  const box = $('saveError');
+  box.hidden = false;
+  box.classList.toggle('is-saved', !!saved);
+  $('saveErrorText').textContent = msg || '';
+  $('btnRetrySave').hidden = !!saved;
+  $('btnRetrySave').disabled = false;
+}
+
+/**
+ * "Retry saving": the same save, once more, on the server. Close the program that holds the file
+ * first; the answer says whether it worked, and the button stays until it has.
+ */
+async function retrySave() {
+  if (!Search.id) return;
+  $('btnRetrySave').disabled = true;
+  $('saveRetryNote').textContent = 'saving…';
+  let body;
+  try {
+    const r = await fetch('/api/search/' + encodeURIComponent(Search.id) + '/retry-save', { method: 'POST' });
+    if (r.status === 404) {
+      // It answered: it does not have this run any more (restarted, or it has run newer searches).
+      $('saveRetryNote').textContent = 'this server no longer knows that search (it was restarted, or has run newer '
+        + 'searches since), so it cannot save it again. The checkpoint described above is still on disk: run the '
+        + 'query again with --resume, or press Find seeds.';
+      $('btnRetrySave').disabled = true;
+      return;
+    }
+    body = await r.json();
+    if (!r.ok && !body.message) throw new Error(body.error || r.statusText);
+  } catch (e) {
+    $('saveRetryNote').textContent = 'the server did not answer: ' + String(e.message || e);
+    $('btnRetrySave').disabled = false;
+    return;
+  }
+
+  $('saveRetryNote').textContent = '';
+  if (body.saved) {
+    showSaveError(true, String(body.message || '').replace(/^saved:\s*/, ''));
+    // The run's own line had no resume command when nothing on disk could be resumed; now there is one.
+    if (body.resumeCommand) $('saveRetryNote').textContent = 'resume: ' + body.resumeCommand;
+  } else if (body.running) {
+    $('saveRetryNote').textContent = body.message;
+    $('btnRetrySave').disabled = false;
+  } else {
+    showSaveError(false, body.message);
+    $('saveRetryNote').textContent = 'still not saved - tried again at ' + new Date().toLocaleTimeString();
+  }
 }
 
 function showSearchError(msg, info) {
@@ -3275,6 +3413,7 @@ async function boot() {
   $('btnAddGoal').addEventListener('click', () => addGoalRow());
   $('btnRunSearch').addEventListener('click', runSearch);
   $('btnCancelSearch').addEventListener('click', cancelSearch);
+  $('btnRetrySave').addEventListener('click', retrySave);
   $('btnCopyQuery').addEventListener('click', () => copy(Search.queryJson, 'query file copied — save it and run: vseed search that.json'));
   $('btnDownloadQuery').addEventListener('click', downloadQuery);
   $('btnEvidenceClose').addEventListener('click', () => { try { $('evidenceDialog').close(); } catch (e) { /* already closed */ } });

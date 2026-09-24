@@ -278,6 +278,84 @@ threads" was two workers' rate. Measured on `axe-heads`: 64 seeds took 1.6 min a
   move adopts a real stopped stage 2 (resuming to the uninterrupted run's bytes) while leaving another
   survivor list's, a sample run's and an unreadable file exactly as they were.
 
+## "Access to the path is denied." — now it says which file, why, and the run goes on (2026-09-24)
+
+A search died of that one sentence, with no file named. The cause, measured: Windows refuses to
+replace a file while **any** other program has it open — a virus scanner, OneDrive or Dropbox, a
+search indexer, a spreadsheet or an image viewer — and the same sentence also means "read-only" and
+"not allowed", with nothing to tell the three apart.
+
+- **Every command keeps a session log**: `%LOCALAPPDATA%\SeedLab\logs\vseed.log` (or under
+  `--cache-dir`). It is **rewritten at the start of every command**, like the game's
+  `BepInEx\LogOutput.log` — copy it before running another `vseed` if you want to keep it. It holds
+  when and how the command was started, the machine, an access check of every SeedLab folder, the
+  self-test, the warnings and errors that were printed (a question answered "no" shows only as the
+  exit code), the retries behind a busy file, the full detail of an unexpected error, an integrity
+  line, and the exit code. It holds your folder paths (`C:\Users\<your account name>\...` on
+  Windows) and the command as typed: read it before posting it anywhere public. A second `vseed`
+  running at the same time (a `vseed serve` left open) writes `vseed.log.1` (up to `.4`); a numbered
+  log nobody uses is deleted by the next command. `hash`, `invert`, `space`, `presets`, `data`,
+  `worlds` and `world` keep none.
+- **Checked before it starts.** `vseed search` checks its results file and folders (and on `--resume`
+  the checkpoint, its snapshot and the survivor list); `vseed map` checks `-o`. A problem is named in
+  plain words with what to do, and in a terminal you get `[r]etry / [a]bort`. With `--json` or no
+  keyboard the command stops (exit 3) and writes nothing; `--dry-run` says so, says which of the two
+  a real run would do, and goes on. The startup block includes the line
+  `file access checked: 11 paths OK; integrity confirmed (...)`.
+- **That check cannot see the future.** A scanner can open a file an hour later; that is what the
+  retries are for. A checkpoint that cannot be saved is now a **warning** (the file and the likely
+  cause), the run goes on, and the next save tries again. "It passed SeedLab's access check at
+  <time>, so something changed after that" is added only when the file itself passed that check and
+  fails it now; a program that has the file open while letting others write to it passes the check
+  and still blocks the save, and is named as one the check cannot see.
+- **The last save** of a run that stops early waits ~15 s — and says so when the wait begins — then
+  says what is on disk and what `--resume` will do, and offers `[r]etry / [g]ive up` in a terminal
+  (answer `g`; Ctrl-C there no longer ends `vseed` before the results file is finished). A
+  checkpoint that is there but held so that it cannot even be read is still named as the resume
+  point, not as "no checkpoint". Giving up costs time, not results — at worst, when no save of the
+  run ever worked, the whole run, because there is then nothing to resume from.
+- **A save never guesses which kept-results snapshot is in use.** A resumed run whose checkpoint was
+  held so that it could not be read used to write over the snapshot that checkpoint named, and the
+  next `--resume` was refused ("delete everything and start again"). It now writes neither.
+- **`vseed map`** waits ~15 s for a viewer that opened the output after the check, says so, and in a
+  terminal asks `[r]etry / [g]ive up` with the finished image kept. **A rotated `--keep all` run**
+  that finishes while its manifest is held prints its report, says every record is written and only
+  the manifest is not, and exits 3; the page publishes it as done, with the manifest as a warning. A
+  held manifest no longer stalls every rotation for 1.6 s.
+- **On the web page:** a search whose file is in the way is refused by name ("press Find seeds again
+  once the file is free"), warnings are listed under Find seeds (each added, none replacing another,
+  none listed twice when the stream reconnects), and a last save that failed gets a **Retry saving**
+  button. Checked in a real browser: "Not saved", then "still not saved" while the file was held, then
+  "Saved" once it was let go. A page reloaded afterwards shows the save as it stands, not the error
+  it was sent at the end; a run's warnings and its end are replayed however long it ran (they used to
+  be dropped after 4,000 events), and a page whose server no longer knows the run says so and stops
+  reconnecting.
+- **Another web page can no longer press your buttons.** Any site you had open could send Stop to
+  `127.0.0.1`; the server now refuses a `POST` that a browser marks as coming from another page.
+- **`vseed clean`** counts only what it really deleted, lists what it could not (a running `vseed`'s
+  log, a file a viewer has open) with the reason, and keeps its own log; its table says `removed`
+  only for a category whose every file went. `vseed clean --json --yes` now removes what it reports;
+  before, it returned before the removal and deleted nothing.
+- **What a file problem that ends a command says.** A file that is in use, read-only or not allowed
+  is named, with the probable cause and exit 3, whenever the error carries its path (every save
+  SeedLab retries does); an access denial whose message names no path says "a file or folder" and
+  points at the session log, also exit 3. A full drive is said as one, with exit 3, naming the file
+  when the error does. Any other input/output error still prints "this is a bug" with exit 4.
+  Exit code 3 now reads "not found - or a file or folder SeedLab needs is in use, read-only, not
+  allowed or on a full drive; also a finished rotated search whose manifest could not be saved".
+- Proved by `SeedLab.Search.Tests` section 17 (44 checks, through the built `vseed` and `vseed serve`:
+  a held results file refused, a held checkpoint warned about and the run completed with the same
+  bytes, a held last save announced, reported and then resumed to the same bytes, a map and a
+  rotated run held after the check, the log's lifecycle, the clean and its table, the cross-site
+  refusal, Retry saving and the save state a reloaded page reads), section 15 (42 checks: the search
+  engine underneath, including a resumed run whose checkpoint could not even be read - run against
+  the guessing save, that test fails twice: the snapshot changed, and the resume refused),
+  `SeedLab.Runtime.Tests` section 7, and three new rows in `vseed serve --selftest`. On 2026-09-24,
+  after the review's fixes:
+  Search.Tests 443/443 (571 s), Runtime.Tests 173/173, `vseed serve --selftest` 15 PASS rows and 3
+  MEASURED, `vseed selftest` 13 checks PASS, the proofs `refuse`, `policy` and `blocks` exit 0, and the
+  kill tests 3/3 IDENTICAL both bounded and `keep all`.
+
 ## Still not implemented — named so you do not go looking
 
 - **GPU.** Still rejected after CPU SIMD delivered 6.03× bit-exactly. A GPU path could only ever be
@@ -292,8 +370,17 @@ threads" was two workers' rate. Measured on `axe-heads`: 64 seeds took 1.6 min a
   arm64 untested and unproven. The self-test is what stands in for it, and it fails closed.
 - **CSV does not carry the new per-goal fields** (`measured_at_grid_m`, `grid_comparable`,
   `grid_note`, `censored`). Use `.jsonl` when you care how a number was measured.
-- **`vseed search --json` on a refused run** writes the refusal to stderr and exits 1 with an empty
-  stdout.
+- **`vseed search --json` on a refused run** writes the refusal to stderr and exits 1 (3 when a file
+  it needs is in the way) with an empty stdout.
+- **The `[r]etry / [a]bort` and `[r]etry / [g]ive up` questions have not been run yet** - nor
+  Ctrl-C at them, which is now caught so that the results file is finished and the report printed
+  (whether Windows then ends the question as a give-up, or leaves it waiting for `g`, is not
+  verified). Every automated test runs with nothing reading the keyboard, which takes the refusing
+  path, and that path is the one tested. The first time a file is in the way in a real terminal is
+  their first run.
+- **A full drive is not waited out.** It is named now instead of being called a bug, but a checkpoint
+  save or a results write that meets one still ends the run. Saves write a temporary file first, so
+  the checkpoint on disk stays the last one that was saved - by construction; no test fills a drive.
 
 ## Two things only you can do
 

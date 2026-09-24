@@ -5,6 +5,7 @@ using System.Threading;
 using SeedLab.Runtime;
 using SeedLab.Runtime.Execution;
 using SeedLab.Runtime.Hardware;
+using SeedLab.Runtime.Storage;
 using SeedLab.Search.Criteria;
 using SeedLab.Search.Evaluation;
 using SeedLab.Search.Execution;
@@ -248,17 +249,66 @@ namespace SeedLab.Web.Search
                 }
             }
 
+            // ---- the files this run will write, before a seed is touched (2026-09-24) -------------
+            //
+            // The terminal asks "[r]etry / [a]bort" here; the page's retry is pressing Find seeds again,
+            // so a file that cannot be used is a refusal that names it, says what probably holds it and
+            // stops with nothing scanned. Nothing is created by the checks - a results folder the page
+            // has not used yet is still made only by a run - and they come before the output is
+            // claimed, so a refusal leaves no claim behind.
+            // A run of THIS server that is writing the file is said as exactly that, first: its own
+            // results writer holds the file, so the access check below would otherwise report it as
+            // "another program has it open" - true, and much less useful than naming the run.
+            if (p.OutPath != null && OwnerOf(p.OutPath) != null) throw AlreadyWriting(p.OutPath);
+
+            string? refusal = AccessRefusal(p);
+            if (refusal != null) throw new SearchRefusedException(pf, "refused", refusal);
+
             EngineRun run = new EngineRun(p, _oracle, t.QueryJson, cq.Warnings, r => _measured = r);
-            if (p.OutPath != null && !ClaimOutput(p.OutPath, run.Id))
-            {
-                throw new ArgumentException(
-                    "a search that is still running is already writing " + p.OutPath
-                    + " (run " + OwnerOf(p.OutPath) + "). Two runs on one results file would each rewrite it "
-                    + "from their own kept set. Stop that run, or give this one a different file name.");
-            }
+            if (p.OutPath != null && !ClaimOutput(p.OutPath, run.Id)) throw AlreadyWriting(p.OutPath);
 
             run.Begin();
             return run;
+        }
+
+        private static ArgumentException AlreadyWriting(string outPath) => new ArgumentException(
+            "a search that is still running is already writing " + outPath
+            + " (run " + OwnerOf(outPath) + "). Two runs on one results file would each rewrite it "
+            + "from their own kept set. Stop that run, or give this one a different file name.");
+
+        /// <summary>
+        /// The refusal for a run whose results file, results folder or checkpoint folder cannot be
+        /// used right now, or null. The same checks the terminal makes before a search; the sentence
+        /// names each file, says what probably happened and ends with the page's way of trying again.
+        /// </summary>
+        private string? AccessRefusal(SearchPlanner.Planned p)
+        {
+            List<AccessResult> checks = new List<AccessResult>();
+            if (p.OutPath != null)
+            {
+                checks.Add(AccessCheck.FileForWrite(p.OutPath));
+                string? outDir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(p.OutPath));
+                if (!string.IsNullOrEmpty(outDir)) checks.Add(AccessCheck.Directory(outDir, create: false));
+
+                // A rotated run's manifest, the one file of its own it replaces beside the results (2026-09-24).
+                if (p.Session.Output.IsRotating) checks.Add(AccessCheck.FileForWrite(SegmentedResultSink.ManifestPathFor(p.OutPath)));
+            }
+
+            string? ckptDir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(p.Session.CheckpointPath));
+            if (!string.IsNullOrEmpty(ckptDir)) checks.Add(AccessCheck.Directory(ckptDir, create: false));
+
+            string summary = AccessCheck.Summary(checks);
+            List<string> failed = new List<string>();
+            foreach (AccessResult r in checks)
+            {
+                if (!r.Ok) failed.Add(r.Message);
+            }
+
+            _runtime.SessionLog.Write(failed.Count == 0 ? SessionLogLevel.Info : SessionLogLevel.Warn, "access   web search: " + summary);
+            if (failed.Count == 0) return null;
+
+            return string.Join(" ", failed) + " Nothing was scanned and nothing was written - press Find seeds again "
+                   + "once the file is free.";
         }
 
         /// <summary>
@@ -422,6 +472,13 @@ namespace SeedLab.Web.Search
             private SearchRun? _run;
             private Thread? _thread;
             private volatile bool _cancelRequested;
+
+            /// <summary>The run's outcome, once it has one; <see cref="RetrySave"/> works on it.</summary>
+            private SearchOutcome? _outcome;
+
+            /// <summary>The worker thread has finished, whatever way it ended.</summary>
+            private volatile bool _ended;
+            private readonly object _retryGate = new object();
             private long _lastResultTicks;
             private long _resultAllowance;
             private DateTime _lastTop = DateTime.MinValue;
@@ -595,7 +652,7 @@ namespace SeedLab.Web.Search
                     {
                         _run = run;
                         if (_cancelRequested) run.RequestStop();
-                    });
+                    }, Warning);
 
                     sw.Stop();
                     stageOneSeconds = sw.Elapsed.TotalSeconds;
@@ -631,6 +688,14 @@ namespace SeedLab.Web.Search
                     {
                         Fail(ex.Message);
                         return false;
+                    }
+                    catch (FileAccessException ex)
+                    {
+                        // Only the shortcut past stage one for a later run: the survivors are in memory,
+                        // so stage two goes on - as it does in the terminal (2026-09-24).
+                        Warning("the survivor list could not be saved. " + ex.Diagnosis.Message
+                                + " Stage 2 goes on with the survivors in memory; the next run of this query "
+                                + "will have to repeat stage 1.");
                     }
                 }
 
@@ -870,9 +935,48 @@ namespace SeedLab.Web.Search
                             _run = run;
                             run.OnResult = OnResult;
                             if (_cancelRequested) run.RequestStop();
-                        });
+                        }, Warning);
+                    _outcome = outcome;
 
-                    _sink?.Finish();
+                    // A finished run whose results could not be finished off - a rotated run's manifest
+                    // another program held through the patient wait - is still a finished run: every
+                    // record is on disk. It used to throw from here into the catch below and be
+                    // published as a failed search (review of 2026-09-24); now it is a warning, and the
+                    // done event carries it.
+                    string? resultsError = null;
+                    try
+                    {
+                        if (_sink is SegmentedResultSink rotated)
+                        {
+                            // The patient wait for a held manifest is said, not sat through in silence.
+                            bool said = false;
+                            rotated.OnFinishAttempt = a =>
+                            {
+                                if (a.Succeeded || said || a.Attempt >= a.Attempts) return;
+                                said = true;
+                                Warning("saving the manifest: " + a.Path + " is busy - another program may have it open. "
+                                        + "SeedLab keeps trying for up to "
+                                        + RetrySchedule.Patient.Total.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture) + " s.");
+                            };
+                        }
+
+                        _sink?.Finish();
+                    }
+                    catch (FileAccessException fex)
+                    {
+                        SegmentedResultSink? seg = _sink as SegmentedResultSink;
+                        resultsError = seg != null
+                            ? (outcome.Complete ? "the run finished and all " : "the run stopped, and all ")
+                              + seg.Count.ToString("N0", CultureInfo.InvariantCulture)
+                              + " records it found are written, in " + seg.SegmentCount.ToString("N0", CultureInfo.InvariantCulture)
+                              + " segment file(s) beside " + seg.Path + " - only the manifest that lists them could not be "
+                              + "saved, so it is missing or describes an earlier moment. " + fex.Diagnosis.Message
+                            : (outcome.Complete ? "the run finished" : "the run stopped")
+                              + ", but its results file could not be finished. " + fex.Diagnosis.Message;
+                        SessionLog.Current?.Exception("web search " + Id + ": the results could not be finished", fex);
+                        Warning(resultsError);
+                    }
+
                     FlushTop(force: true);
 
                     // Kept as the machine's rate ("measured here ... the whole space would take") only
@@ -957,25 +1061,39 @@ namespace SeedLab.Web.Search
                         resultLine = _session.ResultLine(outcome),
                         stoppedByLimit = outcome.StoppedByLimit,
                         checkpointPath = outcome.CheckpointPath,
-                        resumeCommand = outcome.CheckpointPath == null
-                            ? null
-                            : "vseed search <this query file> --resume --checkpoint \"" + outcome.CheckpointPath + "\"",
+                        resumeCommand = ResumeCommand(outcome.CheckpointPath),
                         repairedBytes = _session.RepairedBytes,
                         freeBytes = FreeBytes(true),
+
+                        // What went wrong with the saves without stopping the run (2026-09-24). Each
+                        // warning was already sent as its own "warning" event; these are the count and
+                        // the state at the end. checkpointError is the LAST save of a run that stopped
+                        // early, when it could not be written - the page's "Retry saving" repeats it.
+                        warningCount = outcome.Warnings.Count,
+                        failedSaves = outcome.FailedSaves,
+                        resultsError,
+                        checkpointError = ErrorJson(outcome.CheckpointError),
+                        retireWarning = outcome.RetireWarning,
+                        checkpointLeftovers = outcome.CheckpointLeftovers,
                     }));
                 }
                 catch (Exception ex)
                 {
+                    // Words for the page, never a type name (2026-09-24): a file another program held is
+                    // named with its probable cause; anything else is said to be SeedLab's fault, and the
+                    // session log keeps the exception whole.
+                    string message = PlainMessage(ex);
+                    SessionLog.Current?.Exception("web search " + Id + " failed", ex);
                     lock (_lock)
                     {
                         _progress.Status = "failed";
-                        _progress.Message = ex.GetType().Name + ": " + ex.Message;
+                        _progress.Message = message;
                     }
 
                     _hub.Publish(new SearchEvent("done", new
                     {
                         status = "failed",
-                        message = ex.GetType().Name + ": " + ex.Message,
+                        message,
                         scanned = _progress.Scanned,
                         passed = _progress.Passed,
                         limit = _plan.Limit,
@@ -985,8 +1103,149 @@ namespace SeedLab.Web.Search
                 {
                     try { _sink?.Dispose(); } catch (Exception) { }
                     ReleaseOutput(_planned.OutPath);
+                    _ended = true;
                     _hub.Close();
                 }
+            }
+
+            /// <summary>A warning the run gave while it went on - a checkpoint save that failed - to every tab, and to the log.</summary>
+            private void Warning(string text)
+            {
+                SessionLog.Current?.Warn("search   web search " + Id + ": " + text);
+                _hub.Publish(new SearchEvent("warning", new { message = text, atUtc = DateTime.UtcNow }));
+            }
+
+            /// <summary>The page's "Retry saving": the failed last save of this run, once more (<see cref="ISearchRun.RetrySave"/>).</summary>
+            public SearchRetryResult RetrySave()
+            {
+                if (!_ended)
+                {
+                    return new SearchRetryResult
+                    {
+                        Running = true,
+                        Message = "this search is still running; its checkpoint is saved when it stops.",
+                    };
+                }
+
+                lock (_retryGate)
+                {
+                    SearchOutcome? o = _outcome;
+                    if (o == null || o.CheckpointError == null)
+                    {
+                        // Said from what is true now, not as "nothing to save": a second tab, or this one
+                        // after a reload, can still show the error an earlier Retry already cleared
+                        // (review of 2026-09-24), and its user needs to hear that it is saved.
+                        return new SearchRetryResult
+                        {
+                            Saved = true,
+                            Message = o?.CheckpointPath != null
+                                ? "saved: " + o.CheckpointPath + " is up to date, so a resume continues from where this run stopped."
+                                : o != null && o.Complete
+                                    ? "nothing to save: this run finished, so it needs no checkpoint."
+                                    : "nothing to save: this run has no checkpoint to save.",
+                            CheckpointPath = o?.CheckpointPath,
+                            ResumeCommand = ResumeCommand(o?.CheckpointPath),
+                        };
+                    }
+
+                    SessionLog.Current?.Info("search   web search " + Id + ": saving the last checkpoint again, as the page asked");
+                    bool saved = _session.RetryFinalSave();
+                    if (!saved) SessionLog.Current?.Warn("search   web search " + Id + ": " + o.CheckpointError?.Message);
+                    return new SearchRetryResult
+                    {
+                        Saved = saved,
+                        Message = saved
+                            ? "saved: " + o.CheckpointPath + " is up to date now, so a resume continues from where this run stopped."
+                            : o.CheckpointError?.Message ?? "the checkpoint could not be saved.",
+                        CheckpointPath = o.CheckpointPath,
+                        ResumeCommand = ResumeCommand(o.CheckpointPath),
+                        CheckpointError = ErrorJson(o.CheckpointError),
+                    };
+                }
+            }
+
+            /// <summary>
+            /// The run's last save as it stands NOW, for <c>GET /api/search/{id}</c>, or null while the run
+            /// is going. The <c>done</c> event is frozen when it is published; a Retry saving that worked
+            /// after it changes this and not that, so a tab that rejoins draws the box from here (review of
+            /// 2026-09-24: a reload after a successful retry showed "Not saved" again).
+            /// </summary>
+            public object? SaveState
+            {
+                get
+                {
+                    if (!_ended) return null;
+                    lock (_retryGate)
+                    {
+                        SearchOutcome? o = _outcome;
+                        if (o == null) return null;
+                        return new
+                        {
+                            checkpointError = ErrorJson(o.CheckpointError),
+                            checkpointPath = o.CheckpointPath,
+                            resumeCommand = ResumeCommand(o.CheckpointPath),
+                        };
+                    }
+                }
+            }
+
+            private static string? ResumeCommand(string? checkpointPath) =>
+                checkpointPath == null
+                    ? null
+                    : "vseed search <this query file> --resume --checkpoint \"" + checkpointPath + "\"";
+
+            /// <summary>The failed last save, for the page: its sentence, the file, and what is on disk instead.</summary>
+            private static object? ErrorJson(CheckpointError? e) => e == null
+                ? null
+                : new
+                {
+                    message = e.Message,
+                    path = e.Path,
+                    checkpoint = e.CheckpointPath,
+                    // The terminal's spelling ("in_use"), not the enum's ("InUse"): one field, one set
+                    // of values, whichever front end a script reads (review of 2026-09-24).
+                    problem = FileProblems.Name(e.Problem),
+                    runBlock = e.RunBlock,
+                    onDiskBlock = e.OnDiskBlock >= 0 ? e.OnDiskBlock : (long?)null,
+                    onDiskSeeds = e.OnDiskBlock >= 0 ? e.OnDiskSeeds : (long?)null,
+                    onDiskUnreadable = e.OnDiskUnreadable,
+                    attempts = e.Attempts,
+                };
+
+            /// <summary>
+            /// An exception as a sentence for the page: a diagnosed file failure's own words, else a plain
+            /// one. "Another program may have it open" is said only of the failures that can mean that -
+            /// an access denial and a sharing or lock violation, as the terminal does - and a full drive is
+            /// said as one; any other file error used to get the same access-denied advice, a full disk
+            /// and a missing folder included (review of 2026-09-24).
+            /// </summary>
+            private static string PlainMessage(Exception ex)
+            {
+                FileDiagnosis? d = FileRetry.DiagnoseEscaped(ex);
+                if (d != null) return d.Message;
+                if (ex is InvalidOperationException || ex is ArgumentException) return ex.Message;
+                string log = SessionLog.Current?.Path != null ? " The session log has the details: " + SessionLog.Current.Path : "";
+                if (FileRetry.IsDiskFull(ex))
+                {
+                    return "the drive SeedLab was writing to is full. Free some space on it - 'vseed clean' shows what SeedLab "
+                           + "itself keeps in its cache folder - then press Find seeds again." + log;
+                }
+
+                if (ex is UnauthorizedAccessException || FileRetry.IsTransient(ex))
+                {
+                    return "Windows refused SeedLab access to a file or folder it needed (" + ex.Message + "). Another program "
+                           + "may have it open, or it is read-only, or this account may not change it." + log;
+                }
+
+                if (ex is System.IO.IOException)
+                {
+                    return "SeedLab could not read or write a file it needed (" + ex.Message + ")." + log;
+                }
+
+                return "the search stopped because of an error inside SeedLab (" + ex.Message + "). That is a bug; "
+                       + (SessionLog.Current?.Path != null
+                           ? "the session log has the details: " + SessionLog.Current.Path
+                           : "the terminal running vseed serve may say more.");
             }
 
             /// <summary>

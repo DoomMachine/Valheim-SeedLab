@@ -378,6 +378,21 @@
           <div class="progress-text" id="outputText"></div>
         </div>
         <p class="note" id="searchError" hidden></p>
+        <!--
+          What went wrong with the run's files without stopping it - a checkpoint another program held,
+          saved again later - one line each, kept (each warning is added, none replaces another). The
+          last save of a run that stopped early, when it failed, gets its own box and a button that
+          tries that exact save again.
+        -->
+        <ul class="bullets warnlist" id="searchWarnings" hidden></ul>
+        <div class="savefail" id="saveError" hidden>
+          <p class="note" id="saveErrorText"></p>
+          <div class="row-inline">
+            <button class="btn" id="btnRetrySave" type="button"
+                    title="Try the same save again - close the program that has the file open first">Retry saving</button>
+            <span class="note" id="saveRetryNote"></span>
+          </div>
+        </div>
       </div>
 
       <div class="card" id="planCard" hidden>

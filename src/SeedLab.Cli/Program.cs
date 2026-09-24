@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using SeedLab.Cli.Commands;
 using SeedLab.Cli.Infra;
+using SeedLab.Runtime.Storage;
 
 namespace SeedLab.Cli
 {
@@ -65,7 +67,14 @@ global options (accepted before or after the command name):
   -V, --version
 
 exit codes:
-  0 ok   1 a check failed   2 bad command line   3 not found   4 internal error
+  0 ok   1 a check failed   2 bad command line   4 internal error
+  3 not found - or a file or folder SeedLab needs is in use, read-only, not allowed or on a
+    full drive; also a finished rotated search whose manifest could not be saved
+
+session log: every command but hash, invert, space, presets, data, worlds and world
+  rewrites %LOCALAPPDATA%\SeedLab\logs\vseed.log (or <cache-dir>\logs\vseed.log) as it
+  starts - copy it first if you need the last one. A second vseed running at the same
+  time writes vseed.log.1 (up to .4) instead.
 
 A seed token that parses as an int32 is read as the INT; pass --text to read it as a seed text.
 ";
@@ -156,6 +165,12 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
             }
 
             Args a = new Args(rest);
+
+            // Declared out here, and ended in the finally, so that every catch below can still write
+            // to the session log and the log's last line carries the exit code. It used to be a
+            // `using` inside the try, which disposed it before any catch ran (2026-09-24).
+            CliRuntime? rt = null;
+            int exit = ExitCodes.Internal;
             try
             {
                 // Both are read inside the try, so a bad --json or --threads is one error line like
@@ -174,7 +189,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 // ConsumeGlobals is for.
                 bool needsRuntime = cmd is "seed" or "map" or "at" or "locations" or "search"
                                         or "explain" or "serve" or "selftest" or "bench" or "clean";
-                using CliRuntime? rt = needsRuntime ? CliRuntime.Start(a, cmd) : null;
+                rt = needsRuntime ? CliRuntime.Start(a, cmd, AsTyped(rawArgs)) : null;
                 if (rt == null) a.ConsumeGlobals();
 
                 // Fail closed before anything a user would act on. 'selftest' is exempt because it IS
@@ -210,6 +225,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 };
 
                 o.Flush();
+                exit = code;
                 return code;
             }
             catch (CliException ex)
@@ -217,7 +233,8 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 Console.Error.WriteLine("vseed " + cmd + ": " + ex.Message);
                 if (ex.Hint != null) Console.Error.WriteLine(ex.Hint);
                 if (debug) Console.Error.WriteLine(ex.StackTrace);
-                return ex.ExitCode;
+                Logged(rt, cmd, ex.Message, ex, ex.ExitCode == ExitCodes.Internal);
+                return exit = ex.ExitCode;
             }
             catch (SeedLab.Data.GameDataException ex)
             {
@@ -226,7 +243,8 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 // printed "this is a bug", which sent the reader looking for a fault in the tool.
                 Console.Error.WriteLine("vseed " + cmd + ": " + ex.Message);
                 if (debug) Console.Error.WriteLine(ex.StackTrace);
-                return ExitCodes.NotFound;
+                Logged(rt, cmd, ex.Message, ex, false);
+                return exit = ExitCodes.NotFound;
             }
 
             catch (SeedLab.Data.StaleGameDataException ex)
@@ -237,33 +255,114 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 // and printing "this is a bug" for it sent the reader hunting a fault in the tool.
                 Console.Error.WriteLine("vseed " + cmd + ": " + ex.Message);
                 if (debug) Console.Error.WriteLine(ex.StackTrace);
-                return ExitCodes.NotFound;
+                Logged(rt, cmd, ex.Message, ex, false);
+                return exit = ExitCodes.NotFound;
+            }
+            catch (FileAccessException ex)
+            {
+                // A file another program kept busy for the whole wait, a read-only file, a folder this
+                // account may not write: the retry has already named the file and the probable cause,
+                // in words. It is a condition the user can fix, never "this is a bug" (2026-09-24).
+                Console.Error.WriteLine("vseed " + cmd + ": " + SearchCommand.WrapPaths(ex.Message, "       ", new[] { ex.Path }));
+                if (debug) Console.Error.WriteLine(ex.ToString());
+                Logged(rt, cmd, ex.Message, ex, true);
+                return exit = ExitCodes.NotFound;
             }
             catch (System.IO.FileNotFoundException ex)
             {
                 Console.Error.WriteLine("vseed " + cmd + ": " + ex.Message);
                 if (debug) Console.Error.WriteLine(ex.StackTrace);
-                return ExitCodes.NotFound;
+                Logged(rt, cmd, ex.Message, ex, false);
+                return exit = ExitCodes.NotFound;
             }
             catch (System.IO.DirectoryNotFoundException ex)
             {
                 Console.Error.WriteLine("vseed " + cmd + ": " + ex.Message);
                 if (debug) Console.Error.WriteLine(ex.StackTrace);
-                return ExitCodes.NotFound;
+                Logged(rt, cmd, ex.Message, ex, false);
+                return exit = ExitCodes.NotFound;
             }
-            catch (UnauthorizedAccessException ex)
+            catch (Exception ex) when (ex is UnauthorizedAccessException
+                                       || (ex is IOException && FileRetry.IsTransient(ex)))
             {
-                Console.Error.WriteLine("vseed " + cmd + ": " + ex.Message);
-                return ExitCodes.NotFound;
+                // The same conditions, from a file operation that did not go through the retry: a raw
+                // sharing violation (its message names the file) or an access denial (whose message
+                // often does not). Diagnosed from the file itself when the message names it; otherwise
+                // said as plainly as it can be, with the log that holds the rest.
+                FileDiagnosis? d = FileRetry.DiagnoseEscaped(ex);
+                if (d != null)
+                {
+                    Console.Error.WriteLine("vseed " + cmd + ": " + SearchCommand.WrapPaths(d.Message, "       ", new[] { d.Path }));
+                }
+                else
+                {
+                    Console.Error.WriteLine("vseed " + cmd + ": Windows refused SeedLab access to a file or folder it needed ("
+                                            + ex.Message + ").");
+                    Console.Error.WriteLine("       Another program may have it open, or it is read-only, or this account may not "
+                                            + "change it. Close other programs that use SeedLab's files and try again.");
+                    if (rt?.Log.Path != null) Console.Error.WriteLine("       the session log has the details: " + rt.Log.Path);
+                }
+
+                if (debug) Console.Error.WriteLine(ex.ToString());
+                Logged(rt, cmd, d?.Message ?? ex.Message, ex, true);
+                return exit = ExitCodes.NotFound;
+            }
+            catch (IOException ex) when (FileRetry.IsDiskFull(ex))
+            {
+                // A full drive is a condition the user can fix, not a fault in the tool - it used to fall
+                // to the handler below and print "IOException: There is not enough space on the disk"
+                // above "this is a bug" (review of 2026-09-24). Named by the file the message names.
+                FileDiagnosis? d = FileRetry.DiagnoseEscaped(ex);
+                Console.Error.WriteLine("vseed " + cmd + ": " + (d != null
+                    ? SearchCommand.WrapPaths(d.Message, "       ", new[] { d.Path })
+                    : "the drive SeedLab was writing to is full. Free some space on it - 'vseed clean' shows what "
+                      + "SeedLab itself keeps in its cache folder - then try again."));
+                if (rt?.Log.Path != null) Console.Error.WriteLine("       the session log has the details: " + rt.Log.Path);
+                if (debug) Console.Error.WriteLine(ex.ToString());
+                Logged(rt, cmd, d?.Message ?? ex.Message, ex, true);
+                return exit = ExitCodes.NotFound;
             }
             catch (Exception ex)
             {
-                // No stack trace unless asked: a wall of frames is not a message to a user.
+                // No stack trace unless asked: a wall of frames is not a message to a user. The log
+                // always gets it, so the one file a user can hand over holds what --debug would show.
                 Console.Error.WriteLine("vseed " + cmd + ": " + ex.GetType().Name + ": " + ex.Message);
                 Console.Error.WriteLine("       this is a bug; re-run with --debug for the stack trace.");
+                if (rt?.Log.Path != null) Console.Error.WriteLine("       the session log has it too: " + rt.Log.Path);
                 if (debug) Console.Error.WriteLine(ex.ToString());
-                return ExitCodes.Internal;
+                Logged(rt, cmd, ex.Message, ex, true);
+                return exit = ExitCodes.Internal;
             }
+            finally
+            {
+                rt?.End(exit);
+            }
+        }
+
+        /// <summary>
+        /// A failure, in the session log: the sentence the user saw, and - when it is not an ordinary
+        /// refusal - the exception's type, HResult and stack trace, which the terminal shows only with
+        /// --debug.
+        /// </summary>
+        private static void Logged(CliRuntime? rt, string cmd, string message, Exception ex, bool withStack)
+        {
+            if (rt == null) return;
+            rt.Log.Error("error    vseed " + cmd + ": " + message);
+            if (withStack) rt.Log.Exception("the command failed", ex);
+        }
+
+        /// <summary>The command line as typed, for the session log: "vseed search axe-heads --seeds 400".</summary>
+        private static string AsTyped(string[] rawArgs)
+        {
+            List<string> parts = new List<string> { "vseed" };
+            foreach (string arg in rawArgs)
+            {
+                parts.Add(arg.Length == 0 || arg.IndexOfAny(new[] { ' ', '\t', '"' }) >= 0
+                    ? "\"" + arg.Replace("\"", "\\\"") + "\""
+                    : arg);
+            }
+
+            return string.Join(" ", parts);
         }
 
         private static string? HelpFor(string cmd) => cmd switch

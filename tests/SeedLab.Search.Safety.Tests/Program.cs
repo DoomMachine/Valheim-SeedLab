@@ -158,7 +158,7 @@ namespace Proof
 
             if (!resume)
             {
-                foreach (string f in new[] { outPath, ckpt, ckpt + ".top" }) if (File.Exists(f)) File.Delete(f);
+                foreach (string f in new[] { outPath, ckpt, ckpt + ".top", ckpt + ".top2" }) if (File.Exists(f)) File.Delete(f);
             }
 
             // --auto-block leaves block_size out, so the size is the automatic rule's for THIS leg's
@@ -551,7 +551,7 @@ namespace Proof
                         string file = Path.Combine(dir, "a-" + keepTag + "-" + (size?.ToString(CultureInfo.InvariantCulture) ?? "auto")
                                                         + "-" + threads + "t." + ext);
                         string ckpt = Path.Combine(dir, "a.ckpt");
-                        foreach (string f in new[] { file, ckpt, ckpt + ".top" }) if (File.Exists(f)) File.Delete(f);
+                        foreach (string f in new[] { file, ckpt, ckpt + ".top", ckpt + ".top2" }) if (File.Exists(f)) File.Delete(f);
 
                         SearchSession s = SearchSession.Create(Q(keep, blockSize: size), Oracle, Engine, seeds, threads, file,
                                                                acceptScanOrder: true);
@@ -593,7 +593,7 @@ namespace Proof
                 string reference = Path.Combine(dir, "b-" + keepTag + "-ref.jsonl");
                 string resumed = Path.Combine(dir, "b-" + keepTag + "-resumed.jsonl");
                 string ckpt = Path.Combine(dir, "b-" + keepTag + ".ckpt");
-                foreach (string f in new[] { reference, resumed, ckpt, ckpt + ".top", Path.Combine(dir, "b-ref.ckpt") })
+                foreach (string f in new[] { reference, resumed, ckpt, ckpt + ".top", ckpt + ".top2", Path.Combine(dir, "b-ref.ckpt") })
                 {
                     if (File.Exists(f)) File.Delete(f);
                 }

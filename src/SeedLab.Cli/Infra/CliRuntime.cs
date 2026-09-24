@@ -5,6 +5,7 @@ using System.IO;
 using SeedLab.Runtime;
 using SeedLab.Runtime.Execution;
 using SeedLab.Runtime.SelfTest;
+using SeedLab.Runtime.Storage;
 
 namespace SeedLab.Cli.Infra
 {
@@ -47,14 +48,24 @@ namespace SeedLab.Cli.Infra
 
         public SeedLab.Runtime.Storage.CacheRoot Cache => Context.Cache;
 
+        /// <summary>
+        /// This session's log (<c>&lt;cache root&gt;\logs\vseed.log</c>): what the command printed as a
+        /// warning or an error, the access checks, the integrity line, and an exception's stack trace -
+        /// which the terminal shows only with <c>--debug</c>.
+        /// </summary>
+        public SessionLog Log => Context.SessionLog;
+
         public ResourceMode Mode => Context.EffectiveMode;
 
         /// <summary>
         /// Reads the global runtime options off the command line and starts the context. Every option
         /// is READ here even when the command will not use it, so that <see cref="Args.RejectUnknown"/>
         /// does not call a documented global flag a typo.
+        ///
+        /// <para><paramref name="commandLine"/> is the command as the user typed it, for the session
+        /// log's header.</para>
         /// </summary>
-        public static CliRuntime Start(Args a, string command)
+        public static CliRuntime Start(Args a, string command, string? commandLine = null)
         {
             string? modeText = a.Get("mode");
             if (!ResourceModes.TryParse(modeText, out ResourceMode mode, out string modeError))
@@ -74,6 +85,8 @@ namespace SeedLab.Cli.Infra
                 // One line, on stderr, so a --json stdout stays parseable. This is the channel the
                 // auto-throttle announcement arrives on.
                 Log = line => { if (!string.IsNullOrEmpty(line)) Console.Error.WriteLine("vseed: " + line); },
+                CommandLine = commandLine,
+                Program = "vseed " + Verified.EngineVersion + " (SeedLab, for Valheim " + Verified.GameVersion + ")",
             };
 
             RuntimeContext ctx;
@@ -94,7 +107,18 @@ namespace SeedLab.Cli.Infra
             }
 
             CliRuntime rt = new CliRuntime(ctx);
-            rt.RegisterSuitesAndVerify(command);
+            try
+            {
+                rt.RegisterSuitesAndVerify(command);
+            }
+            catch (Exception ex)
+            {
+                // The session log is open by now; end it with what went wrong rather than leave it
+                // without its last line.
+                ctx.SessionLog.Exception("the self-test could not be run", ex);
+                ctx.Dispose();
+                throw;
+            }
 
             // A run whose arithmetic has not been proved must SAY SO on every command, not only on
             // the ones that happen to print the startup block. --skip-self-test's own message ends
@@ -130,6 +154,12 @@ namespace SeedLab.Cli.Infra
             NativesDirectory = suite.Directory_;
             Context.SelfTest.Register(suite);
             SelfTest = Context.SelfTest.Verify(Context.Hardware);
+
+            // The runtime logged its own outcome before this suite existed; this is the one that
+            // decides whether the command may answer, so it is the one the log must end up with.
+            Log.Write(SelfTest.Ok || SelfTest.Status == SelfTestStatus.Skipped ? SessionLogLevel.Info : SessionLogLevel.Error,
+                      "selftest " + SelfTest.Status + " with the generator goldens from " + NativesDirectory + ": "
+                      + SelfTest.Message);
         }
 
         /// <summary>
@@ -186,6 +216,83 @@ namespace SeedLab.Cli.Infra
 
             l.AddRange(_extra);
             return l;
+        }
+
+        /// <summary>A line for the startup block, after the machine and the self-test: the access summary.</summary>
+        public void AddStartupLine(string line)
+        {
+            if (!string.IsNullOrEmpty(line)) _extra.Add(line);
+        }
+
+        /// <summary>
+        /// "integrity confirmed (self-test passed; 2 data files matched manifest.json)" - or what was not
+        /// confirmed. The second half of the start-of-session line the user asked for, from what this
+        /// process has ALREADY checked: the machine self-test (with the generator goldens when they were
+        /// found), each data file's SHA-256 against <c>manifest.json</c> as it was loaded, and the
+        /// DATA-STAMP against the installed game if something asked. Nothing is hashed again to say it.
+        ///
+        /// <para>A run that needed no data file says so rather than "matched": a terrain question reads
+        /// no dumped asset, and "0 files verified" next to "confirmed" would read as a check that failed
+        /// to happen.</para>
+        /// </summary>
+        public string IntegritySummary()
+        {
+            List<string> not = new List<string>();
+            if (SelfTest == null || SelfTest.Status == SelfTestStatus.Skipped) not.Add("the self-test was skipped (--skip-self-test)");
+            else if (!SelfTest.Ok) not.Add("the self-test did not pass");
+
+            SeedLab.Data.StampCheck? stamp = SeedLab.Data.GameData.Loaded?.InstalledGameCheckIfDone;
+            if (stamp != null && !stamp.IsMatch) not.Add(StampWords(stamp));
+
+            if (not.Count > 0) return "integrity NOT confirmed: " + string.Join("; ", not);
+            int files = SeedLab.Data.GameData.VerifiedFileCount;
+            return "integrity confirmed (self-test passed; "
+                   + (files == 0 ? "no data file was needed" : Count(files) + " data file" + (files == 1 ? "" : "s") + " matched manifest.json")
+                   + (stamp != null ? "; DATA-STAMP matches the installed game" : "") + ")";
+        }
+
+        /// <summary>The integrity line for the session log, with the self-test's status and the stamp's.</summary>
+        public string IntegrityLine()
+        {
+            int files = SeedLab.Data.GameData.VerifiedFileCount;
+            SeedLab.Data.StampCheck? stamp = SeedLab.Data.GameData.Loaded?.InstalledGameCheckIfDone;
+            return "self-test " + (SelfTest == null ? "not run" : SelfTest.Status.ToString()) + "; "
+                   + (files == 0
+                       ? "no data file was loaded"
+                       : Count(files) + " data file" + (files == 1 ? "" : "s") + " matched their SHA-256 in manifest.json")
+                   // Only the game data's own check is known here: 'vseed selftest' compares the installed
+                   // build its own way (its G1 row), and that is not counted as this.
+                   + "; " + (stamp == null
+                       ? "the game data's DATA-STAMP check did not run in this session"
+                       : stamp.IsMatch
+                           ? "the DATA-STAMP matches the installed assembly_valheim.dll"
+                           : StampWords(stamp));
+        }
+
+        private static string StampWords(SeedLab.Data.StampCheck stamp) => stamp.Result switch
+        {
+            SeedLab.Data.StampMatch.Mismatch => "the game data is from another Valheim build than the one installed",
+            SeedLab.Data.StampMatch.GameNotFound => "no Valheim install was found to compare the game data with",
+            _ => "the installed game could not be read to compare the game data with",
+        };
+
+        /// <summary>
+        /// Ends the session: the integrity line and the exit code go in the log, then everything is
+        /// disposed. Called once, by Program, whatever the command did.
+        /// </summary>
+        public void End(int exitCode)
+        {
+            try
+            {
+                Log.Info("integrity " + IntegrityLine());
+            }
+            catch (Exception)
+            {
+                // A report about the data must not stop the session from ending.
+            }
+
+            Context.ExitCode = exitCode;
+            Dispose();
         }
 
         /// <summary>Everything in <see cref="StartupLines"/>, on stderr, indented under a heading.</summary>

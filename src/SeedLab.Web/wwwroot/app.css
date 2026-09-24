@@ -520,6 +520,16 @@ kbd {
 #searchError { color: var(--bad); }
 #searchError.is-info { color: var(--ink-dim); }
 
+/* The run's own warnings: each one kept, marked with a word and not only a colour. */
+.warnlist { margin-top: 8px; }
+.warnlist li { color: var(--accent-hi); overflow-wrap: anywhere; }
+.warnlist li::before { content: "warning: "; font-weight: 600; }
+.savefail { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--bad); border-radius: 4px; }
+.savefail #saveErrorText { color: var(--ink); overflow-wrap: anywhere; margin: 0 0 6px; }
+.savefail #saveErrorText::before { content: "Not saved: "; color: var(--bad); font-weight: 600; }
+.savefail.is-saved { border-color: var(--line); }
+.savefail.is-saved #saveErrorText::before { content: "Saved: "; color: var(--ink-dim); }
+
 /* ------------------------------------------------------------ sidebar splitter */
 .splitter {
   flex: none; width: 5px; cursor: col-resize; background: var(--bg-2);

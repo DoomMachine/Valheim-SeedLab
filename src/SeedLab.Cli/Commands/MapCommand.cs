@@ -5,6 +5,7 @@ using System.IO;
 using SeedLab.Cli.Infra;
 using SeedLab.Render;
 using SeedLab.Runtime.Execution;
+using SeedLab.Runtime.Storage;
 using SeedLab.Render.Png;
 using SeedLab.WorldGen;
 
@@ -44,6 +45,14 @@ Options:
   --mark <x,z[,label]> mark a point (repeatable via commas: --mark 100,200,home)
   --threads <n>        worker threads
   --json               print the render report as JSON instead of text
+
+  The output file and its folder are checked before the render starts. One another program
+  holds (an image viewer with the last map open), or that is read-only, is named with what
+  to do; in a terminal you are asked '[r]etry / [a]bort', and with --json or a redirected
+  stdin the command stops with exit 3. The PNG is written beside the target and renamed over
+  it, so the old image stays whole until the new one is complete. A viewer that opens the
+  file after the check is waited for (about 15 s, said on screen); in a terminal you are
+  then asked '[r]etry / [g]ive up' with the rendered image kept, so a retry is not a render.
 
 Examples:
   vseed map MWd8eV6svz
@@ -137,6 +146,16 @@ Examples:
                                 + "-" + grid.Size.ToString(CultureInfo.InvariantCulture) + "px.png");
             a.RejectUnknown();
 
+            // The output, before the render that is most of the command's time (2026-09-24): an image
+            // viewer or an editor holding the previous map, a read-only file or a folder this account
+            // may not write is named now, with its probable cause - not after the render, as a bare
+            // "Access to the path is denied.". The PNG is written to a temp file beside it and renamed,
+            // so the folder is checked as well as the file. Nothing is created by the check.
+            AccessGate access = new AccessGate(rt).Write(outPath).FolderOf(outPath).Run();
+            rt.Log.Info("start    " + access.Summary());
+            int? refused = access.Enforce("map", o.Json, false, "Nothing was rendered and nothing was written.");
+            if (refused != null) return refused.Value;
+
             if (sr.AmbiguityNote != null) Out.Warn(sr.AmbiguityNote);
             if (opt.SeedText.Length == 0)
             {
@@ -155,7 +174,8 @@ Examples:
             Stopwatch enc = Stopwatch.StartNew();
             string? dir = Path.GetDirectoryName(Path.GetFullPath(outPath));
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            PngEncoder.WriteFile(outPath, r.Canvas.Pixels, r.Canvas.Width, r.Canvas.Height);
+            int? notSaved = Save(o, rt, outPath, s => PngEncoder.Write(s, r.Canvas.Pixels, r.Canvas.Width, r.Canvas.Height));
+            if (notSaved != null) return notSaved.Value;
             enc.Stop();
             total.Stop();
 
@@ -238,6 +258,78 @@ Examples:
             }
 
             return ExitCodes.Ok;
+        }
+
+        /// <summary>
+        /// Writes the PNG beside <paramref name="outPath"/> and renames it into place, waiting for an
+        /// image viewer that holds the old one - and, in a terminal someone is watching, asking
+        /// "[r]etry / [g]ive up" when it still holds it, with the finished image kept in the temp file
+        /// meanwhile. Null when the file is written; the exit code when the user gave up. With --json or
+        /// no keyboard a file still held throws the diagnosis (exit 3).
+        ///
+        /// <para><b>Why</b> (review of 2026-09-24). The start check passes a viewer that has the file open
+        /// while letting others write to it, and that viewer still blocks the rename. The write used the
+        /// quick schedule, so a hold of more than about 1.6 s threw the finished render away with its
+        /// temp file - measured: exit 3 after a 1024 px render, only the old file left. It now waits on
+        /// the patient schedule (about 15 s), says that it is waiting, and a retry costs a rename, not a
+        /// render.</para>
+        /// </summary>
+        private static int? Save(Out o, CliRuntime rt, string outPath, Action<Stream> encode)
+        {
+            bool said = false;
+            Action<RetryAttempt> waiting = a =>
+            {
+                if (a.Succeeded || said || a.Attempt >= a.Attempts) return;
+                said = true;
+                Out.Warn(SearchCommand.WrapPaths("saving the map: " + a.Path + " is busy - another program may have it open. "
+                                                 + "SeedLab keeps trying for up to "
+                                                 + Out.F(RetrySchedule.Patient.Total.TotalSeconds, 1) + " s.",
+                                                 "         ", new[] { a.Path }));
+            };
+
+            string temp = DurableWrite.WriteTemp(outPath, encode,
+                RetrySchedule.Patient, onAttempt: waiting);
+            try
+            {
+                RetrySchedule schedule = RetrySchedule.Patient;
+                while (true)
+                {
+                    try
+                    {
+                        DurableWrite.Replace(temp, outPath, schedule, waiting);
+                        return null;
+                    }
+                    catch (FileAccessException ex) when (!o.Json && !Console.IsInputRedirected)
+                    {
+                        rt.Log.Error("map      " + ex.Message + " [" + ex.Diagnosis.Detail + "]");
+                        Console.Error.WriteLine();
+                        Console.Error.WriteLine("error: " + SearchCommand.WrapPaths(ex.Message, "       ", new[] { ex.Path, temp }));
+                        Console.Error.WriteLine();
+                        Console.Error.WriteLine("  The map is rendered and waiting in " + temp + ".");
+                        Console.Error.WriteLine("  Fix that, then type r and press Enter to save it again - or g to give up and delete it.");
+                        if (AccessGate.Ask("[r]etry / [g]ive up? ", "r", "g") != "r")
+                        {
+                            Console.Error.WriteLine("not saved. " + Path.GetFullPath(outPath) + " is as it was.");
+                            rt.Log.Warn("map      the user gave up on saving the map");
+                            return ExitCodes.NotFound;
+                        }
+
+                        rt.Log.Info("map      saving the map again, as the user asked");
+                        schedule = RetrySchedule.Quick;
+                    }
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(temp)) File.Delete(temp);
+                }
+                catch (Exception)
+                {
+                    // Reaped by the next vseed: it carries this process's id and DurableWrite's prefix.
+                }
+            }
         }
 
         private static PaletteMode ParsePalette(string? s) => s switch

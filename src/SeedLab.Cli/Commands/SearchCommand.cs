@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using SeedLab.Cli.Infra;
 using SeedLab.Runtime.Execution;
+using SeedLab.Runtime.Storage;
 using SeedLab.Search.Criteria;
 using SeedLab.Search.Evaluation;
 using SeedLab.Search.Execution;
@@ -110,7 +111,17 @@ Before EVERY run - not only --dry-run - the plan block says what will be scanned
 will cost, where the results go and how big they can get. A run that cannot be answered
 honestly is REFUSED with the fix named; one that is expensive or surprising asks first.
 
-Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
+Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.
+
+Files another program holds. Before a seed is scanned, the results file, the checkpoint
+folder and (with --resume) the checkpoint, its snapshot and the survivor list are checked.
+One that cannot be used is named, with what probably holds it; in a terminal you are asked
+'[r]etry / [a]bort', and with --json or a redirected stdin the run is refused (exit 3).
+During the run a checkpoint that cannot be saved - a virus scanner or a sync tool has it
+open - is retried, then reported as a warning while the run goes on. If the LAST save of a
+run that stops early fails, the run says what is on disk and what --resume will do, and in
+a terminal offers '[r]etry / [g]ive up'. Everything is also in the session log
+(<cache root>\logs\vseed.log).";
 
         public static int Run(Args a, Out o, CliRuntime rt)
         {
@@ -199,6 +210,8 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
 
                 if (blocking.Count > 0)
                 {
+                    rt.Log.Error("refused  this query cannot be answered by this build: "
+                                 + blocking[0].Goal.Id + " - " + blocking[0].UnavailableReason);
                     Console.Error.WriteLine("vseed search: this query cannot be answered by this build.");
                     foreach (CompiledGoal g in blocking)
                     {
@@ -248,6 +261,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             {
                 if (g.Goal.Importance == Importance.Must)
                 {
+                    rt.Log.Error("refused  goal '" + g.Goal.Id + "' can never be satisfied by any seed: " + g.Unsatisfiable);
                     Console.Error.WriteLine("vseed search: goal '" + g.Goal.Id + "' can never be satisfied by any seed.");
                     Console.Error.WriteLine("  " + g.Unsatisfiable);
                     Console.Error.WriteLine();
@@ -269,7 +283,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             // --json's stdout stays machine-readable. Console.Error rather than Out.Warn because the
             // text already begins with "warning: " and Out.Warn would prepend a second one.
             string? stampWarning = SeedLab.Data.DataPolicy.WarningForTerrain();
-            if (stampWarning != null) Console.Error.WriteLine(stampWarning);
+            if (stampWarning != null) Out.Said(stampWarning, SessionLogLevel.Warn);
 
             // ---- the session: the grid decision, the output policy and the preflight -------------
             //
@@ -369,6 +383,42 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 if (left != null && left.MatchesExceptBlockSize(q, plan, session.QueryHash)) sampleLeftover = checkpointPath;
             }
 
+            // ---- the files this run will use, checked before anything is spent on it --------------
+            //
+            // Measured HERE, so that the startup block below carries the one line the user asked for -
+            // "file access checked: N paths OK; integrity confirmed" - and acted on further down, after
+            // the preflight's own refusals: a query that cannot be answered is refused for that
+            // reason first. Nothing is created or truncated by the checks, so a refused run and a
+            // --dry-run still write nothing (2026-09-24).
+            //
+            // Without --resume only the checkpoint's FOLDER is checked: a fresh run replaces whatever is
+            // at that path at its first save, and a program that holds it then is what the retry and
+            // the run's warnings are for. With --resume the checkpoint is read and then replaced, and
+            // its snapshot and a funnel's survivor list are read.
+            string survivorPath = SurvivorPathFor(checkpointPath);
+            AccessGate access = new AccessGate(rt).Write(outPath).FolderOf(outPath).FolderOf(checkpointPath);
+
+            // A rotated run replaces one file of its own beside the results: the manifest that lists
+            // the segments. It is checked with the rest (2026-09-24) - a manifest another program held
+            // used to be found only at the end of a run that had finished.
+            if (outPath != null && session.Output.IsRotating) access.Write(SegmentedResultSink.ManifestPathFor(outPath));
+            if (resume)
+            {
+                if (File.Exists(checkpointPath)) access.Write(checkpointPath);
+                access.ReadIfPresent(CheckpointStore.PeekKeptSnapshot(checkpointPath));
+                if (willFunnel) access.ReadIfPresent(survivorPath);
+            }
+
+            if (cq.Locations != null && SeedLab.Data.GameData.Loaded != null)
+            {
+                access.ReadIfPresent(Path.Combine(SeedLab.Data.GameData.Loaded.Directory, SeedLab.Contracts.Dump.DumpFormat.ManifestFile));
+            }
+
+            access.Run();
+            string accessLine = access.Summary();
+            rt.AddStartupLine(accessLine);
+            rt.Log.Info("start    " + accessLine);
+
             // ---- the plan block, before EVERY run (decision 10) -----------------------------------
             if (!o.Json)
             {
@@ -417,11 +467,16 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
 
                 Console.Error.WriteLine();
                 Console.Error.WriteLine("  Nothing was scanned and nothing was written.");
+                rt.Log.Error("refused  " + string.Join(" | ", session.Preflight.Refusals) + (collision != null ? " | " + collision : ""));
                 return ExitCodes.CheckFailed;
             }
 
             // ---- warnings: it runs, but the user has to know ----------------------------------------
             foreach (string w in session.Preflight.Warnings) Out.Warn(Wrap(w, "         "));
+
+            // ---- a file this run needs that cannot be used: ask, refuse, or (--dry-run) say ----------
+            int? accessExit = access.Enforce("search", o.Json, dryRun, "Nothing was scanned and nothing was written.");
+            if (accessExit != null) return accessExit.Value;
 
             // ---- --dry-run: the cost, and what the real run WOULD ask ----------------------------
             //
@@ -473,6 +528,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                                             + ", so this run is not started.");
                     Console.Error.WriteLine("  Pass --yes to accept the points above, or change the query.");
                     Console.Error.WriteLine("  --dry-run answers \"what would this cost\" without starting it.");
+                    rt.Log.Warn("refused  the run needs confirming and nothing is reading the keyboard");
                     return ExitCodes.CheckFailed;
                 }
 
@@ -563,10 +619,6 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
 
             if (chosen == SearchStrategy.Funnel)
             {
-                string survivorPath = checkpointPath.EndsWith(".ckpt", StringComparison.OrdinalIgnoreCase)
-                    ? checkpointPath.Substring(0, checkpointPath.Length - 5) + ".survivors"
-                    : checkpointPath + ".survivors";
-
                 int[]? survivors = RunStageOne(o, q, funnel, oracle, plan, session, seedBudget,
                                                survivorPath, resume, yes, progressMode, wall,
                                                publishRun, out int stageExit,
@@ -664,25 +716,165 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                     }
                 };
 
-            SearchOutcome outcome;
+            // A checkpoint save that failed and will be tried again at the next interval: said once per
+            // episode by the run (the first failure, every tenth, the recovery), on the collector
+            // thread - the one that also draws the progress line, so ending that line first cannot race
+            // it. Out.Warn also puts it in the session log.
+            string[] runPaths = RunPaths(checkpointPath, outPath);
+            Action<string> onWarning = w =>
+            {
+                if (progressMode != "none") Console.Error.WriteLine();
+                Out.Warn(WrapPaths(w, "         ", runPaths));
+            };
+
+            // Ctrl-C at a question after the run - "[r]etry / [g]ive up?" about the last checkpoint or
+            // the manifest - must not end the process there: the results file would not be finished
+            // and the report, often the only place the best seeds are printed, never shown (review of
+            // 2026-09-24). This handler takes over from the run's once the scan has returned; the
+            // question treats an interrupted read as its last answer, give up.
+            ConsoleCancelEventHandler atQuestion = (_, e) =>
+            {
+                e.Cancel = true;
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("  (Ctrl-C does not end vseed at this point: it finishes the results file and prints the "
+                                        + "report first. At a question, answer g to give up.)");
+            };
+            SearchOutcome? outcome = null;
+            FileAccessException? finishError = null;
             try
             {
-                outcome = session.Run(sink, onProgress, wall, TimeSpan.FromSeconds(ckptEvery), publishRun);
+                outcome = session.Run(sink, onProgress, wall, TimeSpan.FromSeconds(ckptEvery), publishRun, onWarning);
+                Console.CancelKeyPress += atQuestion;
+                Console.CancelKeyPress -= cancel;
+                if (progressMode != "none") Console.Error.WriteLine();
+
+                // Before the sink is finished, while everything the failed save wrote from is exactly
+                // as the run left it. `session` is stage two's after a funnel, which is the run whose
+                // checkpoint this is.
+                FinalSave(o, session, outcome, rt, runPaths);
             }
             finally
             {
                 Console.CancelKeyPress -= cancel;
                 if (sink != null)
                 {
-                    sink.Finish();
-                    sink.Dispose();
+                    try
+                    {
+                        // A rotated run's last manifest waits for a held file on the patient schedule;
+                        // the wait is said, not sat through in silence.
+                        if (sink is SegmentedResultSink rotated && outcome != null)
+                        {
+                            bool said = false;
+                            rotated.OnFinishAttempt = a =>
+                            {
+                                if (a.Succeeded || said || a.Attempt >= a.Attempts) return;
+                                said = true;
+                                List<string> kept = new List<string>(runPaths) { a.Path };
+                                Out.Warn(WrapPaths("saving the manifest: " + a.Path + " is busy - another program may have it "
+                                                   + "open. SeedLab keeps trying for up to "
+                                                   + Out.F(RetrySchedule.Patient.Total.TotalSeconds, 1) + " s.",
+                                                   "         ", kept.ToArray()));
+                            };
+                        }
+
+                        sink.Finish();
+                    }
+                    catch (FileAccessException ex) when (outcome != null)
+                    {
+                        // The run finished its scan and every record is on disk; only a file written
+                        // at the very end - a rotated run's manifest - could not be. That is said and
+                        // offered again below, after the report is known to be printable, instead of
+                        // escaping as the command's error with no report (review of 2026-09-24).
+                        finishError = ex;
+                    }
+                    catch (Exception ex) when (outcome == null)
+                    {
+                        // The run itself failed and that is the error to report; a sink that could not
+                        // finish after it is a consequence, kept in the log rather than put in its place.
+                        rt.Log.Exception("the results file could not be finished after the run failed", ex);
+                    }
+                    finally
+                    {
+                        sink.Dispose();
+                    }
                 }
             }
 
-            if (progressMode != "none") Console.Error.WriteLine();
-            Report(o, q, cq, plan, outcome, checkpointPath, session);
+            try
+            {
+                if (finishError != null) finishError = FinishAgain(o, sink, finishError, rt, runPaths, outcome!.Complete);
+            }
+            finally
+            {
+                Console.CancelKeyPress -= atQuestion;
+            }
+
+            Report(o, q, cq, plan, outcome!, checkpointPath, session, finishError);
             o.Flush();
-            return ExitCodes.Ok;
+
+            // Exit 3 when the results are not as the manifest describes them: every record is written,
+            // but the one file that indexes them is missing or out of date, and a script that reads the
+            // manifest must not take this run for a clean one.
+            return finishError == null ? ExitCodes.Ok : ExitCodes.NotFound;
+        }
+
+        /// <summary>
+        /// A finished run whose results could not be finished off - a rotated run's manifest another
+        /// program held through the patient wait: what is on disk, in words, then in a terminal someone
+        /// is watching "[r]etry / [g]ive up" around <see cref="SegmentedResultSink.RetryManifest"/>.
+        /// Returns null once it is written, or the failure that still stands.
+        /// </summary>
+        private static FileAccessException? FinishAgain(Out o, IResultSink? sink, FileAccessException ex, CliRuntime rt,
+                                                        string[] runPaths, bool complete)
+        {
+            SegmentedResultSink? seg = sink as SegmentedResultSink;
+            bool interactive = !o.Json && !Console.IsInputRedirected;
+            while (true)
+            {
+                string what = seg != null
+                    ? (complete ? "the run finished and all " : "the run stopped, and all ") + Out.N(seg.Count)
+                      + " records it found are written, in "
+                      + Out.N(seg.SegmentCount) + " segment file" + (seg.SegmentCount == 1 ? "" : "s")
+                      + " beside " + seg.Path + " - only the manifest that lists them could not be saved, so it "
+                      + "is missing or describes an earlier moment. " + ex.Diagnosis.Message
+                    : (complete ? "the run finished" : "the run stopped") + ", but its results file could not be finished. "
+                      + ex.Diagnosis.Message;
+                rt.Log.Error("search   " + what + " [" + ex.Diagnosis.Detail + "]");
+                List<string> paths = new List<string>(runPaths) { ex.Path };
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("error: " + WrapPaths(what, "       ", paths.ToArray()));
+                if (seg == null || !interactive)
+                {
+                    if (seg != null)
+                    {
+                        Console.Error.WriteLine("       (Nothing is reading the keyboard, so saving it again is not offered. The "
+                                                + "command exits 3.)");
+                    }
+
+                    return ex;
+                }
+
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("  Fix that, then type r and press Enter to save the manifest again - or g to leave it.");
+                if (AccessGate.Ask("[r]etry / [g]ive up? ", "r", "g") != "r")
+                {
+                    Console.Error.WriteLine("not saved. The records are all there; the manifest is not. The command exits 3.");
+                    rt.Log.Warn("search   the user gave up on saving the manifest");
+                    return ex;
+                }
+
+                rt.Log.Info("search   saving the manifest again, as the user asked");
+                try
+                {
+                    seg.RetryManifest();
+                    Out.Info("saved: " + seg.ManifestPath + " now lists every segment of the finished run.");
+                    return null;
+                }
+                catch (FileAccessException again)
+                {
+                    ex = again;
+                }
+            }
         }
 
         /// <summary>
@@ -693,6 +885,99 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
         /// </summary>
         private static bool WillFunnel(SearchStrategy asked, FunnelPlan funnel)
             => asked != SearchStrategy.Sample && funnel.Usable;
+
+        /// <summary>A funnel's survivor list: beside its checkpoint, "x.ckpt" -> "x.survivors".</summary>
+        private static string SurvivorPathFor(string checkpointPath) =>
+            checkpointPath.EndsWith(".ckpt", StringComparison.OrdinalIgnoreCase)
+                ? checkpointPath.Substring(0, checkpointPath.Length - 5) + ".survivors"
+                : checkpointPath + ".survivors";
+
+        /// <summary>
+        /// Every file a run's warnings and errors can name - the checkpoint, its snapshots, their temp
+        /// files, its folder, the results file - so that <see cref="WrapPaths"/> keeps each one whole
+        /// on its line, where it can be copied.
+        /// </summary>
+        private static string[] RunPaths(string checkpointPath, string? outPath)
+        {
+            List<string> p = new List<string>();
+            foreach (string c in CheckpointStore.SnapshotGenerations(checkpointPath))
+            {
+                p.Add(c);
+                p.Add(c + ".tmp");
+            }
+
+            p.Add(checkpointPath);
+            p.Add(checkpointPath + ".tmp");
+            string? dir = Path.GetDirectoryName(checkpointPath);
+            if (!string.IsNullOrEmpty(dir)) p.Add(dir);
+            if (outPath != null)
+            {
+                p.Add(outPath);
+
+                // A rotated run's manifest, which its warnings can name; beside a checkpoint in the same
+                // folder, the folder alone would otherwise be kept whole and the file name split off.
+                p.Add(SegmentedResultSink.ManifestPathFor(outPath));
+            }
+
+            return p.ToArray();
+        }
+
+        /// <summary>
+        /// The last save of a run that stopped early, when it failed
+        /// (<see cref="SearchOutcome.CheckpointError"/>): what failed, why, and what is on disk instead -
+        /// then, in a terminal someone is watching, "[r]etry / [g]ive up" around
+        /// <see cref="SearchSession.RetryFinalSave"/>, as often as they like (2026-09-24).
+        ///
+        /// <para>The run's exit code does not change either way. The checkpoint still on disk is an
+        /// older resume point, and a correct one: resuming from it repeats the blocks after it and
+        /// produces the same bytes. What the user loses by giving up is time, never results - which is
+        /// why this is asked and not refused. At worst, when no save of this run ever worked, that time
+        /// is the whole run: there is then nothing on disk to resume from.</para>
+        /// </summary>
+        private static void FinalSave(Out o, SearchSession session, SearchOutcome r, CliRuntime rt, string[] runPaths)
+        {
+            bool interactive = !o.Json && !Console.IsInputRedirected;
+            while (r.CheckpointError != null)
+            {
+                CheckpointError e = r.CheckpointError;
+                List<string> paths = new List<string>(runPaths) { e.Path, e.CheckpointPath };
+                if (e.Diagnosis.HeldTemp != null)
+                {
+                    paths.Add(e.Diagnosis.HeldTemp);
+                    paths.Add(Path.GetDirectoryName(e.Diagnosis.HeldTemp) ?? "");
+                }
+
+                rt.Log.Error("search   the last checkpoint could not be saved (attempt " + e.Attempts + "): " + e.Message
+                             + " [" + e.Diagnosis.Detail + "]");
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("error: " + WrapPaths(e.Message, "       ", paths.ToArray()));
+                if (!interactive)
+                {
+                    Console.Error.WriteLine("       (Nothing is reading the keyboard, so saving again is not offered. The exit code "
+                                            + "is not changed by this.)");
+                    return;
+                }
+
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("  Fix that, then type r and press Enter to save it again - or g to leave it as it is.");
+                if (AccessGate.Ask("[r]etry / [g]ive up? ", "r", "g") != "r")
+                {
+                    Console.Error.WriteLine(e.Resumable
+                        ? "not saved. A --resume starts from the resume point described above."
+                        : "not saved. With no checkpoint on disk, running this again starts from the beginning.");
+                    rt.Log.Warn("search   the user gave up on saving the last checkpoint");
+                    return;
+                }
+
+                rt.Log.Info("search   saving the last checkpoint again, as the user asked");
+                if (session.RetryFinalSave())
+                {
+                    Out.Info("saved: " + (r.CheckpointPath ?? e.CheckpointPath)
+                             + " is up to date now, so a --resume continues from where this run stopped.");
+                    return;
+                }
+            }
+        }
 
         private static SearchStrategy ParseStrategy(string? v)
         {
@@ -808,7 +1093,14 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                     // The handler installed before this block holds `running`; without publishing the
                     // stage-one run into it, Ctrl-C here would have nothing to ask to stop.
                     res = one.Run(sink, onProgress, wall, TimeSpan.FromSeconds(30),
-                                  run => publishRun(run));
+                                  run => publishRun(run),
+                                  w =>
+                                  {
+                                      // Stage one keeps no checkpoint today, so this has nothing to say
+                                      // yet; wired as stage two is, so a file it ever writes is reported.
+                                      if (progressMode != "none") Console.Error.WriteLine();
+                                      Out.Warn(WrapPaths(w, "         ", new[] { survivorPath }));
+                                  });
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -865,6 +1157,15 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 {
                     throw new CliException(ex.Message, ExitCodes.CheckFailed,
                                            "--strategy sample runs this query without a survivor list");
+                }
+                catch (FileAccessException ex)
+                {
+                    // The list is only the shortcut a --resume takes past stage one; the survivors are
+                    // in memory, so stage two goes on. Stopping here would throw away all of stage one
+                    // to protect a file that only saves repeating it (2026-09-24).
+                    Out.Warn(WrapPaths("the survivor list could not be saved. " + ex.Diagnosis.Message
+                                       + " Stage 2 goes on with the survivors in memory; a --resume would have to run "
+                                       + "stage 1 again.", "         ", new[] { survivorPath, ex.Path }));
                 }
             }
 
@@ -948,6 +1249,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 Console.Error.WriteLine();
                 Console.Error.WriteLine("vseed search: REFUSED - stage 2 cannot continue its checkpoint at that block size.");
                 Console.Error.WriteLine("  " + Wrap(stageTwo.Refusal, "      ", stageTwo.Resume?.Path));
+                SessionLog.Current?.Error("refused  stage 2 cannot continue its checkpoint at that block size: " + stageTwo.Refusal);
                 exitCode = ExitCodes.CheckFailed;
                 return null;
             }
@@ -1067,6 +1369,65 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             return (before.Length > 0 ? WrapWords(before, indent, width) + nl : "")
                    + unbroken
                    + (after.Length > 0 ? nl + WrapWords(after, indent, width) : "");
+        }
+
+        /// <summary>
+        /// <see cref="Wrap(string, string, int)"/>, keeping every one of <paramref name="paths"/> that
+        /// the text contains whole, on a line of its own, together with the punctuation right after it
+        /// (so "C:\...\x.ckpt:" does not leave its colon to start the next line). Where two paths start
+        /// at the same place - a folder and a file in it, a checkpoint and its snapshot - the longer one
+        /// is the one kept (2026-09-24). A path can hold a space, and split there it could not be copied.
+        /// </summary>
+        internal static string WrapPaths(string text, string indent, string[] paths, int width = 94)
+        {
+            // Each path also as a diagnosis spells it: Path.GetFullPath expands an 8.3 short name
+            // (which %TEMP% often is) into the long one, spaces and all, and a path that is not matched
+            // is word-wrapped at its spaces (seen 2026-09-24).
+            List<string> all = new List<string>();
+            foreach (string? p in paths)
+            {
+                if (string.IsNullOrEmpty(p)) continue;
+                all.Add(p);
+                try
+                {
+                    string full = Path.GetFullPath(p);
+                    if (!string.Equals(full, p, StringComparison.Ordinal)) all.Add(full);
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            return WrapKept(text, indent, all, width);
+        }
+
+        private static string WrapKept(string text, string indent, List<string> paths, int width)
+        {
+            int at = -1;
+            string? hit = null;
+            foreach (string p in paths)
+            {
+                int i = text.IndexOf(p, StringComparison.Ordinal);
+                if (i < 0) continue;
+                if (at < 0 || i < at || (i == at && p.Length > hit!.Length))
+                {
+                    at = i;
+                    hit = p;
+                }
+            }
+
+            if (hit == null) return WrapWords(text, indent, width);
+
+            string before = text.Substring(0, at).TrimEnd();
+            string after = text.Substring(at + hit.Length);
+            int tail = 0;
+            while (tail < after.Length && ":.,;)".IndexOf(after[tail]) >= 0) tail++;
+            string line = hit + after.Substring(0, tail);
+            after = after.Substring(tail).TrimStart();
+            string nl = Environment.NewLine + indent;
+            return (before.Length > 0 ? WrapWords(before, indent, width) + nl : "")
+                   + line
+                   + (after.Length > 0 ? nl + WrapKept(after, indent, paths, width) : "");
         }
 
         private static string WrapWords(string text, string indent, int width)
@@ -1503,7 +1864,7 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
         }
 
         private static void Report(Out o, Query q, CompiledQuery cq, ScanPlan plan, SearchOutcome r,
-                                   string checkpointPath, SearchSession session)
+                                   string checkpointPath, SearchSession session, FileAccessException? finishError = null)
         {
             if (o.Json)
             {
@@ -1554,7 +1915,65 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 o.J.WriteNumber("screen_grid_m", session.Grid.ScreenGrid);
                 o.J.WriteBoolean("screen_then_verify", session.Grid.ScreenThenVerify);
                 o.J.WriteString("checkpoint", checkpointPath);
-                o.J.WriteBoolean("checkpoint_retired", !File.Exists(checkpointPath));
+
+                // What is on disk, from the run's own account rather than File.Exists: a finished run
+                // whose checkpoint another program held is not "unfinished", and an unfinished run whose
+                // last save failed has an OLDER checkpoint, not this run's (2026-09-24).
+                o.J.WriteBoolean("checkpoint_retired", r.Complete && r.CheckpointLeftovers.Count == 0);
+                if (r.CheckpointPath != null) o.J.WriteString("resumable_checkpoint", r.CheckpointPath);
+                else o.J.WriteNull("resumable_checkpoint");
+                o.J.WriteStartArray("checkpoint_leftovers");
+                foreach (string left in r.CheckpointLeftovers) o.J.WriteStringValue(left);
+                o.J.WriteEndArray();
+                if (r.CheckpointError == null)
+                {
+                    o.J.WriteNull("checkpoint_error");
+                }
+                else
+                {
+                    CheckpointError e = r.CheckpointError;
+                    o.J.WriteStartObject("checkpoint_error");
+                    o.J.WriteString("path", e.Path);
+                    o.J.WriteString("checkpoint", e.CheckpointPath);
+                    o.J.WriteString("problem", FileProblems.Name(e.Problem));
+                    o.J.WriteString("message", e.Message);
+                    o.J.WriteNumber("run_block", e.RunBlock);
+                    o.J.WriteNumber("run_seeds", e.RunSeeds);
+                    if (e.OnDiskBlock >= 0)
+                    {
+                        o.J.WriteNumber("on_disk_block", e.OnDiskBlock);
+                        o.J.WriteNumber("on_disk_seeds", e.OnDiskSeeds);
+                    }
+                    else
+                    {
+                        o.J.WriteNull("on_disk_block");
+                        o.J.WriteNull("on_disk_seeds");
+                    }
+
+                    // There, and a resume point, but held so it could not be read: its block is unknown.
+                    o.J.WriteBoolean("on_disk_unreadable", e.OnDiskUnreadable);
+                    o.J.WriteNumber("attempts", e.Attempts);
+                    o.J.WriteEndObject();
+                }
+
+                // A finished run whose results could not be finished off (a rotated run's manifest).
+                if (finishError == null)
+                {
+                    o.J.WriteNull("results_error");
+                }
+                else
+                {
+                    o.J.WriteStartObject("results_error");
+                    o.J.WriteString("path", finishError.Path);
+                    o.J.WriteString("problem", FileProblems.Name(finishError.Problem));
+                    o.J.WriteString("message", finishError.Diagnosis.Message);
+                    o.J.WriteEndObject();
+                }
+
+                o.J.WriteNumber("failed_saves", r.FailedSaves);
+                o.J.WriteStartArray("warnings");
+                foreach (string w in r.Warnings) o.J.WriteStringValue(w);
+                o.J.WriteEndArray();
                 o.J.WriteStartArray("top");
                 foreach (SeedResult s in r.Top)
                 {
@@ -1603,7 +2022,9 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
             if (!r.Complete)
             {
                 o.Note(r.StoppedByUser ? "stopped on request." : r.StoppedByWall ? "stopped on the wall budget." : "stopped early.");
-                o.Note("resume with:  vseed search ... --resume --checkpoint " + checkpointPath);
+                o.Note(r.CheckpointPath != null
+                    ? "resume with:  vseed search ... --resume --checkpoint " + r.CheckpointPath
+                    : "there is no checkpoint on disk that a resume could use, so running it again starts from the beginning.");
             }
 
             if (r.ResultsPath != null)
@@ -1613,6 +2034,12 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 // headline defect was a file that silently held everything while the report named a
                 // number that had nothing to do with it.
                 o.Field("results file", r.ResultsPath + "  (" + Out.N(r.ResultsWritten) + " records)");
+                if (finishError != null)
+                {
+                    o.Field("manifest", "NOT saved - every record is written, but " + finishError.Path
+                                        + " is missing or out of date; see the error above");
+                }
+
                 o.Field("what was kept", session.ResultLine(r));
                 if (r.StoppedByLimit)
                 {
@@ -1620,9 +2047,43 @@ Ctrl-C stops at the next block boundary, writes the checkpoint and exits 0.";
                 }
             }
 
-            o.Field("checkpoint", File.Exists(checkpointPath)
-                ? checkpointPath + "  (kept: this run has not finished)"
-                : "retired - the run completed, so " + checkpointPath + " was deleted");
+            // From the run's own account, not File.Exists (2026-09-24): a checkpoint another program held
+            // when a FINISHED run tried to delete it used to be reported as "kept: this run has not
+            // finished", and an unfinished run whose last save failed as if its checkpoint were current.
+            if (r.Complete)
+            {
+                o.Field("checkpoint", r.CheckpointLeftovers.Count == 0
+                    ? "retired - the run completed, so " + checkpointPath + " was deleted"
+                    : "NOT deleted - the run completed, but another program had it open (see the warning above)");
+                foreach (string left in r.CheckpointLeftovers) o.Note("  safe to delete, nothing resumes from it: " + left);
+            }
+            else if (r.CheckpointError != null)
+            {
+                CheckpointError ce = r.CheckpointError;
+                o.Field("checkpoint", ce.OnDiskBlock >= 0
+                    ? checkpointPath + "  (an OLDER resume point, block " + Out.N(ce.OnDiskBlock)
+                      + " - the last save failed, see the error above)"
+                    : ce.OnDiskUnreadable
+                        ? checkpointPath + "  (an OLDER resume point"
+                          + (ce.OnDiskWritten.HasValue
+                              ? ", saved " + ce.OnDiskWritten.Value.ToString("HH:mm:ss", CultureInfo.InvariantCulture)
+                              : "")
+                          + ", that could not be read just now - see the error above)"
+                        : "none on disk - the last save failed, see the error above");
+            }
+            else
+            {
+                o.Field("checkpoint", r.CheckpointPath != null
+                    ? r.CheckpointPath + "  (kept: this run has not finished)"
+                    : "none - nothing was saved");
+            }
+
+            if (r.FailedSaves > 0)
+            {
+                o.Field("checkpoint saves", Out.N(r.FailedSaves) + " failed along the way and "
+                                            + (r.FailedSaves == 1 ? "was" : "were") + " tried again at the next "
+                                            + "checkpoint (the warnings above name the file)");
+            }
 
             if (r.Top.Count == 0)
             {

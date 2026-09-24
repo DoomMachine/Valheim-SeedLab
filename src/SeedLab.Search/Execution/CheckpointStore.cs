@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text.Json;
 using SeedLab.Runtime.Storage;
 using SeedLab.Search.Criteria;
+using SeedLab.Search.Output;
 
 namespace SeedLab.Search.Execution
 {
@@ -43,11 +45,29 @@ namespace SeedLab.Search.Execution
         /// </summary>
         public TimeSpan MinRunTime = TimeSpan.Zero;
 
-        /// <summary>Where a bounded run's kept set is snapshotted. Null when the run is unbounded.</summary>
+        /// <summary>
+        /// Where a bounded run's kept set is snapshotted (<c>&lt;ckpt&gt;.top</c>), or null when the run is
+        /// unbounded. Since 2026-09-24 this says THAT the run snapshots; the file each save writes is
+        /// this one or <c>&lt;ckpt&gt;.top2</c>, whichever the checkpoint on disk does not name
+        /// (<see cref="CheckpointStore.NextSnapshotPath"/>).
+        /// </summary>
         public string? SnapshotPath;
 
-        /// <summary>Delete the checkpoint (and its snapshot) when the run finishes the whole plan.</summary>
+        /// <summary>Delete the checkpoint (and its snapshots) when the run finishes the whole plan.</summary>
         public bool DeleteOnComplete = true;
+
+        /// <summary>
+        /// How long a checkpoint save made on the interval keeps trying while another program holds a
+        /// file. A save that still fails is a warning and the run goes on; the next interval tries again.
+        /// </summary>
+        public RetrySchedule PeriodicRetry = RetrySchedule.Quick;
+
+        /// <summary>
+        /// How long the last save of a run that has not finished keeps trying. Nothing repeats it, so
+        /// it waits longer; a save that still fails is reported in <see cref="SearchOutcome.CheckpointError"/>
+        /// and can be tried again with <see cref="SearchSession.RetryFinalSave"/>.
+        /// </summary>
+        public RetrySchedule FinalRetry = RetrySchedule.Patient;
     }
 
     /// <summary>
@@ -133,22 +153,155 @@ namespace SeedLab.Search.Execution
         /// <summary>The checkpoint an earlier build would have used for a query, in <see cref="LegacyRoot"/>.</summary>
         public static string LegacyPath(string queryHash) => PathIn(LegacyRoot, queryHash);
 
-        /// <summary>The kept-set snapshot that travels with a checkpoint.</summary>
+        /// <summary>
+        /// The kept-set snapshot that travels with a checkpoint: its first generation,
+        /// <c>&lt;ckpt&gt;.top</c>, the one a run's first save writes. The second is
+        /// <see cref="SecondSnapshotPathFor"/>.
+        /// </summary>
         public static string SnapshotPathFor(string checkpointPath) => checkpointPath + ".top";
 
+        /// <summary>The snapshot's second generation, <c>&lt;ckpt&gt;.top2</c>.</summary>
+        public static string SecondSnapshotPathFor(string checkpointPath) => checkpointPath + ".top2";
+
+        /// <summary>Both generations of a checkpoint's snapshot, first then second.</summary>
+        public static IReadOnlyList<string> SnapshotGenerations(string checkpointPath) =>
+            new[] { SnapshotPathFor(checkpointPath), SecondSnapshotPathFor(checkpointPath) };
+
         /// <summary>
-        /// Deletes <c>&lt;ckpt&gt;.tmp</c> orphans left by a kill during a save, beside the checkpoint
-        /// and in the run's checkpoints directory (<see cref="Root"/> when none is given). Returns what
-        /// it removed, so the run can say so rather than tidying up in secret.
+        /// Every file a checkpoint can have beside it: the checkpoint, both snapshot generations, and
+        /// the temp file of each.
+        /// </summary>
+        public static IReadOnlyList<string> FilesOf(string checkpointPath) => new[]
+        {
+            checkpointPath, checkpointPath + ".tmp",
+            SnapshotPathFor(checkpointPath), SnapshotPathFor(checkpointPath) + ".tmp",
+            SecondSnapshotPathFor(checkpointPath), SecondSnapshotPathFor(checkpointPath) + ".tmp",
+        };
+
+        /// <summary>
+        /// The snapshot generation the next save writes: whichever of the two
+        /// <paramref name="committed"/> - the one the checkpoint on disk names - is not.
+        ///
+        /// <para><b>Why two generations</b> (2026-09-24). A bounded run's checkpoint and its snapshot are
+        /// two files, and they used to be replaced one after the other under one name each: the
+        /// snapshot first, then the checkpoint. A save whose checkpoint rename failed - another
+        /// program had the file open - or a kill between the two renames left a NEWER snapshot beside
+        /// an OLDER checkpoint, and a resume then re-ran the blocks between them into a set that
+        /// already held their results. Measured: 12 records of 50 duplicated, 12 of the right ones
+        /// missing, and a report of "top 50 of 60,000 matches; 71,022 were not kept". Writing each
+        /// snapshot where the checkpoint on disk does not look makes the checkpoint's rename the only
+        /// moment the pair changes: before it, the old checkpoint still names the old snapshot,
+        /// untouched; after it, the new names the new.</para>
+        /// </summary>
+        public static string NextSnapshotPath(string checkpointPath, string? committed) =>
+            committed != null && SamePath(committed, SnapshotPathFor(checkpointPath))
+                ? SecondSnapshotPathFor(checkpointPath)
+                : SnapshotPathFor(checkpointPath);
+
+        /// <summary>
+        /// The snapshot the checkpoint on disk at <paramref name="checkpointPath"/> names, or null when
+        /// there is no checkpoint, it names none, or it cannot be read. Never throws.
+        /// </summary>
+        public static string? PeekKeptSnapshot(string checkpointPath)
+        {
+            try
+            {
+                return File.Exists(checkpointPath) ? Checkpoint.Load(checkpointPath).KeptSnapshot : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The snapshot the checkpoint on disk at <paramref name="checkpointPath"/> names, for a save
+        /// that is about to write the OTHER generation: null when there is no checkpoint, it names none,
+        /// or it is not a checkpoint at all (it does not parse) - but a checkpoint that is there and
+        /// cannot be read because another program holds it is retried on <paramref name="retry"/> and
+        /// then thrown as a <see cref="FileAccessException"/> naming it.
+        ///
+        /// <para><b>Why not <see cref="PeekKeptSnapshot"/></b> (review of 2026-09-24). "Cannot read it"
+        /// is not "it names nothing". A save that took the one for the other wrote the first generation,
+        /// <c>&lt;ckpt&gt;.top</c> - which was, half the time, the very snapshot the unreadable
+        /// checkpoint named - and the checkpoint's own rename then failed against the same holder:
+        /// measured, a checkpoint at block 617 naming a <c>.top</c> now at block 722, and the next
+        /// <c>--resume</c> refused with "delete everything and start again". Not knowing which
+        /// generation is safe to write, the save writes neither, and fails like any other held file.</para>
+        /// </summary>
+        public static string? CommittedSnapshot(string checkpointPath, RetrySchedule? retry = null,
+                                                Action<RetryAttempt>? onAttempt = null)
+        {
+            try
+            {
+                return FileRetry.Run(checkpointPath, "save",
+                    () => File.Exists(checkpointPath) ? Checkpoint.Load(checkpointPath).KeptSnapshot : null,
+                    retry, onAttempt);
+            }
+            catch (FileAccessException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or JsonException
+                                           or KeyNotFoundException or InvalidOperationException or FormatException)
+            {
+                // Gone since File.Exists, or not a checkpoint this build can read: it names nothing a
+                // resume could use, so either generation may be written.
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Reads the kept set a checkpoint names, and refuses it unless it is from the same moment as
+        /// the checkpoint: its <c>next_block</c> (written since 2026-09-24) must be the checkpoint's,
+        /// and its match count must be the checkpoint's <c>seeds_passed</c>. A snapshot from before the
+        /// field existed is checked on the count alone - which is what the pair a failed save left
+        /// behind (a newer snapshot beside an older checkpoint) always gets wrong.
+        /// </summary>
+        public static BoundedResultSet LoadKeptSet(Checkpoint c, int keep)
+        {
+            string snapshot = c.KeptSnapshot ?? throw new InvalidOperationException("the checkpoint names no kept-results snapshot");
+            BoundedResultSet set = BoundedResultSet.LoadSnapshot(snapshot, keep);
+            bool blockDiffers = set.SnapshotNextBlock >= 0 && set.SnapshotNextBlock != c.NextBlock;
+            if (blockDiffers || set.TotalMatches != c.SeedsPassed)
+            {
+                string ckpt = c.LoadedFrom ?? "the checkpoint";
+                throw new InvalidOperationException(
+                    "cannot resume this bounded run: its kept-results snapshot " + snapshot + " holds "
+                    + N(set.TotalMatches) + " matches"
+                    + (set.SnapshotNextBlock >= 0 ? " up to block " + N(set.SnapshotNextBlock) : "")
+                    + ", and " + ckpt + " says " + N(c.SeedsPassed) + " matches up to block " + N(c.NextBlock)
+                    + ". The two files are from different moments (a save was interrupted between them), and "
+                    + "resuming them together would repeat some records and lose others. Delete the checkpoint "
+                    + "and its snapshots to run the query again from the beginning.");
+            }
+
+            return set;
+        }
+
+        /// <summary>
+        /// Deletes orphans a kill during a save leaves - <c>&lt;ckpt&gt;.tmp</c>, the temp file of
+        /// either snapshot generation, and a survivor list's <c>.tmp</c> - beside the checkpoint and in
+        /// the run's checkpoints directory (<see cref="Root"/> when none is given). Returns what it
+        /// removed, so the run can say so rather than tidying up in secret.
         /// </summary>
         public static List<string> CleanOrphans(string? checkpointPath, string? checkpointsDirectory = null)
         {
             List<string> removed = new List<string>();
             List<string> dirs = new List<string>();
+            HashSet<string> candidates = new HashSet<string>(
+                OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
             if (checkpointPath != null)
             {
-                string? d = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(checkpointPath));
+                string full = System.IO.Path.GetFullPath(checkpointPath);
+                string? d = System.IO.Path.GetDirectoryName(full);
                 if (!string.IsNullOrEmpty(d)) dirs.Add(d);
+
+                // This checkpoint's own temps by name, whatever --checkpoint called it.
+                foreach (string p in FilesOf(full))
+                {
+                    if (p.EndsWith(".tmp", StringComparison.Ordinal) && File.Exists(p)) candidates.Add(p);
+                }
             }
 
             // The run's own cache root, not the default one: a run given --cache-dir has nothing to
@@ -161,48 +314,14 @@ namespace SeedLab.Search.Execution
             foreach (string dir in dirs)
             {
                 if (!Directory.Exists(dir)) continue;
-                string[] files;
                 try
                 {
-                    files = Directory.GetFiles(dir, "*.ckpt.tmp");
-                }
-                catch (IOException)
-                {
-                    continue;
-                }
-
-                foreach (string f in files)
-                {
-                    // Only ours, and only if it is not being written right now: a .tmp younger than a
-                    // minute may belong to another vseed that is mid-save.
-                    try
+                    // Since 2026-09-24 the snapshot temps too: "*.ckpt.tmp" never matched
+                    // "<name>.ckpt.top.tmp", so a snapshot save that failed left its temp for good.
+                    foreach (string pattern in new[] { "*.ckpt.tmp", "*.ckpt.top.tmp", "*.ckpt.top2.tmp", "*.survivors.tmp" })
                     {
-                        if (DateTime.UtcNow - File.GetLastWriteTimeUtc(f) < TimeSpan.FromMinutes(1)) continue;
-                        File.Delete(f);
-                        removed.Add(f);
+                        foreach (string f in Directory.GetFiles(dir, pattern)) candidates.Add(f);
                     }
-                    catch (IOException)
-                    {
-                    }
-                    catch (UnauthorizedAccessException)
-                    {
-                    }
-                }
-            }
-
-            return removed;
-        }
-
-        /// <summary>Deletes a finished run's checkpoint, its temp file and its kept-set snapshot.</summary>
-        public static void Retire(string? checkpointPath)
-        {
-            if (checkpointPath == null) return;
-            foreach (string p in new[] { checkpointPath, checkpointPath + ".tmp",
-                                         SnapshotPathFor(checkpointPath), SnapshotPathFor(checkpointPath) + ".tmp" })
-            {
-                try
-                {
-                    if (File.Exists(p)) File.Delete(p);
                 }
                 catch (IOException)
                 {
@@ -211,7 +330,86 @@ namespace SeedLab.Search.Execution
                 {
                 }
             }
+
+            foreach (string f in candidates)
+            {
+                // Only ours, and only if it is not being written right now: a .tmp younger than a
+                // minute may belong to another vseed that is mid-save.
+                try
+                {
+                    if (DateTime.UtcNow - File.GetLastWriteTimeUtc(f) < TimeSpan.FromMinutes(1)) continue;
+                    File.Delete(f);
+                    removed.Add(f);
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+
+            return removed;
         }
+
+        /// <summary>
+        /// Deletes a finished run's checkpoint, both generations of its kept-set snapshot, and their
+        /// temp files. Returns the files it could not delete - empty when everything went.
+        ///
+        /// <para><b>The checkpoint first</b> (2026-09-24). It is the commit point: once it is gone,
+        /// nothing will resume from the snapshots, so they are litter and go too. When IT cannot be
+        /// deleted - another program has it open - its snapshots are kept with it, because a later
+        /// resume of that pair is still exact (it re-runs the tail into the same file), whereas a
+        /// checkpoint whose snapshot is gone can only be refused. Each delete is retried briefly
+        /// (<see cref="RetrySchedule.Quick"/>) before it counts as failed; this used to swallow every
+        /// failure, and the report then called a finished run's leftover "kept: this run has not
+        /// finished".</para>
+        /// </summary>
+        public static List<string> Retire(string? checkpointPath)
+        {
+            List<string> left = new List<string>();
+            if (checkpointPath == null) return left;
+
+            bool committedGone = TryDelete(checkpointPath);
+            if (!committedGone) left.Add(System.IO.Path.GetFullPath(checkpointPath));
+
+            foreach (string p in FilesOf(checkpointPath))
+            {
+                if (SamePath(p, checkpointPath) || !File.Exists(p)) continue;
+                bool temp = p.EndsWith(".tmp", StringComparison.Ordinal);
+                if (!committedGone && !temp)
+                {
+                    left.Add(System.IO.Path.GetFullPath(p));
+                    continue;
+                }
+
+                if (!TryDelete(p)) left.Add(System.IO.Path.GetFullPath(p));
+            }
+
+            return left;
+        }
+
+        private static bool TryDelete(string path)
+        {
+            try
+            {
+                FileRetry.Run(path, "delete", () =>
+                {
+                    if (File.Exists(path)) File.Delete(path);
+                }, RetrySchedule.Quick);
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        private static string N(long v) => v.ToString("N0", CultureInfo.InvariantCulture);
 
         /// <summary>
         /// Moves a funnel stage-two checkpoint that an earlier build left at <paramref name="legacyPath"/>
@@ -291,7 +489,10 @@ namespace SeedLab.Search.Execution
             {
                 // The legacy pair has not been touched; take back what was written so the new path does
                 // not hold a snapshot with no checkpoint.
-                List<string> written = new List<string> { newPath + ".tmp", SnapshotPathFor(newPath) + ".tmp" };
+                List<string> written = new List<string>
+                {
+                    newPath + ".tmp", SnapshotPathFor(newPath) + ".tmp", SecondSnapshotPathFor(newPath) + ".tmp",
+                };
                 if (copied != null) written.Add(copied);
                 foreach (string p in written)
                 {
@@ -310,8 +511,15 @@ namespace SeedLab.Search.Execution
 
             r.Adopted = true;
             List<string> leftBehind = new List<string>();
+            // The legacy snapshot goes with it when it is one of the legacy checkpoint's own generations
+            // (an earlier build only ever wrote .top; a file of this build's may name .top2), and so
+            // does the other generation, which nothing names.
             List<string> pair = new List<string> { legacyPath };
-            if (legacySnapshot != null && SamePath(legacySnapshot, SnapshotPathFor(legacyPath))) pair.Add(legacySnapshot);
+            foreach (string g in SnapshotGenerations(legacyPath))
+            {
+                bool named = legacySnapshot != null && SamePath(legacySnapshot, g);
+                if (named || File.Exists(g)) pair.Add(g);
+            }
             foreach (string p in pair)
             {
                 try
@@ -331,15 +539,8 @@ namespace SeedLab.Search.Execution
         /// <summary>Copies a file to a temp sibling, flushes it to the device, then renames it into place.</summary>
         private static void CopyDurably(string from, string to)
         {
-            string tmp = to + ".tmp";
-            using (FileStream src = new FileStream(from, FileMode.Open, FileAccess.Read, FileShare.Read))
-            using (FileStream dst = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-            {
-                src.CopyTo(dst);
-                dst.Flush(true);
-            }
-
-            File.Move(tmp, to, overwrite: true);
+            using FileStream src = SharedRead.Open(from);
+            DurableWrite.Stream(to, dst => src.CopyTo(dst), RetrySchedule.Quick, tempPath: to + ".tmp");
         }
 
         /// <summary>Two spellings of one file, compared the way the file system compares them here.</summary>
@@ -371,11 +572,16 @@ namespace SeedLab.Search.Execution
             FileInfo fi = new FileInfo(resultsPath);
             if (fi.Length <= completeLength) return 0;
             long discarded = fi.Length - completeLength;
-            using (FileStream fs = new FileStream(resultsPath, FileMode.Open, FileAccess.Write, FileShare.None))
+
+            // Exclusive, so it fails against ANY other holder of the results file - a viewer, a
+            // spreadsheet. Retried briefly, then named with its cause (2026-09-24) instead of the bare
+            // sharing error that was reported as a bug.
+            FileRetry.Run(resultsPath, "repair", () =>
             {
+                using FileStream fs = new FileStream(resultsPath, FileMode.Open, FileAccess.Write, FileShare.None);
                 fs.SetLength(completeLength);
                 fs.Flush(true);
-            }
+            }, RetrySchedule.Quick);
 
             return discarded;
         }

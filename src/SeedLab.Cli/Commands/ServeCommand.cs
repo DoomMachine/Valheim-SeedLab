@@ -58,8 +58,9 @@ Options:
   --worlds <n>         how many seeds keep a constructed generator alive (default 4)
   --selftest           check the tiles against the game's own texture, start a real server
                        and check that it is on loopback only, refuses a foreign Host, sends
-                       no CORS header, serves nothing outside its content root, and that its
-                       markers and search results match the engines - then exit
+                       no CORS header, refuses a POST from another web page, serves nothing
+                       outside its content root, and that its markers and search results
+                       match the engines - then exit
   --json               with --selftest, machine-readable output
 
 Examples:
@@ -115,6 +116,34 @@ Examples:
                 Runtime = rt.Context,
                 Log = Console.Out.WriteLine,
             };
+
+            // ---- the folders the page will write in, checked at start (2026-09-24) -----------------
+            //
+            // The tile cache and the results folder a run names a file in; the checkpoints folder is one
+            // of the cache root's own, already checked when the session started. A failure here is a
+            // WARNING, not a question: the map and the seed panel need none of these, a tile cache that
+            // cannot be written runs from memory, and every search checks again before it starts and
+            // refuses by name. The results folder is not created - the server promises to create it only
+            // when a run names a file - so the folder above it is checked instead. Made after the
+            // options, because building them loads the location data, and the integrity half of the
+            // line counts the data files that load verified.
+            AccessGate access = new AccessGate(rt)
+                .Folder(System.IO.Path.Combine(rt.Cache.Tiles, "v" + Verified.WorldGenVersion), create: true)
+                .Folder(opt.ResolvedResultsDirectory)
+                .Run();
+            List<string> startLines = new List<string> { access.Summary() };
+            rt.Log.Info("start    " + startLines[0]);
+            foreach (SeedLab.Runtime.Storage.AccessResult r in access.Results)
+            {
+                if (r.Ok) continue;
+                startLines.Add("warning: " + r.Message + " "
+                               + (r.Path.StartsWith(rt.Cache.Tiles, StringComparison.OrdinalIgnoreCase)
+                                   ? "The map still works; its tiles are kept in memory only."
+                                   : "The map still works; a search that writes a results file is refused until it is fixed."));
+                rt.Log.Warn("start    " + r.Message);
+            }
+
+            opt.StartupLines = startLines;
 
             Console.Out.WriteLine();
             Console.Out.WriteLine("vseed " + Verified.EngineVersion + " - verified against Valheim "
@@ -893,6 +922,9 @@ Examples:
                 });
             }
 
+            // ---- the replay a tab that rejoins a run is handed -----------------------------------------
+            failures += ReplayCheck(rows);
+
             // ---- 5. the live server: the security properties, and the two new surfaces -------------
             failures += LiveChecks(rows, rt);
 
@@ -931,6 +963,53 @@ Examples:
             }
 
             return failures == 0 ? ExitCodes.Ok : ExitCodes.CheckFailed;
+        }
+
+        /// <summary>
+        /// The events a tab that rejoins a run is handed: a run past the replay cap still replays every
+        /// warning and its end (review of 2026-09-24). The cap used to apply to every event, so a run that
+        /// had streamed 4,000 results - under three minutes of a cheap query - lost its later warnings and
+        /// its <c>done</c> from the replay, and a page that reloaded never saw the failed last save and
+        /// reconnected for as long as it stayed open.
+        /// </summary>
+        private static int ReplayCheck(List<string[]> rows)
+        {
+            SeedLab.Web.Search.SearchEventHub hub = new SeedLab.Web.Search.SearchEventHub();
+            hub.Publish(new SeedLab.Web.Search.SearchEvent("started", new { id = "s0" }));
+            for (int i = 0; i <= SeedLab.Web.Search.SearchEventHub.MaxHistory; i++)
+            {
+                hub.Publish(new SeedLab.Web.Search.SearchEvent("result", new { seed = i }));
+                if (i % 100 == 0) hub.Publish(new SeedLab.Web.Search.SearchEvent("top", new { upTo = i }));
+            }
+
+            hub.Publish(new SeedLab.Web.Search.SearchEvent("warning", new { message = "the checkpoint could not be saved" }));
+            hub.Publish(new SeedLab.Web.Search.SearchEvent("progress", new { scanned = 1 }));
+            hub.Publish(new SeedLab.Web.Search.SearchEvent("done", new { status = "done" }));
+            hub.Close();
+
+            int results = 0, tops = 0, warnings = 0, dones = 0;
+            string first = "", last = "";
+            foreach (SeedLab.Web.Search.SearchEvent e in hub.Read(CancellationToken.None).ToBlockingEnumerable())
+            {
+                if (first.Length == 0) first = e.Type;
+                last = e.Type;
+                if (e.Type == "result") results++;
+                else if (e.Type == "top") tops++;
+                else if (e.Type == "warning") warnings++;
+                else if (e.Type == "done") dones++;
+            }
+
+            bool ok = first == "started" && last == "done" && dones == 1 && warnings == 1 && tops == 1
+                      && results == SeedLab.Web.Search.SearchEventHub.MaxHistory && hub.DroppedFromHistory == 1;
+            rows.Add(new[]
+            {
+                "search replay past its cap keeps every warning and the end",
+                ok ? "PASS" : "FAIL",
+                Out.N(SeedLab.Web.Search.SearchEventHub.MaxHistory + 1) + " results, 41 tables, a warning, done -> replayed "
+                + Out.N(results) + " results (" + hub.DroppedFromHistory + " dropped), " + tops + " table (the latest), "
+                + warnings + " warning, " + dones + " done, last event '" + last + "'",
+            });
+            return ok ? 0 : 1;
         }
 
         // -------------------------------------------------------------------------------------------
@@ -997,6 +1076,7 @@ Examples:
                 failures += CheckLoopbackOnly(rows, bound.Port);
                 failures += CheckHostHeader(rows, http, baseUrl);
                 failures += CheckNoCors(rows, http, baseUrl);
+                failures += CheckCrossSitePost(rows, http, baseUrl);
                 failures += CheckContentRoot(rows, http, baseUrl);
                 failures += CheckLocations(rows, http, baseUrl);
                 failures += CheckSearch(rows, http, baseUrl);
@@ -1148,6 +1228,67 @@ Examples:
                 paths.Length * 2 + " requests with a foreign Origin, " + bad.Count + " CORS headers back; "
                 + csp + " of " + paths.Length + " carried a Content-Security-Policy"
                 + (bad.Count > 0 ? "; " + string.Join(", ", bad) : ""),
+            });
+            return ok ? 0 : 1;
+        }
+
+        /// <summary>
+        /// A POST from another web page is refused before any route runs (2026-09-24). Loopback and the
+        /// Host check do not stop it - a page on any site the user visits can send a form or a fetch to
+        /// 127.0.0.1, and the browser puts the target's own host in the Host header - and Stop and
+        /// "Retry saving" take no body, so nothing else stood in its way.
+        ///
+        /// <para>The discriminator is 403 against 404: the run id asked for does not exist, so a request
+        /// the guard lets through reaches its route and gets 404, and one it refuses never gets there.
+        /// Refused: a foreign Origin, "Origin: null", and <c>Sec-Fetch-Site: cross-site</c> or
+        /// <c>same-site</c> with no Origin, on Stop, "Retry saving" and the search itself. Let through:
+        /// this server's own Origin with <c>same-origin</c> (the page), and a request with neither header
+        /// (curl, a script, this self-test's other checks).</para>
+        /// </summary>
+        private static int CheckCrossSitePost(List<string[]> rows, HttpClient http, string baseUrl)
+        {
+            (string Path, string? Origin, string? Site, bool Refuse)[] probes =
+            {
+                ("/api/search/s0/cancel", "https://evil.example", null, true),
+                ("/api/search/s0/retry-save", "https://evil.example", "cross-site", true),
+                ("/api/search/s0/retry-save", "null", null, true),
+                ("/api/search/s0/cancel", null, "cross-site", true),
+                ("/api/search/s0/retry-save", null, "same-site", true),
+                ("/api/search/s0/cancel", "http://127.0.0.1:1", null, true),
+                ("/api/search", "https://evil.example", "cross-site", true),
+                ("/api/search/s0/cancel", baseUrl, "same-origin", false),
+                ("/api/search/s0/retry-save", baseUrl, "same-origin", false),
+                ("/api/search/s0/retry-save", null, null, false),
+                ("/api/search/s0/cancel", null, "none", false),
+            };
+
+            int wrong = 0;
+            List<string> detail = new List<string>();
+            foreach ((string path, string? origin, string? site, bool refuse) in probes)
+            {
+                using HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, baseUrl + path)
+                {
+                    Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
+                };
+                if (origin != null) req.Headers.TryAddWithoutValidation("Origin", origin);
+                if (site != null) req.Headers.TryAddWithoutValidation("Sec-Fetch-Site", site);
+                using HttpResponseMessage res = http.Send(req);
+                bool refused = res.StatusCode == System.Net.HttpStatusCode.Forbidden;
+                if (refused != refuse)
+                {
+                    wrong++;
+                    detail.Add(path + " Origin " + (origin ?? "-") + " Sec-Fetch-Site " + (site ?? "-") + " -> " + (int)res.StatusCode);
+                }
+            }
+
+            bool ok = wrong == 0;
+            rows.Add(new[]
+            {
+                "a POST from another web page is refused",
+                ok ? "PASS" : "FAIL",
+                probes.Length + " POSTs to Stop, Retry saving and the search, " + (probes.Length - wrong)
+                + " answered as expected (7 refused with 403, 4 reaching their route)"
+                + (detail.Count > 0 ? "; wrong: " + string.Join(", ", detail) : ""),
             });
             return ok ? 0 : 1;
         }
@@ -1526,6 +1667,45 @@ Examples:
                 rows.Add(new[] { "search panel vs the engine", "FAIL", "the stream did not finish cleanly (status '" + status + "')" });
                 return 1;
             }
+
+            // "Retry saving" on this real, finished run: the page's own request (its Origin, same-origin)
+            // is answered - there is nothing to save again, so "saved" - and the same request from
+            // another page is refused before it reaches the run.
+            int retryStatus, foreignStatus;
+            bool savedFlag = false;
+            using (HttpRequestMessage mine = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/api/search/" + id + "/retry-save"))
+            {
+                mine.Headers.TryAddWithoutValidation("Origin", baseUrl);
+                mine.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
+                using HttpResponseMessage res = http.Send(mine);
+                retryStatus = (int)res.StatusCode;
+                string b = res.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                try
+                {
+                    using System.Text.Json.JsonDocument d = System.Text.Json.JsonDocument.Parse(b);
+                    savedFlag = d.RootElement.TryGetProperty("saved", out System.Text.Json.JsonElement sv) && sv.GetBoolean();
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                }
+            }
+
+            using (HttpRequestMessage theirs = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/api/search/" + id + "/retry-save"))
+            {
+                theirs.Headers.TryAddWithoutValidation("Origin", "https://evil.example");
+                using HttpResponseMessage res = http.Send(theirs);
+                foreignStatus = (int)res.StatusCode;
+            }
+
+            bool retryOk = retryStatus == 200 && savedFlag && foreignStatus == 403;
+            rows.Add(new[]
+            {
+                "search panel: Retry saving, from the page only",
+                retryOk ? "PASS" : "FAIL",
+                "the page's own request on a finished run -> " + retryStatus + (savedFlag ? " saved (nothing was missing)" : " NOT saved")
+                + "; the same request from another origin -> " + foreignStatus,
+            });
+            if (!retryOk) return 1;
 
             // An empty Block size box must reach the query file as NO block_size - so 'vseed search' on
             // the exported file sizes it automatically too, and a --resume keeps the checkpoint's - and

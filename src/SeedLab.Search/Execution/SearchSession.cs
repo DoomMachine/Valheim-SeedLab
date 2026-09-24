@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using SeedLab.Runtime.Execution;
+using SeedLab.Runtime.Storage;
 using SeedLab.Search.Criteria;
 using SeedLab.Search.Evaluation;
 using SeedLab.Search.Locations;
@@ -80,6 +81,17 @@ namespace SeedLab.Search.Execution
 
         /// <summary>Bytes of a torn results tail the resume discarded, or 0.</summary>
         public long RepairedBytes;
+
+        /// <summary>
+        /// How long a checkpoint save on the interval keeps trying while another program holds the
+        /// file (<see cref="CheckpointPolicy.PeriodicRetry"/>). A test shortens it; a front end leaves it.
+        /// </summary>
+        public RetrySchedule PeriodicRetry = RetrySchedule.Quick;
+
+        /// <summary>The same for the last save of a run that did not finish (<see cref="CheckpointPolicy.FinalRetry"/>).</summary>
+        public RetrySchedule FinalRetry = RetrySchedule.Patient;
+
+        private SearchRun? _run;
 
         private ILocationOracle _oracle = null!;
         private string _engine = "";
@@ -515,7 +527,9 @@ namespace SeedLab.Search.Execution
 
                 if (!Output.KeepAll && c.KeptSnapshot != null && File.Exists(c.KeptSnapshot))
                 {
-                    _restored = BoundedResultSet.LoadSnapshot(c.KeptSnapshot, Output.Keep);
+                    // Only a snapshot of the checkpoint's own moment (2026-09-24): a pair a failed or
+                    // killed save of an earlier build left out of step is refused here, by name.
+                    _restored = CheckpointStore.LoadKeptSet(c, Output.Keep);
                 }
                 else if (!Output.KeepAll && Output.Path != null && c.SeedsPassed > 0)
                 {
@@ -540,11 +554,18 @@ namespace SeedLab.Search.Execution
             return sink;
         }
 
-        /// <summary>Runs the scan with everything this session decided.</summary>
+        /// <summary>
+        /// Runs the scan with everything this session decided. <paramref name="onWarning"/> hears each
+        /// warning as it happens (<see cref="RunOptions.OnWarning"/>); a failed last save does not
+        /// throw but comes back in <see cref="SearchOutcome.CheckpointError"/>, for
+        /// <see cref="RetryFinalSave"/>.
+        /// </summary>
         public SearchOutcome Run(IResultSink? sink, Action<Progress>? onProgress, TimeSpan wall,
-                                 TimeSpan checkpointEvery, Action<SearchRun>? configure = null)
+                                 TimeSpan checkpointEvery, Action<SearchRun>? configure = null,
+                                 Action<string>? onWarning = null)
         {
             SearchRun run = new SearchRun(Compiled, Plan, _oracle, Threads);
+            _run = run;
             if (Screen != null)
             {
                 CompiledQuery screen = Screen;
@@ -566,9 +587,12 @@ namespace SeedLab.Search.Execution
                     MinRunTime = TimeSpan.Zero,
                     SnapshotPath = Output.KeepAll ? null : CheckpointStore.SnapshotPathFor(CheckpointPath),
                     DeleteOnComplete = true,
+                    PeriodicRetry = PeriodicRetry,
+                    FinalRetry = FinalRetry,
                 },
                 Wall = wall,
                 OnProgress = onProgress,
+                OnWarning = onWarning,
                 Estimator = Estimator,
                 MaxResultBytes = Output.MaxBytes,
                 OnLimit = Output.OnLimit,
@@ -577,6 +601,17 @@ namespace SeedLab.Search.Execution
                 ResumedSeconds = _resumedSeconds,
             });
         }
+
+        /// <summary>
+        /// Tries again the last save of this session's latest run, when it failed
+        /// (<see cref="SearchOutcome.CheckpointError"/>): the identical checkpoint and kept set, as
+        /// often as a front end's Retry is pressed. True when the checkpoint is on disk now (the
+        /// outcome's error is then cleared and its <see cref="SearchOutcome.CheckpointPath"/> set), or
+        /// when there was nothing to retry; false, with the outcome's error replaced by the new
+        /// diagnosis, when it failed again. <paramref name="retry"/> defaults to
+        /// <see cref="RetrySchedule.Quick"/>.
+        /// </summary>
+        public bool RetryFinalSave(RetrySchedule? retry = null) => _run?.RetryFinalSave(retry) ?? true;
 
         /// <summary>The line a report must print about the results, never "N matches" when N was capped.</summary>
         public string ResultLine(SearchOutcome outcome)
