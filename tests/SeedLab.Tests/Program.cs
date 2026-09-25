@@ -46,6 +46,13 @@ namespace SeedLabTests
             // dotnet run -c Release --project tests\SeedLab.Tests -- numerics-tripwire
             if (args.Length > 0 && args[0] == "numerics-tripwire") return NumericsTripwire.Run(args);
 
+            // The river-points golden: pre-generation's output bit for bit, cell order included, written
+            // before a change and checked after it (and a self-test of the golden itself):
+            // dotnet run -c Release --project tests\SeedLab.Tests -- river-golden --write <file> [--seeds 64]
+            // dotnet run -c Release --project tests\SeedLab.Tests -- river-golden --check <file>
+            // dotnet run -c Release --project tests\SeedLab.Tests -- river-golden --self-test
+            if (args.Length > 0 && args[0] == "river-golden") return RiverGolden.Run(args);
+
             string world = (args.Length > 0 && !args[0].StartsWith("-")) ? args[0] : "asdasdasd";
             int seed = world switch
             {
