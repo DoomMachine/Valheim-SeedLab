@@ -21,7 +21,7 @@
 #
 # Rules this script keeps:
 #   - Every action first does whatever earlier step has not happened yet, and says so.
-#   - It refuses to run as root, whatever the action, and never runs sudo. The only step that can
+#   - It refuses to run as root, for every action but help, and never runs sudo. The only step that can
 #     need administrator rights is installing Microsoft's .NET SDK system-wide, which you do yourself
 #     if you choose it.
 #   - It asks before it removes anything or installs anything, and before it stops a running search

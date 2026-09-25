@@ -21,7 +21,7 @@ your computer's safety.
 ## Before you start
 
 **Do not run any of these as administrator (Windows) or with sudo / as root (macOS, Linux).** The
-scripts refuse, whatever the action (Stop and Status included). As administrator, Windows may run a script as a *different* account - the one
+scripts refuse every action but Help, which only prints text (Stop and Status included). As administrator, Windows may run a script as a *different* account - the one
 whose password was typed into the prompt - and SeedLab would then be registered for that account
 instead of yours. Nothing SeedLab does needs administrator rights, with one exception: installing
 Microsoft's .NET SDK for the whole computer. On Windows, when you choose that, Windows itself asks

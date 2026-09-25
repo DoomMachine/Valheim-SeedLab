@@ -18,7 +18,7 @@
 #
 # Rules this script keeps:
 #   - Every action first does whatever earlier step has not happened yet, and says so.
-#   - It refuses to run as administrator (see Assert-NotElevated), whatever the action. The only step
+#   - It refuses to run as administrator (see Assert-NotElevated), for every action but help. The only step
 #     that needs administrator rights is installing Microsoft's .NET SDK, and Windows asks for that itself.
 #   - It asks before it removes anything or installs anything, and before it stops a running search or
 #     any program other than SeedLab's web server. "stop" stops the web server at once when no search

@@ -77,6 +77,6 @@ If you only want to use SeedLab, you do not need any of this: the repository's o
 | the Python bytecode cache (`.pyc`) | build output |
 
 In the copies, personal install details were replaced by the placeholders above or removed: the Steam
-account folder and install location, character names, world UIDs, the names of other running
+account folder and install location, character names, world UIDs, the names of the author's other
 programs, and the author's local paths. Hardware and the OS version are kept where they label
 a measurement.

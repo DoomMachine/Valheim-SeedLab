@@ -228,7 +228,7 @@ follow-up asked for: 11 files of the repo's `.claude\` copies brought up to this
 2026-09-25 and scrubbed to the first publication's standard. Two first-pass scrubs were reversed on the
 user's decision (the test-world names `ClaudeTestWold2` and `ClaudeTest` stay, and so do time zones);
 valheim-modding `publishing.md` and the release-auditor agent are left out and listed in the repo's
-`.claude\README.md`. It was committed as `86dec58` and amended before the push: the message was reworded (it
+`.claude\README.md`. It was committed once and amended before the push: the message was reworded (it
 claimed no local paths, and a few passages still name folders on the author's machine; audit note 5) and the
 two published history lines the push would make false were closed (note 4). The pre-push audit
 found no blockers: 557 blobs across all commits scanned as

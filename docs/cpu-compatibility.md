@@ -211,7 +211,7 @@ only safeguard; see [limits](limits.md)).
 | real gather costs, licence clocks, Zen 4's 2 x 256 execution | no | machine reports from those CPUs |
 | hybrid P/E scheduling | **partly** (i7-12700K, 8P+4E: the biome grid scaled 8.8x at 10 threads and 13.5x at 20) | a profile per core type |
 | an Intel CPU of another vendor's family than the reference | **yes** (i7-12700K Alder Lake: all 93 checks at four levels) | machine report |
-| Windows 11's `ucrtbase.dll` | **partly** (25H2, 10.0.26100.9444: 93 libm values, 49 `WorldAngle` samples, 7 world fingerprints equal) | `libm-dense` in a machine report built from this branch |
+| Windows 11's `ucrtbase.dll` | **partly** (25H2, 10.0.26100.9444: 93 libm values, 49 `WorldAngle` samples, 7 world fingerprints equal) | `libm-dense` in a machine report built from `e4b9079` or later |
 | Linux, macOS, arm64 | no | see [limits](limits.md) |
 | any CPU under Intel SDE's emulation | no | approved, not yet run |
 
