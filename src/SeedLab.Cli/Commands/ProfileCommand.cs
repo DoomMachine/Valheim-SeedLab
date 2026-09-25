@@ -61,11 +61,24 @@ what
                            structure counts, t5 = the location oracle's whole world build
   --grid <G>[,<G>...]      t2/t3 sampling grid(s): G384, G192, G96, G24, G12 (default G384)
   --prefix <n>[,<n>...]    t5: ordered location entries to place (default 22; 183 = all of them)
-  --seeds <n>              seeds per section (default 64; overrides the battery's counts)
+  --seeds <n>              seeds per section (default 64; overrides the battery's counts). Each
+                           worker count runs the section again with the same n seeds
   --key <0x...>            the seed order's key (default 0xA17A25EED10C5117)
   --from <index>           first index into the order (default 0)
-  --threads <n>[,<n>...]   worker counts to measure at, e.g. 1,8,16 (default 1)
+  --threads <n>[,<n>...]   worker counts to measure at, e.g. 1,8,16 or 1,max (max = every logical
+                           core this machine has; default 1)
   --warmup <n>             seeds each worker runs and discards first (default 3)
+
+how many seeds
+  --saturate <seconds>     size every measurement to keep all its workers busy for about this long:
+                           a short uncounted pilot per section and worker count measures the rate,
+                           then the count is max(32 per worker, rate x seconds), rounded up to a
+                           multiple of the worker count. The plan and the estimated total time are
+                           printed before anything is measured. Not with --seeds
+  --plan <profile.json>    replay an earlier profile's exact sections, worker counts and seeds (its
+                           key, first index and warm-up too), so a before/after comparison measures
+                           the same worlds. Only a seedlab-profile/2 document is a plan. Not with
+                           --tier, --grid, --prefix, --seeds, --threads or --saturate
 
 how
   --counters               also count per-point events (base heights, world angles, river
@@ -80,10 +93,18 @@ how
   --quiet-baseline <s>     watch the machine for s seconds before measuring (default 30; 0 skips)
 
 output
-  --out <file.json>        write the profile, schema seedlab-profile/1 (not inside a Valheim save
+  --out <file.json>        write the profile, schema seedlab-profile/2 (not inside a Valheim save
                            folder, Steam's userdata or the game's own install folders)
   --per-seed               with --out: also <file>-seeds.csv, one row per measured seed
   --json                   the document on stdout
+
+Besides the phases, every measurement reports what it used: processor time (the whole process,
+the workers themselves measured on their own threads, and the rest - garbage collection, the JIT,
+the runtime), how busy the machine's cores were, the steady state (the stretch in which every
+worker was busy, its rate, and what the start and the tail cost), memory sampled every 200 ms
+(working set, private bytes, the garbage collector's heap and what it has committed) with the
+last collection's details, and the bytes the process read and wrote. The profile itself writes
+nothing while it measures: --out is written once at the end, beside vseed's own session log.
 
 The profile's own --threads is a list; the mode's worker share does not apply. Every requested
 count is still checked against the memory guard.";
@@ -164,6 +185,24 @@ count is still checked against the memory guard.";
             public string? Out;
             public bool PerSeed;
             public string TierText = "all";
+            public double? Saturate;
+            public string? PlanPath;
+            public bool KeyGiven, FromGiven, WarmupGiven;
+        }
+
+        /// <summary>One measurement to make: a section at a worker count, with its own seed count.</summary>
+        internal sealed class ProfileConfig
+        {
+            public ProfileConfig(ProfileSection spec, int workers, SectionSizing sizing)
+            {
+                Spec = spec;
+                Workers = workers;
+                Sizing = sizing;
+            }
+
+            public ProfileSection Spec { get; }
+            public int Workers { get; }
+            public SectionSizing Sizing { get; }
         }
 
         public static int Run(Args a, Out o, CliRuntime rt)
@@ -194,8 +233,12 @@ count is still checked against the memory guard.";
             PilotSeedOrder.Verify();
             string? outPath = opt.Out == null ? null : ResolveOut(opt.Out);
 
+            // What to measure: the battery or the options, or an earlier profile's exact sections.
+            string? planSha = null;
+            List<ProfileConfig> configs = opt.PlanPath != null ? ConfigsFromPlan(opt, out planSha) : FixedConfigs(opt);
+
             DumpedLocationOracle? oracle = null;
-            bool needsOracle = opt.Sections.Exists(s => s.Tier == "t5");
+            bool needsOracle = configs.Exists(c => c.Spec.Tier == "t5");
             if (needsOracle)
             {
                 // Fails closed like every location answer: a table from another build places other worlds.
@@ -204,12 +247,13 @@ count is still checked against the memory guard.";
 
             try
             {
-                CheckMemory(rt, opt);
+                CheckMemory(rt, configs);
                 if (!o.Json)
                 {
                     rt.PrintStartup("Profile");
-                    Console.Error.WriteLine("  profiling " + opt.Sections.Count + " section(s) at " + string.Join(", ", opt.WorkerCounts)
-                                            + " worker(s); counters " + (PhaseClock.CountersOn ? "ON" : "off"));
+                    Console.Error.WriteLine("  profiling " + configs.Count + " measurement(s) at " + string.Join(", ", opt.WorkerCounts)
+                                            + " worker(s); counters " + (PhaseClock.CountersOn ? "ON" : "off")
+                                            + (opt.PlanPath != null ? "; replaying " + opt.PlanPath : ""));
                 }
 
                 ProfileRun run = new ProfileRun
@@ -223,6 +267,9 @@ count is still checked against the memory guard.";
                     TierText = opt.TierText,
                     Machine = ProfileReport.Machine(rt),
                     Build = ProfileReport.Build(oracle),
+                    SaturateSeconds = opt.Saturate,
+                    PlanFile = opt.PlanPath,
+                    PlanSha256 = planSha,
                 };
 
                 // ---- hygiene: a baseline, then a probe for the whole run -----------------------------
@@ -241,14 +288,14 @@ count is still checked against the memory guard.";
                 }
                 else
                 {
-                    foreach (int workers in opt.WorkerCounts)
+                    if (opt.Saturate.HasValue) Saturate(configs, opt, oracle, o.Json, run);
+                    foreach (ProfileConfig c in configs)
                     {
-                        foreach (ProfileSection spec in opt.Sections)
-                        {
-                            if (!o.Json) Console.Error.WriteLine("  " + spec.Label + " x" + spec.Seeds + " at " + workers + " worker(s)...");
-                            run.Sections.Add(RunSection(spec, workers, opt.Warmup, opt.Key, opt.From, oracle,
-                                                        attachSink: true, recordRows: true));
-                        }
+                        if (!o.Json) Console.Error.WriteLine("  " + c.Spec.Label + " x" + c.Spec.Seeds + " at " + c.Workers + " worker(s)...");
+                        SectionResult res = RunSection(c.Spec, c.Workers, opt.Warmup, opt.Key, opt.From, oracle,
+                                                       attachSink: true, recordRows: true, resources: true);
+                        res.Sizing = c.Sizing;
+                        run.Sections.Add(res);
                     }
                 }
 
@@ -294,7 +341,12 @@ count is still checked against the memory guard.";
             int? seeds = a.Get("seeds") is string s ? ParsePositive(s, "seeds") : null;
             if (seeds.HasValue && seeds.Value > 1_000_000) throw new CliException("--seeds is capped at 1,000,000 per section.");
 
-            if (a.Get("key") is string k) opt.Key = ParseKey(k);
+            if (a.Get("key") is string k)
+            {
+                opt.Key = ParseKey(k);
+                opt.KeyGiven = true;
+            }
+
             if (a.Get("from") is string f)
             {
                 if (!long.TryParse(f, NumberStyles.Integer, CultureInfo.InvariantCulture, out long from) || from < 0 || from > uint.MaxValue)
@@ -303,16 +355,51 @@ count is still checked against the memory guard.";
                 }
 
                 opt.From = from;
+                opt.FromGiven = true;
             }
 
-            if (a.Get("profile-threads") is string t) opt.WorkerCounts = ParseList(t, "threads", ParsePositive);
+            string? threadsText = a.Get("profile-threads");
+            if (threadsText != null) opt.WorkerCounts = ParseList(threadsText, "threads", ParseWorkers);
             foreach (int w in opt.WorkerCounts)
             {
                 if (w > Args.MaxThreads) throw new CliException("--threads is capped at " + Args.MaxThreads + " here, not " + w + ".");
             }
 
+            opt.WarmupGiven = a.Get("warmup") != null;
             opt.Warmup = a.Int("warmup", 3);
             if (opt.Warmup < 0 || opt.Warmup > 1000) throw new CliException("--warmup must be between 0 and 1000.");
+
+            if (a.Get("saturate") is string sat)
+            {
+                if (!double.TryParse(sat, NumberStyles.Float, CultureInfo.InvariantCulture, out double secs) || !(secs >= 1) || secs > 3600)
+                {
+                    throw new CliException("--saturate takes a number of seconds from 1 to 3600, not '" + sat + "'.");
+                }
+
+                if (seeds.HasValue) throw new CliException("--saturate chooses each measurement's seed count itself; leave --seeds out.");
+                opt.Saturate = secs;
+            }
+
+            opt.PlanPath = a.Get("plan");
+            if (opt.PlanPath != null)
+            {
+                List<string> clash = new List<string>();
+                if (a.Get("tier") != null) clash.Add("--tier");
+                if (grids != null) clash.Add("--grid");
+                if (prefixes != null) clash.Add("--prefix");
+                if (seeds.HasValue) clash.Add("--seeds");
+                if (threadsText != null) clash.Add("--threads");
+                if (opt.Saturate.HasValue) clash.Add("--saturate");
+                if (clash.Count > 0)
+                {
+                    throw new CliException("--plan replays an earlier profile's sections, worker counts and seeds exactly; leave out "
+                                           + string.Join(", ", clash) + ".");
+                }
+
+                if (!File.Exists(opt.PlanPath)) throw new CliException("--plan: no file at " + opt.PlanPath, ExitCodes.NotFound);
+                opt.PlanPath = Path.GetFullPath(opt.PlanPath);
+            }
+
             opt.CountersRequested = a.Flag("counters");
             opt.Overhead = a.Flag("overhead");
             opt.Baseline = a.Get("baseline");
@@ -323,6 +410,18 @@ count is still checked against the memory guard.";
             if (opt.PerSeed && opt.Out == null) throw new CliException("--per-seed writes beside --out; give --out <file.json> as well.");
             if (opt.Baseline != null && !opt.Overhead) throw new CliException("--baseline only means something with --overhead.");
             if (opt.Baseline != null && !File.Exists(opt.Baseline)) throw new CliException("--baseline: no file at " + opt.Baseline, ExitCodes.NotFound);
+
+            if (opt.Overhead && (opt.Saturate.HasValue || opt.PlanPath != null))
+            {
+                throw new CliException("--overhead sizes its own legs; leave out " + (opt.Saturate.HasValue ? "--saturate" : "--plan") + ".");
+            }
+
+            // The plan decides every section; nothing below applies to it.
+            if (opt.PlanPath != null)
+            {
+                opt.TierText = "plan";
+                return opt;
+            }
 
             if (opt.Overhead)
             {
@@ -404,6 +503,13 @@ count is still checked against the memory guard.";
 
             if (r.Count == 0) throw new CliException("--" + name + " needs at least one value.");
             return r;
+        }
+
+        /// <summary>A worker count, or "max" for every logical core this machine has.</summary>
+        private static int ParseWorkers(string text, string name)
+        {
+            if (string.Equals(text.Trim(), "max", StringComparison.OrdinalIgnoreCase)) return Math.Max(1, Environment.ProcessorCount);
+            return ParsePositive(text, name);
         }
 
         private static int ParsePositive(string text, string name)
@@ -532,10 +638,11 @@ count is still checked against the memory guard.";
         }
 
         /// <summary>Every requested worker count must fit the memory guard; the arithmetic is the plan's own.</summary>
-        private static void CheckMemory(CliRuntime rt, Options opt)
+        private static void CheckMemory(CliRuntime rt, List<ProfileConfig> configs)
         {
-            foreach (ProfileSection s in opt.Sections)
+            foreach (ProfileConfig c in configs)
             {
+                ProfileSection s = c.Spec;
                 WorkTier tier = s.Tier switch
                 {
                     "t2" => WorkTier.BiomeGrid,
@@ -543,15 +650,175 @@ count is still checked against the memory guard.";
                     _ => WorkTier.HeightsRivers,
                 };
                 WorkerPlan plan = rt.Plan(tier, s.Tier == "t5" || s.Grid == 0 ? 12.0 : s.Grid);
-                foreach (int w in opt.WorkerCounts)
+                if (c.Workers > plan.MemoryWorkers)
                 {
-                    if (w > plan.MemoryWorkers)
+                    throw new CliException(s.Label + " at " + c.Workers + " workers does not fit the memory guard: it allows "
+                                           + plan.MemoryWorkers + ". Nothing was measured.", ExitCodes.Usage,
+                                           string.Join(Environment.NewLine, plan.Lines()));
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------------------------------
+        // What to measure: fixed counts, a replayed plan, or counts sized to saturate
+        // ---------------------------------------------------------------------------------------------
+
+        /// <summary>Every section at every worker count, worker counts outermost, with the section's own count.</summary>
+        private static List<ProfileConfig> FixedConfigs(Options opt)
+        {
+            List<ProfileConfig> r = new List<ProfileConfig>();
+            foreach (int workers in opt.WorkerCounts)
+            {
+                foreach (ProfileSection spec in opt.Sections)
+                {
+                    r.Add(new ProfileConfig(spec, workers, new SectionSizing { Source = "fixed" }));
+                }
+            }
+
+            return r;
+        }
+
+        /// <summary>
+        /// An earlier profile's measurements, in its order, with its seed order and warm-up. Each
+        /// section's seed list is recomputed and must hash to what the plan recorded: if it does not,
+        /// the seed order itself has changed and the replay would measure other worlds.
+        /// </summary>
+        private static List<ProfileConfig> ConfigsFromPlan(Options opt, out string planSha)
+        {
+            string path = opt.PlanPath!;
+            string text;
+            try
+            {
+                text = File.ReadAllText(path);
+            }
+            catch (Exception ex)
+            {
+                throw new CliException("--plan: cannot read " + path + " (" + ex.Message + ").", ExitCodes.NotFound);
+            }
+
+            planSha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+            ProfilePlan plan;
+            try
+            {
+                plan = ProfilePlan.Parse(text);
+            }
+            catch (FormatException ex)
+            {
+                throw new CliException("--plan: " + path + " is not a plan: " + ex.Message + ". Nothing was measured.");
+            }
+
+            string? conflict = plan.Conflict(opt.KeyGiven ? opt.Key : null, opt.FromGiven ? opt.From : null, opt.WarmupGiven ? opt.Warmup : null);
+            if (conflict != null)
+            {
+                throw new CliException("--plan: " + conflict + ". A replay measures the plan's seeds exactly; leave the option out. Nothing was measured.");
+            }
+
+            opt.Key = plan.Key;
+            opt.From = plan.From;
+            opt.Warmup = plan.Warmup;
+            ScanPlanReader order = new ScanPlanReader(plan.Key);
+            List<ProfileConfig> configs = new List<ProfileConfig>();
+            List<int> workerCounts = new List<int>();
+            int i = 0;
+            foreach (PlannedSection p in plan.Sections)
+            {
+                if (p.Seeds > 1_000_000) throw new CliException("--plan: section " + i + " asks for " + p.Seeds + " seeds; the cap is 1,000,000.");
+                if (p.Workers > Args.MaxThreads) throw new CliException("--plan: section " + i + " asks for " + p.Workers + " workers; the cap here is " + Args.MaxThreads + ".");
+                if (p.Tier is "t2" or "t3" && PhaseMap.T2ForGrid(p.Grid) == Phase.None)
+                    throw new CliException("--plan: section " + i + " uses grid " + p.Grid + ", which has no phase of its own here.");
+                if (p.Tier == "t5" && p.PrefixRequested > 183) throw new CliException("--plan: section " + i + " asks for prefix " + p.PrefixRequested + " of 183.");
+                ProfileSection spec = new ProfileSection(p.Tier, p.Grid, p.PrefixRequested, p.Seeds);
+                if (p.SeedListSha256 != null)
+                {
+                    string now = SeedListDigest.Of(SeedsOf(order, plan.From, p.Seeds));
+                    if (!string.Equals(now, p.SeedListSha256, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new CliException(s.Label + " at " + w + " workers does not fit the memory guard: it allows "
-                                               + plan.MemoryWorkers + ". Nothing was measured.", ExitCodes.Usage,
-                                               string.Join(Environment.NewLine, plan.Lines()));
+                        throw new CliException("--plan: section " + i + " (" + spec.Label + ") would measure other seeds than the plan recorded "
+                                               + "(seed list SHA-256 " + now.Substring(0, 16) + "... against " + p.SeedListSha256.Substring(0, Math.Min(16, p.SeedListSha256.Length))
+                                               + "...): the seed order has changed. Nothing was measured.", ExitCodes.CheckFailed);
                     }
                 }
+
+                configs.Add(new ProfileConfig(spec, p.Workers, new SectionSizing { Source = "plan", PlanFile = path }));
+                if (!workerCounts.Contains(p.Workers)) workerCounts.Add(p.Workers);
+                i++;
+            }
+
+            opt.WorkerCounts = workerCounts;
+            return configs;
+        }
+
+        private static int[] SeedsOf(ScanPlanReader order, long from, int n)
+        {
+            int[] seeds = new int[n];
+            for (int i = 0; i < n; i++) seeds[i] = order.At(ProfileIndices.Measured(from, i));
+            return seeds;
+        }
+
+        /// <summary>
+        /// Replaces every measurement's seed count with one that keeps all its workers busy for about
+        /// <c>--saturate</c> seconds: a short pilot per measurement (warm-up included, never reported as
+        /// a section) measures the mean seed time, and <see cref="SaturationPlanner"/> does the rest. The
+        /// plan and its estimated time are printed before the first measured seed.
+        /// </summary>
+        private static void Saturate(List<ProfileConfig> configs, Options opt, DumpedLocationOracle? oracle, bool quiet, ProfileRun run)
+        {
+            double seconds = opt.Saturate!.Value;
+            if (!quiet)
+            {
+                Console.Error.WriteLine("  sizing every measurement to about " + Out.F(seconds, 0) + " s of work, at least "
+                                        + SaturationPlanner.MinPerWorker + " seeds per worker: a short pilot each, not counted...");
+            }
+
+            double total = 0;
+            for (int i = 0; i < configs.Count; i++)
+            {
+                ProfileConfig c = configs[i];
+                int pn = SaturationPlanner.PilotSeeds(c.Workers);
+                long t0 = Stopwatch.GetTimestamp();
+                SectionResult p = RunSection(c.Spec.WithSeeds(pn), c.Workers, opt.Warmup, opt.Key, opt.From, oracle,
+                                             attachSink: true, recordRows: false, resources: false);
+                double pilotS = (Stopwatch.GetTimestamp() - t0) / (double)Stopwatch.Frequency;
+                long busy = 0, done = 0;
+                foreach (WorkerStat w in p.Workers)
+                {
+                    busy += w.BusyTicks;
+                    done += w.Seeds;
+                }
+
+                double meanMs = done > 0 ? busy * 1000.0 / Stopwatch.Frequency / done : double.NaN;
+                double rate = SaturationPlanner.RateFromMeanSeedMs(c.Workers, meanMs);
+                int n = SaturationPlanner.Seeds(rate, seconds, c.Workers, out bool capped);
+                double est = rate > 0 ? n / rate : double.NaN;
+                SectionSizing sizing = new SectionSizing
+                {
+                    Source = "saturate",
+                    TargetSeconds = seconds,
+                    MinPerWorker = SaturationPlanner.MinPerWorker,
+                    PilotSeeds = pn,
+                    PilotSeconds = pilotS,
+                    PilotMeanSeedMs = meanMs,
+                    RateEstimate = rate,
+                    Capped = capped,
+                    EstimatedSeconds = est,
+                };
+                configs[i] = new ProfileConfig(c.Spec.WithSeeds(n), c.Workers, sizing);
+                run.Pilots.Add(new SaturationPilot { Label = c.Spec.Label, Workers = c.Workers, Sizing = sizing, Seeds = n });
+                if (double.IsFinite(est)) total += est;
+                if (!quiet)
+                {
+                    Console.Error.WriteLine("    " + c.Spec.Label + " at " + c.Workers + " worker(s): pilot " + pn + " seeds, "
+                                            + Out.F(meanMs, 1) + " ms per seed -> about " + Out.F(rate, 1) + " seeds/s -> "
+                                            + n + " seeds (" + (n / c.Workers) + " per worker), about " + Out.F(est, 1) + " s"
+                                            + (capped ? " (capped at " + SaturationPlanner.MaxSeeds.ToString("N0", CultureInfo.InvariantCulture) + " seeds)" : ""));
+                }
+            }
+
+            run.EstimatedSeconds = total;
+            if (!quiet)
+            {
+                Console.Error.WriteLine("  estimated measuring time: about " + Out.F(total, 0) + " s ("
+                                        + Out.F(total / 60.0, 1) + " min), plus each measurement's warm-up");
             }
         }
 
@@ -605,15 +872,23 @@ count is still checked against the memory guard.";
             _ => "",
         };
 
+        /// <summary>
+        /// Measures one section at one worker count. With <paramref name="resources"/>, it also reads
+        /// what the section used: each worker's own thread CPU at the start and the end of its share
+        /// (two reads per worker, never per seed), the process's CPU split, input and output and
+        /// allocation at the window's edges, the memory on a sampler thread every 200 ms, and the last
+        /// garbage collection's details at the end. The <c>--overhead</c> legs pass false, so what they
+        /// time is exactly what they timed before.
+        /// </summary>
         internal static SectionResult RunSection(ProfileSection spec, int workers, int warmup, ulong key, long from,
-                                                 DumpedLocationOracle? oracle, bool attachSink, bool recordRows)
+                                                 DumpedLocationOracle? oracle, bool attachSink, bool recordRows, bool resources = false)
         {
             SectionResult res = new SectionResult(spec, workers, warmup);
             ScanPlanReader order = new ScanPlanReader(key);
             int n = spec.Seeds;
-            int[] seeds = new int[n];
-            for (int i = 0; i < n; i++) seeds[i] = order.At(from + i);
+            int[] seeds = SeedsOf(order, from, n);
             res.Seeds = seeds;
+            res.From = from;
 
             LocationPlan? plan = null;
             if (spec.Tier == "t5")
@@ -732,13 +1007,18 @@ count is still checked against the memory guard.";
                     {
                         try
                         {
-                            for (int k = 0; k < warmup; k++) work(order.At(from + n + (long)wid * warmup + k), st);
+                            for (int k = 0; k < warmup; k++) work(order.At(ProfileIndices.Warmup(from, n, warmup, wid, k)), st);
                         }
                         finally
                         {
                             warm.SignalAndWait();
                             warm.SignalAndWait();
                         }
+
+                        // This worker's share starts: its own thread's CPU, read on the thread itself.
+                        TimeSpan? cpu0 = resources ? ProcessResources.ThreadCpu() : null;
+                        long share0 = Stopwatch.GetTimestamp();
+                        long alloc0 = GC.GetAllocatedBytesForCurrentThread();
 
                         int i;
                         while ((i = Interlocked.Increment(ref next)) < n)
@@ -754,10 +1034,12 @@ count is still checked against the memory guard.";
                             work(seeds[i], st);
                             long t1 = Stopwatch.GetTimestamp();
                             long a1 = GC.GetAllocatedBytesForCurrentThread();
+                            if (stat.Seeds == 0) stat.FirstStartTicks = t0;
+                            stat.LastEndTicks = t1;
                             stat.Seeds++;
                             stat.BusyTicks += t1 - t0;
 
-                            SeedRow row = new SeedRow { Seed = seeds[i], Worker = wid, WallTicks = t1 - t0, AllocBytes = a1 - a0 };
+                            SeedRow row = new SeedRow { Seed = seeds[i], Worker = wid, StartTicks = t0, WallTicks = t1 - t0, AllocBytes = a1 - a0 };
                             if (recordRows && st.Sink != null)
                             {
                                 st.Sink.Snapshot(after);
@@ -773,6 +1055,16 @@ count is still checked against the memory guard.";
 
                             rows[i] = row;
                         }
+
+                        // ... and ends here, inside the try: a worker that faulted has no share to report.
+                        long alloc1 = GC.GetAllocatedBytesForCurrentThread();
+                        long share1 = Stopwatch.GetTimestamp();
+                        TimeSpan? cpu1 = resources ? ProcessResources.ThreadCpu() : null;
+                        stat.ShareStartTicks = share0;
+                        stat.ShareEndTicks = share1;
+                        stat.ThreadCpuSeconds = cpu0.HasValue && cpu1.HasValue ? (cpu1.Value - cpu0.Value).TotalSeconds : null;
+                        stat.ThreadAllocBytes = alloc1 - alloc0;
+                        stat.Finished = true;
                     }
                     catch (Exception ex)
                     {
@@ -793,17 +1085,24 @@ count is still checked against the memory guard.";
             }
 
             warm.SignalAndWait();          // every worker has warmed up
-            start = WindowMark.Now();
+            start = WindowMark.Now(resources);
             res.StartUtc = DateTime.UtcNow;
+            // The memory sampler runs on its own thread, off the workers, from before they are released
+            // until after the last has finished; its preallocated room covers the expected samples.
+            ResourceSampler? sampler = resources ? ResourceSampler.Start(ProcessResources.SamplerReaders()) : null;
             warm.SignalAndWait();          // release them into the measured window
             foreach (Thread t in threads) t.Join();
-            WindowMark end = WindowMark.Now();
+            ResourceSummary? memory = sampler?.Stop();
+            sampler?.Dispose();
+            WindowMark end = WindowMark.Now(resources);
             res.EndUtc = DateTime.UtcNow;
             if (fault != null) throw new InvalidOperationException("a profile worker failed: " + fault.Message, fault);
 
             res.Rows = new List<SeedRow>(n);
             foreach (SeedRow? r in rows) res.Rows.Add(r!);
             res.Workers = new List<WorkerStat>(stats);
+            res.StartTicks = start.Timestamp;
+            res.EndTicks = end.Timestamp;
             res.WallSeconds = (end.Timestamp - start.Timestamp) / (double)Stopwatch.Frequency;
             res.CpuSeconds = (end.Cpu - start.Cpu).TotalSeconds;
             res.Gen0 = end.Gen0 - start.Gen0;
@@ -812,7 +1111,38 @@ count is still checked against the memory guard.";
             res.PauseMs = (end.Pause - start.Pause).TotalMilliseconds;
             res.JitMethods = end.JitMethods - start.JitMethods;
             res.JitMs = (end.JitTime - start.JitTime).TotalMilliseconds;
+            if (resources)
+            {
+                res.Resources = true;
+                res.CpuUserSeconds = end.User.HasValue && start.User.HasValue ? (end.User.Value - start.User.Value).TotalSeconds : null;
+                res.CpuKernelSeconds = end.Kernel.HasValue && start.Kernel.HasValue ? (end.Kernel.Value - start.Kernel.Value).TotalSeconds : null;
+                res.Io = start.Io != null && end.Io != null ? ProcessIoReading.Delta(start.Io, end.Io) : null;
+                res.AllocatedBytes = end.Allocated - start.Allocated;
+                res.Memory = memory;
+                res.MemoryEnd = ProcessResources.Memory();
+                res.GcCountAtStart = start.Gen0;
+                res.LastGc = GC.GetGCMemoryInfo(GCKind.Any);
+                res.LastFullGc = GC.GetGCMemoryInfo(GCKind.FullBlocking);
+                res.GcHeapCount = GcHeapCount();
+            }
+
             return res;
+        }
+
+        /// <summary>The GC's heap count as its configuration reports it now (it can move under dynamic adaptation), or null.</summary>
+        private static long? GcHeapCount()
+        {
+            try
+            {
+                IReadOnlyDictionary<string, object> v = GC.GetConfigurationVariables();
+                if (v.TryGetValue("HeapCount", out object? hc)) return Convert.ToInt64(hc, CultureInfo.InvariantCulture);
+            }
+            catch (Exception)
+            {
+                // Not reported by this runtime.
+            }
+
+            return null;
         }
 
         /// <summary>The seed order, read without allocating a plan per seed.</summary>
@@ -820,7 +1150,7 @@ count is still checked against the memory guard.";
         {
             private readonly SeedLab.Search.Execution.ScanPlan _plan;
             public ScanPlanReader(ulong key) { _plan = PilotSeedOrder.Plan(key); }
-            public int At(long index) => _plan.SeedAt(index % 4294967296L);
+            public int At(long index) => _plan.SeedAt(index % ProfileIndices.OrderLength);
         }
 
         /// <summary>Process-wide counters read at the edges of a measured window.</summary>
@@ -834,10 +1164,29 @@ count is still checked against the memory guard.";
             public TimeSpan Pause { get; init; }
             public long JitMethods { get; init; }
             public TimeSpan JitTime { get; init; }
+            public TimeSpan? User { get; init; }
+            public TimeSpan? Kernel { get; init; }
+            public ProcessIoReading? Io { get; init; }
+            public long Allocated { get; init; }
 
-            public static WindowMark Now()
+            public static WindowMark Now(bool resources)
             {
                 using Process self = Process.GetCurrentProcess();
+                TimeSpan? user = null, kernel = null;
+                if (resources)
+                {
+                    try
+                    {
+                        Environment.ProcessCpuUsage u = Environment.CpuUsage;
+                        user = u.UserTime;
+                        kernel = u.PrivilegedTime;
+                    }
+                    catch (Exception)
+                    {
+                        // Not available: the split is left out.
+                    }
+                }
+
                 return new WindowMark
                 {
                     Timestamp = Stopwatch.GetTimestamp(),
@@ -848,6 +1197,10 @@ count is still checked against the memory guard.";
                     Pause = GC.GetTotalPauseDuration(),
                     JitMethods = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: false),
                     JitTime = System.Runtime.JitInfo.GetCompilationTime(currentThread: false),
+                    User = user,
+                    Kernel = kernel,
+                    Io = resources ? ProcessResources.Io() : null,
+                    Allocated = GC.GetTotalAllocatedBytes(false),
                 };
             }
         }
@@ -1053,6 +1406,33 @@ count is still checked against the memory guard.";
 
         public string Label => Tier + (Grid > 0 ? " G" + Grid.ToString(CultureInfo.InvariantCulture) : "")
                                + (Prefix > 0 ? " prefix " + Prefix.ToString(CultureInfo.InvariantCulture) : "");
+
+        /// <summary>The same section over another number of seeds.</summary>
+        public ProfileSection WithSeeds(int seeds) => new ProfileSection(Tier, Grid, Prefix, seeds);
+    }
+
+    /// <summary>How a measurement's seed count was chosen: fixed, replayed from a plan, or sized by a pilot to saturate.</summary>
+    internal sealed class SectionSizing
+    {
+        public string Source = "fixed";
+        public string? PlanFile;
+        public double? TargetSeconds;
+        public int? MinPerWorker;
+        public int? PilotSeeds;
+        public double? PilotSeconds;
+        public double? PilotMeanSeedMs;
+        public double? RateEstimate;
+        public bool Capped;
+        public double? EstimatedSeconds;
+    }
+
+    /// <summary>One --saturate pilot, as the run's plan records it.</summary>
+    internal sealed class SaturationPilot
+    {
+        public string Label = "";
+        public int Workers;
+        public int Seeds;
+        public SectionSizing Sizing = new SectionSizing();
     }
 
     /// <summary>One measured seed: its wall time and its sink's per-phase deltas.</summary>
@@ -1060,6 +1440,9 @@ count is still checked against the memory guard.";
     {
         public int Seed;
         public int Worker;
+
+        /// <summary>The seed's start, a <see cref="Stopwatch"/> timestamp on the same clock as the section's edges.</summary>
+        public long StartTicks;
         public long WallTicks;
         public long AllocBytes;
 
@@ -1075,6 +1458,21 @@ count is still checked against the memory guard.";
         public int Id;
         public long Seeds;
         public long BusyTicks;
+
+        /// <summary>The first measured seed's start and the last one's finish (timestamps; 0 when it measured none).</summary>
+        public long FirstStartTicks, LastEndTicks;
+
+        /// <summary>The worker's whole share: from its release into the window to its finding no more work.</summary>
+        public long ShareStartTicks, ShareEndTicks;
+
+        /// <summary>The worker thread's own CPU time over its share, read on the thread itself; null when not measured.</summary>
+        public double? ThreadCpuSeconds;
+
+        /// <summary>Everything the thread allocated over its share, the profiler's own rows included.</summary>
+        public long ThreadAllocBytes;
+
+        /// <summary>The share ended normally (a faulted worker's share is not reported).</summary>
+        public bool Finished;
     }
 
     internal sealed class SectionResult
@@ -1100,6 +1498,25 @@ count is still checked against the memory guard.";
         public long JitMethods;
         public double JitMs;
         public DateTime StartUtc, EndUtc;
+
+        // ---- seedlab-profile/2 -------------------------------------------------------------------
+        public long From;
+        public SectionSizing? Sizing;
+
+        /// <summary>The window's edges as <see cref="Stopwatch"/> timestamps, the clock the rows' starts use.</summary>
+        public long StartTicks, EndTicks;
+
+        /// <summary>Whether the resource figures below were read.</summary>
+        public bool Resources;
+        public double? CpuUserSeconds, CpuKernelSeconds;
+        public ProcessIoReading? Io;
+        public long AllocatedBytes;
+        public ResourceSummary? Memory;
+        public ProcessMemoryReading? MemoryEnd;
+        public int GcCountAtStart;
+        public GCMemoryInfo LastGc;
+        public GCMemoryInfo LastFullGc;
+        public long? GcHeapCount;
     }
 
     internal sealed class OverheadResult
@@ -1138,5 +1555,12 @@ count is still checked against the memory guard.";
         public QuietMachineProbe? Probe;
         public List<SectionResult> Sections = new List<SectionResult>();
         public OverheadResult? Overhead;
+
+        // ---- seedlab-profile/2 -------------------------------------------------------------------
+        public double? SaturateSeconds;
+        public List<SaturationPilot> Pilots = new List<SaturationPilot>();
+        public double? EstimatedSeconds;
+        public string? PlanFile;
+        public string? PlanSha256;
     }
 }

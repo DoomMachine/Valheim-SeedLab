@@ -787,9 +787,19 @@ Where one seed's time goes, phase by phase: the generator's constructor, the lak
 pre-generation and its nine steps, the biome and height passes per sampling grid, the structure
 counts, and the location world build (the 2048^2 point grid, the sectors, the alt biomes, the
 placement). With no options it runs a fixed battery; `--tier`, `--grid`, `--prefix`, `--seeds` and
-`--threads 1,8,16` narrow or widen it, `--counters` also counts per-point events (base heights, world
-angles, river lookups), and `--out profile.json` keeps the result (`seedlab-profile/1`, with
-`--per-seed` a CSV beside it). `vseed profile --help` has the rest.
+`--threads 1,8,16` narrow or widen it (`max` is every logical core), `--counters` also counts
+per-point events (base heights, world angles, river lookups), and `--out profile.json` keeps the result
+(`seedlab-profile/2`, with `--per-seed` a CSV beside it). `vseed profile --help` has the rest.
+
+- **It says what each measurement used, not only how long it took:** processor time (the whole
+  process, the workers measured on their own threads, and the rest - mostly the garbage collector), how
+  many cores were busy, the stretch in which every worker was busy and what the start and the tail cost,
+  memory sampled every 200 ms (working set, private bytes, the collector's heap and what it has
+  committed) with the last collection's details, and the bytes read and written.
+- **`--saturate <seconds>`** sizes every measurement so all its workers stay busy for about that long
+  (a short uncounted pilot measures the rate first; the plan and the estimated time are printed before
+  anything is measured), and **`--plan <profile.json>`** replays an earlier profile's exact sections,
+  worker counts and seeds, so a before/after comparison measures the same worlds.
 
 - **It changes no answer.** Timestamps are taken only at phase boundaries, generator code can write
   the profiler but never read it (an IL check in the tests enforces that), and the world fingerprints

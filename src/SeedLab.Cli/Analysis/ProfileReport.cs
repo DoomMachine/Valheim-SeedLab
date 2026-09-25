@@ -26,12 +26,17 @@ namespace SeedLab.Cli.Analysis
     /// JIT and GC inside the measured window; the machine it ran on; whether the machine was quiet;
     /// and a verdict, with the numbers behind it, on each hypothesis the profile was built to test.
     ///
-    /// <para>The document is <c>seedlab-profile/1</c> JSON, UTF-8 without a BOM. A measurement that was
-    /// not taken is left out, never written as 0. Only this layer reads a <see cref="PhaseSink"/>.</para>
+    /// <para>The document is <c>seedlab-profile/2</c> JSON, UTF-8 without a BOM. A measurement that was
+    /// not taken is left out, never written as 0. Only this layer reads a <see cref="PhaseSink"/>.
+    /// /2 keeps every /1 field as it was and adds, per section, what the section used (<c>cpu</c>,
+    /// <c>steady_state</c>, <c>memory</c>, <c>io</c>, <c>gc.last_gc</c>), how its seed count was chosen
+    /// (<c>sizing</c>), and what a replay needs (<c>prefix_requested</c>, <c>first_index</c>,
+    /// <c>seed_list_sha256</c>); per run, the <c>--saturate</c> pilots or the <c>--plan</c> replayed; and
+    /// the garbage collector's configuration in the machine block.</para>
     /// </summary>
     internal sealed class ProfileReport
     {
-        public const string Schema = "seedlab-profile/1";
+        public const string Schema = "seedlab-profile/2";
 
         private readonly ProfileRun _run;
         private readonly List<SectionView> _sections = new List<SectionView>();
@@ -197,7 +202,51 @@ namespace SeedLab.Cli.Analysis
                 {
                     TaintReasons.AddRange(reasons);
                 }
+
+                // The steady state: every seed's start and finish, on the clock of the window's edges.
+                if (n > 0 && r.EndTicks > r.StartTicks)
+                {
+                    long[] starts = new long[n], ends = new long[n];
+                    int[] who = new int[n];
+                    for (int i = 0; i < n; i++)
+                    {
+                        starts[i] = r.Rows[i].StartTicks;
+                        ends[i] = r.Rows[i].StartTicks + r.Rows[i].WallTicks;
+                        who[i] = r.Rows[i].Worker;
+                    }
+
+                    Steady = SteadyState.Compute(r.StartTicks, r.EndTicks, starts, ends, who, r.WorkerCount, Stopwatch.Frequency);
+                }
+
+                // Worker CPU, measured on each worker's own thread over its share.
+                bool allRead = r.Workers.Count > 0;
+                double cpu = 0, share = 0;
+                foreach (WorkerStat w in r.Workers)
+                {
+                    if (!w.Finished || !w.ThreadCpuSeconds.HasValue)
+                    {
+                        allRead = false;
+                        break;
+                    }
+
+                    cpu += w.ThreadCpuSeconds.Value;
+                    share += (w.ShareEndTicks - w.ShareStartTicks) / f;
+                }
+
+                if (allRead)
+                {
+                    WorkerCpuSeconds = cpu;
+                    WorkerShareSeconds = share;
+                }
             }
+
+            public SteadyStateResult? Steady { get; }
+
+            /// <summary>The workers' own thread CPU summed, when every worker's was read.</summary>
+            public double? WorkerCpuSeconds { get; }
+
+            /// <summary>The workers' shares (release to running out of work) summed, wall-clock.</summary>
+            public double? WorkerShareSeconds { get; }
 
             public SectionResult Result { get; }
             public double[] SeedMs { get; }
@@ -501,7 +550,9 @@ namespace SeedLab.Cli.Analysis
             foreach (string k in new[] { "DOTNET_EnableHWIntrinsic", "DOTNET_EnableAVX2", "DOTNET_EnableAVX512", "DOTNET_EnableAVX512v2",
                                          "DOTNET_EnableAVX512v3", "DOTNET_EnableAVX10v1", "DOTNET_PreferredVectorBitWidth",
                                          "DOTNET_TieredPGO", "DOTNET_TieredCompilation", "DOTNET_TC_QuickJitForLoops", "DOTNET_ReadyToRun",
-                                         "DOTNET_gcServer", "DOTNET_GCgen0size", PhaseClock.EnvironmentVariable,
+                                         "DOTNET_gcServer", "DOTNET_GCgen0size", "DOTNET_gcConcurrent", "DOTNET_GCDynamicAdaptationMode",
+                                         "DOTNET_GCHeapCount", "DOTNET_GCHeapAffinitizeMask", "DOTNET_GCConserveMemory",
+                                         "DOTNET_GCHeapHardLimit", PhaseClock.EnvironmentVariable,
                                          SeedLab.WorldGen.Simd.SimdDispatch.EnvironmentVariable })
             {
                 string? v = Environment.GetEnvironmentVariable(k);
@@ -509,6 +560,7 @@ namespace SeedLab.Cli.Analysis
             }
 
             m["knobs_set"] = knobs;
+            m["gc_config"] = GcConfig();
             m["ucrtbase"] = rt.Context.Hardware.UcrtVersion;
 
             m["logical_cores"] = Environment.ProcessorCount;
@@ -525,6 +577,40 @@ namespace SeedLab.Cli.Analysis
             m["mode"] = ResourceModes.Name(rt.Mode);
             m["self_test"] = rt.SelfTest?.Status.ToString();
             return m;
+        }
+
+        /// <summary>
+        /// The garbage collector's own configuration as it reports it at the start of the run (heap
+        /// count, dynamic adaptation, server or workstation, concurrency, limits) - read, never assumed.
+        /// Null when this runtime does not report it.
+        /// </summary>
+        private static Dictionary<string, object?>? GcConfig()
+        {
+            try
+            {
+                Dictionary<string, object?> d = new Dictionary<string, object?>();
+                List<string> keys = new List<string>(GC.GetConfigurationVariables().Keys);
+                keys.Sort(StringComparer.Ordinal);
+                IReadOnlyDictionary<string, object> v = GC.GetConfigurationVariables();
+                foreach (string k in keys)
+                {
+                    object x = v[k];
+                    d[k] = x switch
+                    {
+                        bool b => b,
+                        int i => i,
+                        long l => l,
+                        ulong u when u <= long.MaxValue => (long)u,
+                        _ => Convert.ToString(x, CultureInfo.InvariantCulture),
+                    };
+                }
+
+                return d;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>The runtime layer's CPUID reading, as the profile schema's fields. Null when none was possible.</summary>
@@ -613,6 +699,46 @@ namespace SeedLab.Cli.Analysis
                 ["counters"] = _run.CountersOn,
                 ["warmup_seeds_note"] = "each worker's warm-up seeds are drawn from the indices after the measured ones and never measured",
             };
+            Dictionary<string, object?> runBlock = (Dictionary<string, object?>)d["run"]!;
+            if (_run.SaturateSeconds.HasValue)
+            {
+                List<object?> pilots = new List<object?>();
+                foreach (SaturationPilot p in _run.Pilots)
+                {
+                    pilots.Add(new Dictionary<string, object?>
+                    {
+                        ["section"] = p.Label,
+                        ["workers"] = p.Workers,
+                        ["pilot_seeds"] = p.Sizing.PilotSeeds,
+                        ["pilot_s"] = p.Sizing.PilotSeconds.HasValue ? Math.Round(p.Sizing.PilotSeconds.Value, 3) : null,
+                        ["pilot_mean_seed_ms"] = p.Sizing.PilotMeanSeedMs.HasValue ? R(p.Sizing.PilotMeanSeedMs.Value) : null,
+                        ["rate_estimate_seeds_per_second"] = p.Sizing.RateEstimate.HasValue ? R(p.Sizing.RateEstimate.Value) : null,
+                        ["chosen_seeds"] = p.Seeds,
+                        ["capped"] = p.Sizing.Capped ? true : null,
+                        ["estimated_s"] = p.Sizing.EstimatedSeconds.HasValue ? R(p.Sizing.EstimatedSeconds.Value) : null,
+                    });
+                }
+
+                runBlock["saturate"] = new Dictionary<string, object?>
+                {
+                    ["target_s"] = _run.SaturateSeconds.Value,
+                    ["min_seeds_per_worker"] = SaturationPlanner.MinPerWorker,
+                    ["rule"] = "seeds = max(workers x min_seeds_per_worker, ceil(rate x target_s)) rounded up to a multiple of the worker count; "
+                               + "rate = workers x 1000 / the pilot's mean seed ms; the pilots are not measurements",
+                    ["estimated_total_s"] = _run.EstimatedSeconds.HasValue ? R(_run.EstimatedSeconds.Value) : null,
+                    ["pilots"] = pilots,
+                };
+            }
+
+            if (_run.PlanFile != null)
+            {
+                runBlock["plan"] = new Dictionary<string, object?>
+                {
+                    ["file"] = _run.PlanFile,
+                    ["sha256"] = _run.PlanSha256,
+                    ["note"] = "the sections, worker counts, seed counts, seed order and warm-up were replayed from this profile",
+                };
+            }
 
             d["hygiene"] = Hygiene();
 
@@ -639,12 +765,20 @@ namespace SeedLab.Cli.Analysis
             }
 
             if (_run.Overhead != null) d["overhead"] = OverheadDoc(_run.Overhead);
-            d["not_measured"] = new List<object?>
+            List<object?> notMeasured = new List<object?>
             {
                 "isolated per-call kernel timings (the attribution of phase time to Perlin, libm and river lookups)",
                 "per-location-type placement costs inside t5.place",
                 "the search evaluator's own phases (collect, seedtext); vseed profile runs its own loop",
             };
+            if (_sections.Exists(s => s.Result.Resources && s.Result.Io == null))
+                notMeasured.Add("the process's input and output: this operating system gave no reading");
+            if (_sections.Exists(s => s.Result.Resources && s.WorkerCpuSeconds == null))
+                notMeasured.Add("the workers' own thread CPU: this operating system gave no reading, so no split of the process's CPU");
+            d["not_measured"] = notMeasured;
+            d["disk_note"] = "vseed profile writes nothing while it measures: --out (and --per-seed's CSV) is written once, after the last "
+                             + "section, and vseed's own session log is kept in the cache root. Each section's io block counts every read "
+                             + "and write call the process made in its window (on Windows: files, pipes and the console)";
             return d;
         }
 
@@ -751,6 +885,10 @@ namespace SeedLab.Cli.Analysis
                 ["alloc_bytes_mean"] = Math.Round(s.AllocMean),
                 ["tainted"] = s.Tainted,
                 ["taint_reasons"] = s.Tainted ? s.TaintReasons.ConvertAll(x => (object?)x) : null,
+                ["prefix_requested"] = r.Spec.Tier == "t5" ? r.Spec.Prefix : null,
+                ["first_index"] = r.From,
+                ["seed_list_sha256"] = SeedListDigest.Of(r.Seeds),
+                ["sizing"] = SizingDoc(r.Sizing),
             };
 
             if (s.Phases.Count > 0)
@@ -790,7 +928,7 @@ namespace SeedLab.Cli.Analysis
                 d["counters"] = c;
             }
 
-            d["gc"] = new Dictionary<string, object?>
+            Dictionary<string, object?> gc = new Dictionary<string, object?>
             {
                 ["gen0"] = r.Gen0,
                 ["gen1"] = r.Gen1,
@@ -798,25 +936,264 @@ namespace SeedLab.Cli.Analysis
                 ["pause_ms"] = Math.Round(r.PauseMs, 3),
                 ["pause_share"] = Math.Round(s.PauseShare, 5),
             };
+            if (r.Resources)
+            {
+                gc["heap_count"] = r.GcHeapCount;
+                gc["last_gc"] = LastGcDoc(r.LastGc, r.GcCountAtStart);
+                if (r.LastFullGc.Index > 0)
+                {
+                    gc["last_full_gc"] = new Dictionary<string, object?>
+                    {
+                        ["index"] = r.LastFullGc.Index,
+                        ["in_window"] = r.LastFullGc.Index > r.GcCountAtStart,
+                        ["heap_size_bytes"] = r.LastFullGc.HeapSizeBytes,
+                        ["promoted_bytes"] = r.LastFullGc.PromotedBytes,
+                    };
+                }
+            }
+
+            d["gc"] = gc;
             d["jit"] = new Dictionary<string, object?>
             {
                 ["methods_in_window"] = r.JitMethods,
                 ["compile_ms_in_window"] = Math.Round(r.JitMs, 3),
                 ["over_1_percent"] = s.JitFlagged,
             };
+
+            if (r.Resources)
+            {
+                d["cpu"] = CpuDoc(s);
+                d["memory"] = MemoryDoc(s);
+                d["io"] = IoDoc(r.Io);
+            }
+
+            d["steady_state"] = SteadyDoc(s.Steady);
+
             List<object?> ws = new List<object?>();
+            double f = Stopwatch.Frequency;
             foreach (WorkerStat w in r.Workers)
             {
+                double shareS = w.Finished ? (w.ShareEndTicks - w.ShareStartTicks) / f : double.NaN;
                 ws.Add(new Dictionary<string, object?>
                 {
                     ["id"] = w.Id,
                     ["seeds"] = w.Seeds,
                     ["busy_s"] = Math.Round(w.BusyTicks / (double)Stopwatch.Frequency, 4),
+                    ["share_s"] = w.Finished ? Math.Round(shareS, 4) : null,
+                    ["cpu_s"] = w.ThreadCpuSeconds.HasValue ? Math.Round(w.ThreadCpuSeconds.Value, 4) : null,
+                    ["not_running_s"] = w.Finished && w.ThreadCpuSeconds.HasValue ? Math.Round(shareS - w.ThreadCpuSeconds.Value, 4) : null,
+                    ["alloc_bytes"] = w.Finished && r.Resources ? w.ThreadAllocBytes : null,
+                    ["first_start_s"] = w.Seeds > 0 ? Math.Round((w.FirstStartTicks - r.StartTicks) / f, 4) : null,
+                    ["last_end_s"] = w.Seeds > 0 ? Math.Round((w.LastEndTicks - r.StartTicks) / f, 4) : null,
                 });
             }
 
             d["worker_stats"] = ws;
             return d;
+        }
+
+        private static Dictionary<string, object?>? SizingDoc(SectionSizing? z)
+        {
+            if (z == null) return null;
+            return new Dictionary<string, object?>
+            {
+                ["source"] = z.Source,
+                ["plan_file"] = z.PlanFile,
+                ["target_s"] = z.TargetSeconds,
+                ["min_seeds_per_worker"] = z.MinPerWorker,
+                ["pilot_seeds"] = z.PilotSeeds,
+                ["pilot_s"] = z.PilotSeconds.HasValue ? Math.Round(z.PilotSeconds.Value, 3) : null,
+                ["pilot_mean_seed_ms"] = z.PilotMeanSeedMs.HasValue ? R(z.PilotMeanSeedMs.Value) : null,
+                ["rate_estimate_seeds_per_second"] = z.RateEstimate.HasValue ? R(z.RateEstimate.Value) : null,
+                ["capped"] = z.Capped ? true : null,
+                ["estimated_s"] = z.EstimatedSeconds.HasValue ? R(z.EstimatedSeconds.Value) : null,
+            };
+        }
+
+        /// <summary>The process's CPU over the window, and how much of it the workers themselves used.</summary>
+        private static Dictionary<string, object?> CpuDoc(SectionView s)
+        {
+            SectionResult r = s.Result;
+            int cores = Math.Max(1, Environment.ProcessorCount);
+            double process = r.CpuUserSeconds.HasValue && r.CpuKernelSeconds.HasValue ? r.CpuUserSeconds.Value + r.CpuKernelSeconds.Value : r.CpuSeconds;
+            double? sampler = r.Memory?.SamplerCpu?.TotalSeconds;
+            Dictionary<string, object?> c = new Dictionary<string, object?>
+            {
+                ["process_s"] = Math.Round(process, 4),
+                ["user_s"] = r.CpuUserSeconds.HasValue ? Math.Round(r.CpuUserSeconds.Value, 4) : null,
+                ["kernel_s"] = r.CpuKernelSeconds.HasValue ? Math.Round(r.CpuKernelSeconds.Value, 4) : null,
+                ["logical_cores"] = cores,
+                ["busy_cores"] = r.WallSeconds > 0 ? Math.Round(process / r.WallSeconds, 3) : null,
+                ["utilisation"] = r.WallSeconds > 0 ? Math.Round(process / (r.WallSeconds * cores), 4) : null,
+                ["workers_s"] = s.WorkerCpuSeconds.HasValue ? Math.Round(s.WorkerCpuSeconds.Value, 4) : null,
+                ["workers_share_s"] = s.WorkerShareSeconds.HasValue ? Math.Round(s.WorkerShareSeconds.Value, 4) : null,
+                ["workers_not_running_s"] = s.WorkerCpuSeconds.HasValue && s.WorkerShareSeconds.HasValue
+                    ? Math.Round(s.WorkerShareSeconds.Value - s.WorkerCpuSeconds.Value, 4) : null,
+                ["sampler_s"] = sampler.HasValue ? Math.Round(sampler.Value, 4) : null,
+                ["other_s"] = s.WorkerCpuSeconds.HasValue ? Math.Round(process - s.WorkerCpuSeconds.Value - (sampler ?? 0), 4) : null,
+                ["thread_cpu_source"] = ProcessResources.ThreadCpuSource,
+                ["note"] = "other_s is the process's CPU less the workers' own and the memory sampler's: the garbage collector's threads under "
+                           + "server GC, the JIT, the quiet-machine probe (every 5 s) and the runtime. Under workstation GC a collection runs on "
+                           + "the worker that triggered it and lands in workers_s instead. workers_not_running_s is the time the workers' shares "
+                           + "spent off a processor: waiting for a collection, preempted, or stalled on a page fault. Thread and process times "
+                           + "advance in steps of about 15.6 ms on Windows",
+            };
+            return c;
+        }
+
+        /// <summary>Memory: the sampler's peaks and means, the process's lifetime peaks, and what was allocated.</summary>
+        private static Dictionary<string, object?> MemoryDoc(SectionView s)
+        {
+            SectionResult r = s.Result;
+            double seedAlloc = 0;
+            foreach (SeedRow row in r.Rows) seedAlloc += row.AllocBytes;
+            long rowsBytes = RowsRetainedBytes(r);
+            Dictionary<string, object?> m = new Dictionary<string, object?>
+            {
+                ["allocated_bytes"] = r.AllocatedBytes,
+                ["allocated_bytes_per_seed"] = r.Rows.Count > 0 ? Math.Round((double)r.AllocatedBytes / r.Rows.Count) : null,
+                ["seed_work_allocated_bytes"] = Math.Round(seedAlloc),
+                ["profiler_rows_retained_bytes_estimate"] = rowsBytes,
+                ["allocation_note"] = "allocated_bytes is the whole process in the window; seed_work_allocated_bytes sums each measured seed's own; "
+                                      + "the difference is the profiler's rows, the sampler, the probe and the runtime. The rows stay alive until the "
+                                      + "report is written, so they are part of every heap figure here",
+            };
+            if (r.Memory != null)
+            {
+                ResourceSummary z = r.Memory;
+                m["sampler"] = new Dictionary<string, object?>
+                {
+                    ["interval_ms"] = Math.Round(z.Interval.TotalMilliseconds),
+                    ["samples"] = z.Samples,
+                    ["seconds"] = Math.Round(z.Seconds, 3),
+                    ["working_set_bytes"] = SeriesDoc(z.WorkingSet),
+                    ["private_bytes"] = SeriesDoc(z.PrivateBytes),
+                    ["gc_heap_bytes"] = SeriesDoc(z.GcHeap),
+                    ["gc_committed_bytes"] = SeriesDoc(z.GcCommitted),
+                    ["note"] = "gc_heap_bytes is the collector's live estimate without collecting; gc_committed_bytes is as of the last collection",
+                };
+            }
+
+            if (r.MemoryEnd != null)
+            {
+                m["process_lifetime"] = new Dictionary<string, object?>
+                {
+                    ["peak_working_set_bytes"] = r.MemoryEnd.PeakWorkingSet,
+                    ["peak_private_bytes"] = r.MemoryEnd.PeakPrivateBytes,
+                    ["page_faults"] = r.MemoryEnd.PageFaults,
+                    ["source"] = r.MemoryEnd.Source,
+                    ["note"] = "the highest since vseed started, earlier sections included - not this section's own",
+                };
+            }
+
+            return m;
+        }
+
+        /// <summary>What the profiler's own per-seed rows keep alive: the row, its phase deltas, its counters.</summary>
+        private static long RowsRetainedBytes(SectionResult r)
+        {
+            if (r.Rows.Count == 0) return 0;
+            long per = 64;
+            if (r.Rows[0].Phase != null) per += 24 + 8L * r.Rows[0].Phase!.Length;
+            if (r.Rows[0].Counters != null) per += 24 + 8L * r.Rows[0].Counters!.Length;
+            return per * r.Rows.Count;
+        }
+
+        private static Dictionary<string, object?>? SeriesDoc(SeriesStat? s)
+        {
+            if (s == null) return null;
+            return new Dictionary<string, object?>
+            {
+                ["peak"] = s.Peak,
+                ["mean"] = Math.Round(s.Mean),
+                ["first"] = s.First,
+                ["last"] = s.Last,
+                ["samples"] = s.Count,
+            };
+        }
+
+        private static Dictionary<string, object?> LastGcDoc(GCMemoryInfo g, int gcCountAtStart)
+        {
+            Dictionary<string, object?> d = new Dictionary<string, object?>
+            {
+                ["index"] = g.Index,
+                ["in_window"] = g.Index > gcCountAtStart,
+                ["generation"] = g.Generation,
+                ["compacted"] = g.Compacted,
+                ["concurrent"] = g.Concurrent,
+                ["heap_size_bytes"] = g.HeapSizeBytes,
+                ["committed_bytes"] = g.TotalCommittedBytes,
+                ["fragmented_bytes"] = g.FragmentedBytes,
+                ["promoted_bytes"] = g.PromotedBytes,
+                ["pinned_objects"] = g.PinnedObjectsCount,
+                ["pause_time_percentage_process"] = Math.Round(g.PauseTimePercentage, 3),
+                ["memory_load_bytes"] = g.MemoryLoadBytes,
+                ["total_available_memory_bytes"] = g.TotalAvailableMemoryBytes,
+                ["note"] = "the last collection before the section ended; pause_time_percentage_process covers the whole process life, "
+                           + "the section's own pause is gc.pause_ms",
+            };
+            string[] names = { "gen0", "gen1", "gen2", "large_object_heap", "pinned_object_heap" };
+            List<object?> gens = new List<object?>();
+            ReadOnlySpan<GCGenerationInfo> info = g.GenerationInfo;
+            for (int i = 0; i < info.Length && i < names.Length; i++)
+            {
+                gens.Add(new Dictionary<string, object?>
+                {
+                    ["name"] = names[i],
+                    ["size_before_bytes"] = info[i].SizeBeforeBytes,
+                    ["size_after_bytes"] = info[i].SizeAfterBytes,
+                    ["fragmentation_after_bytes"] = info[i].FragmentationAfterBytes,
+                });
+            }
+
+            d["generations"] = gens;
+            return d;
+        }
+
+        private static Dictionary<string, object?>? IoDoc(ProcessIoReading? io)
+        {
+            if (io == null) return null;
+            return new Dictionary<string, object?>
+            {
+                ["read_bytes"] = io.ReadBytes,
+                ["write_bytes"] = io.WriteBytes,
+                ["other_bytes"] = io.OtherBytes,
+                ["read_ops"] = io.ReadOps,
+                ["write_ops"] = io.WriteOps,
+                ["other_ops"] = io.OtherOps,
+                ["storage_read_bytes"] = io.StorageReadBytes,
+                ["storage_write_bytes"] = io.StorageWriteBytes,
+                ["source"] = io.Source,
+            };
+        }
+
+        private static Dictionary<string, object?>? SteadyDoc(SteadyStateResult? st)
+        {
+            if (st == null) return null;
+            if (!st.Defined)
+            {
+                return new Dictionary<string, object?>
+                {
+                    ["defined"] = false,
+                    ["why"] = st.Why,
+                    ["section_seeds_per_second"] = R(st.SectionSeedsPerSecond),
+                };
+            }
+
+            return new Dictionary<string, object?>
+            {
+                ["defined"] = true,
+                ["definition"] = "from the latest worker's first seed start to the earliest worker's last seed finish: the stretch in which "
+                                 + "every worker was busy; seeds count by the share of their own time inside it",
+                ["head_s"] = Math.Round(st.HeadSeconds, 4),
+                ["window_s"] = Math.Round(st.WindowSeconds, 4),
+                ["tail_s"] = Math.Round(st.TailSeconds, 4),
+                ["window_share"] = st.SectionSeconds > 0 ? Math.Round(st.WindowSeconds / st.SectionSeconds, 4) : null,
+                ["seeds_in_window"] = Math.Round(st.SeedsInWindow, 3),
+                ["seeds_per_second"] = R(st.WindowSeedsPerSecond),
+                ["section_seeds_per_second"] = R(st.SectionSeedsPerSecond),
+                ["tail_loss"] = Math.Round(st.TailLoss, 4),
+            };
         }
 
         private static Dictionary<string, object?> OverheadDoc(OverheadResult o)
@@ -965,8 +1342,9 @@ namespace SeedLab.Cli.Analysis
         }
 
         /// <summary>
-        /// One row per measured seed: <c># seedlab-profile-seeds/1</c>, then a header, then integers
-        /// only, LF line ends. Every phase any section entered gets a microseconds column.
+        /// One row per measured seed: <c># seedlab-profile-seeds/2</c>, then a header, then integers
+        /// only, LF line ends. <c>start_us</c> is the seed's start from its section's start (new in /2;
+        /// the other columns are /1's). Every phase any section entered gets a microseconds column.
         /// </summary>
         public void WritePerSeedCsv(string path)
         {
@@ -980,8 +1358,8 @@ namespace SeedLab.Cli.Analysis
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("# seedlab-profile-seeds/1\n");
-            sb.Append("section,workers,seed,worker,wall_us,alloc_kb");
+            sb.Append("# seedlab-profile-seeds/2\n");
+            sb.Append("section,workers,seed,worker,start_us,wall_us,alloc_kb");
             foreach (Phase p in cols) sb.Append(',').Append(PhaseMap.Name(p).Replace('.', '_')).Append("_us");
             if (_run.CountersOn)
             {
@@ -1000,6 +1378,7 @@ namespace SeedLab.Cli.Analysis
                     sb.Append(label).Append(',').Append(s.Result.WorkerCount.ToString(CultureInfo.InvariantCulture))
                       .Append(',').Append(r.Seed.ToString(CultureInfo.InvariantCulture))
                       .Append(',').Append(r.Worker.ToString(CultureInfo.InvariantCulture))
+                      .Append(',').Append(((long)Math.Round((r.StartTicks - s.Result.StartTicks) * 1e6 / f)).ToString(CultureInfo.InvariantCulture))
                       .Append(',').Append(((long)Math.Round(r.WallTicks * 1e6 / f)).ToString(CultureInfo.InvariantCulture))
                       .Append(',').Append((r.AllocBytes / 1024).ToString(CultureInfo.InvariantCulture));
                     foreach (Phase p in cols)
@@ -1040,6 +1419,14 @@ namespace SeedLab.Cli.Analysis
             o.Field("seeds", "key 0x" + _run.Key.ToString("X16", CultureInfo.InvariantCulture) + " from index " + _run.From
                              + (_run.Key == PilotSeedOrder.Key && _run.From == 0 ? " (the pilot order; first seed " + PilotSeedOrder.DocumentedFirstEight[0] + ")" : ""));
             o.Field("counters", _run.CountersOn ? "ON - timings include the counting" : "off");
+            if (_run.SaturateSeconds.HasValue)
+            {
+                o.Field("seed counts", "sized to keep every worker busy for about " + Out.F(_run.SaturateSeconds.Value, 0) + " s (at least "
+                                       + SaturationPlanner.MinPerWorker + " seeds per worker), from an uncounted pilot each; estimated "
+                                       + Out.F(_run.EstimatedSeconds ?? 0, 0) + " s in all");
+            }
+
+            if (_run.PlanFile != null) o.Field("seed counts", "replayed from " + _run.PlanFile);
             if (_run.Baseline != null)
             {
                 QuietBaseline b = _run.Baseline;
@@ -1119,6 +1506,7 @@ namespace SeedLab.Cli.Analysis
             o.Field("gc", "gen0 " + r.Gen0 + ", gen1 " + r.Gen1 + ", gen2 " + r.Gen2 + ", pause " + Out.F(r.PauseMs, 1) + " ms ("
                           + Out.F(s.PauseShare * 100, 2) + " % of wall)");
             o.Field("jit", r.JitMethods + " methods, " + Out.F(r.JitMs, 1) + " ms in the window" + (s.JitFlagged ? " - OVER 1 % of wall" : ""));
+            PrintResources(o, s);
             if (s.Counters != null)
             {
                 List<string> parts = new List<string>();
@@ -1129,6 +1517,87 @@ namespace SeedLab.Cli.Analysis
 
                 o.Field("counters/seed", string.Join(", ", parts));
             }
+        }
+
+        /// <summary>
+        /// The compact resource block of one measurement: processor time and how it splits, the steady
+        /// state, memory, disk and how the seed count was chosen - in plain units.
+        /// </summary>
+        private static void PrintResources(Out o, SectionView s)
+        {
+            SectionResult r = s.Result;
+            if (r.Resources)
+            {
+                int cores = Math.Max(1, Environment.ProcessorCount);
+                double process = r.CpuUserSeconds.HasValue && r.CpuKernelSeconds.HasValue ? r.CpuUserSeconds.Value + r.CpuKernelSeconds.Value : r.CpuSeconds;
+                string cpu = Out.F(process, 1) + " s of processor time"
+                             + (r.CpuKernelSeconds.HasValue ? " (" + Out.F(r.CpuKernelSeconds.Value, 1) + " s in the kernel)" : "")
+                             + " over " + Out.F(r.WallSeconds, 1) + " s = " + Out.F(r.WallSeconds > 0 ? process / r.WallSeconds : 0, 1) + " of "
+                             + cores + " cores busy (" + Out.F(r.WallSeconds > 0 ? 100.0 * process / (r.WallSeconds * cores) : 0, 1) + " %)";
+                o.Field("cpu", cpu);
+                if (s.WorkerCpuSeconds.HasValue && s.WorkerShareSeconds.HasValue)
+                {
+                    double sampler = r.Memory?.SamplerCpu?.TotalSeconds ?? 0;
+                    double other = process - s.WorkerCpuSeconds.Value - sampler;
+                    o.Field("cpu split", "workers " + Out.F(s.WorkerCpuSeconds.Value, 1) + " s, everything else " + Out.F(other, 1)
+                                         + " s (garbage collection threads, JIT, runtime); the workers were off a processor "
+                                         + Out.F(s.WorkerShareSeconds.Value - s.WorkerCpuSeconds.Value, 1) + " s of their "
+                                         + Out.F(s.WorkerShareSeconds.Value, 1) + " s (waiting for a collection, preempted, page faults)");
+                }
+
+                if (r.Memory != null)
+                {
+                    ResourceSummary z = r.Memory;
+                    List<string> parts = new List<string>();
+                    if (z.WorkingSet != null) parts.Add("working set peak " + Bytes(z.WorkingSet.Peak) + " (mean " + Bytes((long)z.WorkingSet.Mean) + ")");
+                    if (z.PrivateBytes != null) parts.Add("private " + Bytes(z.PrivateBytes.Peak));
+                    if (z.GcHeap != null) parts.Add("GC heap " + Bytes(z.GcHeap.Peak));
+                    if (z.GcCommitted != null) parts.Add("GC committed " + Bytes(z.GcCommitted.Peak));
+                    o.Field("ram", string.Join(", ", parts) + "; " + z.Samples + " samples every " + Out.F(z.Interval.TotalMilliseconds, 0) + " ms");
+                }
+
+                GCMemoryInfo g = r.LastGc;
+                if (g.Index > 0)
+                {
+                    ReadOnlySpan<GCGenerationInfo> gi = g.GenerationInfo;
+                    string loh = gi.Length > 3 ? ", large objects " + Bytes(gi[3].SizeAfterBytes) : "";
+                    o.Field("gc heap", "allocated " + Bytes(r.AllocatedBytes) + " (" + Bytes(r.Rows.Count > 0 ? r.AllocatedBytes / r.Rows.Count : 0)
+                                       + " per seed); last collection #" + g.Index + " (gen" + g.Generation + (g.Index > r.GcCountAtStart ? "" : ", before this window")
+                                       + "): heap " + Bytes(g.HeapSizeBytes) + ", fragmented " + Bytes(g.FragmentedBytes) + ", promoted "
+                                       + Bytes(g.PromotedBytes) + loh + (r.GcHeapCount.HasValue ? "; " + r.GcHeapCount.Value + " GC heap(s)" : ""));
+                }
+
+                o.Field("disk", r.Io == null ? "not available on this system"
+                                    : "read " + Bytes(r.Io.ReadBytes) + ", wrote " + Bytes(r.Io.WriteBytes) + " in the window (every read and write call; "
+                                      + "the profile writes only --out, after the last section)");
+            }
+
+            if (s.Steady != null)
+            {
+                SteadyStateResult st = s.Steady;
+                o.Field("steady", !st.Defined ? "no steady state: " + st.Why
+                                      : "all " + r.WorkerCount + " worker(s) busy for " + Out.F(st.WindowSeconds, 2) + " s of " + Out.F(st.SectionSeconds, 2)
+                                        + " s: " + Out.F(st.WindowSeedsPerSecond, 2) + " seeds/s there, " + Out.F(st.SectionSeedsPerSecond, 2)
+                                        + " over the whole section (start " + Out.F(st.HeadSeconds, 2) + " s, tail " + Out.F(st.TailSeconds, 2)
+                                        + " s, " + Out.F(st.TailLoss * 100, 1) + " % lost to them)");
+            }
+
+            if (r.Sizing != null && r.Sizing.Source == "saturate")
+            {
+                SectionSizing z = r.Sizing;
+                o.Field("sizing", "pilot " + z.PilotSeeds + " seeds, " + Out.F(z.PilotMeanSeedMs ?? 0, 1) + " ms each -> "
+                                  + Out.F(z.RateEstimate ?? 0, 1) + " seeds/s -> " + r.Rows.Count + " seeds for about " + Out.F(z.TargetSeconds ?? 0, 0) + " s"
+                                  + (z.Capped ? " (capped)" : ""));
+            }
+        }
+
+        private static string Bytes(long b)
+        {
+            double a = Math.Abs((double)b);
+            if (a >= 1024.0 * 1024 * 1024) return Out.F(b / (1024.0 * 1024 * 1024), 2) + " GiB";
+            if (a >= 1024.0 * 1024) return Out.F(b / (1024.0 * 1024), 1) + " MiB";
+            if (a >= 1024.0) return Out.F(b / 1024.0, 1) + " KiB";
+            return b.ToString(CultureInfo.InvariantCulture) + " B";
         }
 
         private static void PrintOverhead(Out o, OverheadResult v)

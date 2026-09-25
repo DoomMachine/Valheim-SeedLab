@@ -23,6 +23,10 @@ namespace SeedLab.RuntimeTests
             // dotnet run -c Release --project tests\SeedLab.Runtime.Tests -- --knob-matrix
             if (Array.IndexOf(args, "--knob-matrix") >= 0) return KnobMatrix.Run(args);
 
+            // The saturating profile end to end (--saturate, then --plan) against the built vseed.exe:
+            // dotnet run -c Release --project tests\SeedLab.Runtime.Tests -- --profile-check
+            if (Array.IndexOf(args, "--profile-check") >= 0) return ProfileSmoke.Run(args);
+
             Console.WriteLine("SeedLab.Runtime tests");
             Console.WriteLine(new string('=', 78));
 
@@ -55,6 +59,9 @@ namespace SeedLab.RuntimeTests
 
             Section("10. The processor, the C runtime and the vector path in the stamp; libm-dense and subnormals");
             CpuChecks.Run(Check);
+
+            Section("11. The saturating profile's arithmetic: seed counts, the steady state, plans, the memory sampler, /proc");
+            ProfileMathChecks.Run(Check);
 
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));
