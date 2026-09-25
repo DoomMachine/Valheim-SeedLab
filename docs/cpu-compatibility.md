@@ -222,20 +222,46 @@ Hardware and Windows version only, as the report records them.
 | date | CPU | Windows, C runtime | package | result |
 |---|---|---|---|---|
 | 2026-09-25 | Intel Core i7-12700K (Alder Lake, family 6 model 151 stepping 2; 8 performance cores with SMT + 4 efficiency cores, 20 logical; AVX2 and FMA, AVX-512 fused off) | Windows 11 Pro 25H2 build 26200.9457, `ucrtbase.dll` 10.0.26100.9444 | machine report 1.0.0 (SeedLab `11aeb8f`), bundled .NET 10.0.12 | **93 of 93 checks PASS** at as-found (avx2), AVX-512 off, AVX2 off (avx) and scalar: numerics 271/271, natives 263,778/263,778, the 11 natives checks, 7 fingerprints equal to the reference made on the Ryzen 7 9800X3D |
+| 2026-09-25 | AMD Ryzen 7 9800X3D (Zen 5, family 26 model 68 stepping 0; 8 cores with SMT, 16 logical; AVX-512 with VBMI) - the reference machine, the same published zip run on a quiet machine for comparison | Windows 10 Pro 22H2 build 19045.6466, `ucrtbase.dll` 10.0.19041.3636 | the same package (SHA-256 of the zip checked against the release) | **93 of 93 checks PASS** at avx512, avx2, avx and scalar |
 
 What it settles: SeedLab's answers are bit-identical on an Intel hybrid CPU and an AMD Zen 5 CPU, and on
 Windows 11's C runtime as well as Windows 10's, for every value the report compares. Both CPUs have FMA3,
 so a CPU without FMA3 is still untested.
 
-Its timings (a desktop on mains power, 15.4 % background load; medians of three 10 s runs): the biome grid
-(256 x 256 points, 80 m apart) 106.8 seeds/s on 1 thread, 938.7 on 10 (8.8x), 1,439.4 on 20 (13.5x);
-pre-generation 4.9 seeds/s on 1 thread and **21.3 on 20 (4.3x)**. The reference machine's pre-generation also
-stops near **21-22 seeds/s** from 8 threads up (6.8 on 1 thread, 21.6 on 8, 21.5 on 16; 2026-09-23, with other builds running, so
-indicative only). Two different CPUs
-reaching the same ceiling points at a limit in the code - allocation, garbage collection or a shared
-resource - rather than at the processor, which is what the quiet-machine profile's scaling step (P2:
-CPU time per seed at 1, 8 and 16 workers, garbage-collection share, allocation per phase) is for. Lifting it
-would speed every height, river and location query on any CPU with more than a few cores.
+The two machines' timings (both on mains power; medians of three 10 s runs; background load 15.4 %
+on the Intel machine, 3.9 % on the AMD one):
+
+| work | i7-12700K (20 logical) | Ryzen 7 9800X3D (16 logical) |
+|---|---|---|
+| biome grid (256 x 256 points, 80 m apart), 1 thread | 106.8 seeds/s | 144.0 seeds/s |
+| biome grid, half the threads | 938.7 on 10 (8.8x) | 1,013.3 on 8 (7.0x) |
+| biome grid, all threads | 1,439.4 on 20 (13.5x) | 1,659.0 on 16 (11.5x) |
+| pre-generation (lakes, rivers, streams), 1 thread | 4.9 seeds/s | 7.0 seeds/s |
+| pre-generation, all threads | **21.3** on 20 (4.3x) | **22.8** on 16 (3.2x) |
+
+**Why pre-generation stops near 22 seeds/s on both, measured 2026-09-25 on the quiet AMD machine with
+`vseed profile --tier t4` (256 seeds of the pilot order per worker count):** it is garbage collection, not
+the processor. Pre-generating one seed allocates 48.8 MiB (21.9 in the river rendering, 25.9 in the first
+stream rendering). The machine-report package runs .NET's default workstation GC; `vseed` runs the server GC.
+
+| workers | `vseed` (server GC) | GC share of wall time | the same with the package's workstation GC | GC share |
+|---|---|---|---|---|
+| 1 | 7.2 seeds/s | 5 % | 7.1 seeds/s | 5 % |
+| 2 | 13.6 | 10 % | | |
+| 4 | 23.7 | 17 % | | |
+| 8 | 39.4 | 26 % | | |
+| 16 | **55.6** (7.8x) | 36 % | **22.2** | 51 % |
+
+So the package's pre-generation figure is a property of its GC setting and understates what `vseed` does;
+measured with `vseed profile`, `vseed`'s own pre-generation runs at about 55 seeds/s on this machine with all
+16 workers (what `--mode full` uses) and about 39 with 8 (`balanced`, the default, uses about half the cores);
+a search adds its own work on top. CPU time per seed rises only 1.3x
+from 1 to 16 workers (SMT sharing a core), so what remains of the gap to linear is still the collector: at
+16 workers it holds up 36 % of the wall time. Allocating less in the river and stream rendering (reusing
+their buffers per worker) is the lever that would speed every height, river and location query on any CPU
+with several cores (**Unverified:** how much it gains; not tried yet). The same profile also shows where
+pre-generation's own CPU time goes: 78 % is the stream search (`streams1` + `streams2`), 18 % rendering,
+4 % lakes and under 1 % the river search.
 
 ## For testers on other CPUs
 
