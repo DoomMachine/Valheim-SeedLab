@@ -799,7 +799,8 @@ per-point events (base heights, world angles, river lookups), and `--out profile
 - **`--saturate <seconds>`** sizes every measurement so all its workers stay busy for about that long
   (a short uncounted pilot measures the rate first; the plan and the estimated time are printed before
   anything is measured), and **`--plan <profile.json>`** replays an earlier profile's exact sections,
-  worker counts and seeds, so a before/after comparison measures the same worlds.
+  worker counts and seeds, so a before/after comparison measures the same worlds. How to run it and
+  read its numbers: [`docs\benchmarking.md`](docs/benchmarking.md).
 
 - **It changes no answer.** Timestamps are taken only at phase boundaries, generator code can write
   the profiler but never read it (an IL check in the tests enforces that), and the world fingerprints
@@ -1077,6 +1078,12 @@ scales it, running about 1.5× ahead of a real run on a heavy T3 query and about
 cheapest biome-only one. It says so in its own output. Treat it as an upper bound and confirm with
 `--seeds 20000`.
 
+To see where a real search's time, memory and disk go, stage by stage (start-up, planning, the scan,
+a funnel's stages, writing the results), `tests\bench-search.ps1` runs a fixed set of representative
+searches on every core and reports each stage's wall-clock time, processor time, busy cores, peak memory,
+bytes written and the files left behind. How to run it and read it:
+[`docs\benchmarking.md`](docs/benchmarking.md).
+
 ### Why the spread
 
 **Cost per seed is how much of the world the goal forces you to evaluate, plus a fixed cost for
@@ -1336,8 +1343,9 @@ seedlab.sh, SeedLab.command         the same for macOS and Linux (not tested the
 tests\SeedLab.Acceptance.Tests   the 32-check gate against the game's own output
 tests\SeedLab.Search.Tests       the query language, the tiers and prefilter parity
 tests\SeedLab.Search.Safety.Tests  the output layer: bounds, rotation, kills and resumes
-tests\SeedLab.Runtime.Tests      the runtime layer (122 checks)
-tests\SeedLab.Tests              the library-level checks, incl. the natives gate
+tests\SeedLab.Runtime.Tests      the runtime layer (311 checks)
+tests\SeedLab.Tests              the library-level checks, incl. the natives gate and the river golden
+tests\bench-search.ps1           a real search's stages: time, processor, memory, disk   docs\benchmarking.md
 data\1.0.15-59f53fb5\    the captured game data (its own README is the authority)
 groundtruth\             what the game itself wrote
 docs\                    one short page per subsystem, plus docs\specs\
@@ -1350,6 +1358,7 @@ docs\                    one short page per subsystem, plus docs\specs\
 [`finding-a-seed.md`](docs/finding-a-seed.md) (start here) ·
 [`game-data.md`](docs/game-data.md) (the game data, step by step) ·
 [`search.md`](docs/search.md) · [`measurements.md`](docs/measurements.md) (every cost number) ·
+[`benchmarking.md`](docs/benchmarking.md) (measuring it yourself) ·
 [`limits.md`](docs/limits.md) (what is not true of it) · [`generator.md`](docs/generator.md) ·
 [`locations.md`](docs/locations.md) · [`data.md`](docs/data.md) · [`dumper.md`](docs/dumper.md) ·
 [`web.md`](docs/web.md).
