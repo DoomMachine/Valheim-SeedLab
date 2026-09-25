@@ -1,6 +1,6 @@
 ---
 name: seedlab
-description: SeedLab and its vseed CLI - DoomMachine's offline, bit-exact reimplementation of Valheim 1.0.15 world generation - the repository these skills ship in. Use it whenever a task needs the biome, terrain height, rivers, map image, island or land statistics, or location placement (bosses, traders, dungeons, altars) of a seed without launching the game; whenever a seed text must be hashed, inverted or searched for; whenever someone asks "find me a seed with X"; and whenever work touches SeedLab's source, its data\ snapshot of game data, its ground truth, its gates, the dumper plugin, or the local web map on 127.0.0.1.
+description: SeedLab and its vseed CLI - DoomMachine's offline, bit-exact reimplementation of Valheim 1.0.15 world generation - the repository these skills ship in. Use it whenever a task needs the biome, terrain height, rivers, map image, island or land statistics, or location placement (bosses, traders, dungeons, altars) of a seed without launching the game; whenever a seed text must be hashed, inverted or searched for; whenever someone asks "find me a seed with X"; and whenever work touches SeedLab's source, its data\ snapshot of game data, its ground truth, its gates, the dumper plugin, the local web map on 127.0.0.1 and its start/stop scripts, the per-seed performance profiler, or which CPUs and vector paths SeedLab is proved on.
 ---
 
 # SeedLab
@@ -20,7 +20,7 @@ never do, and how to bring it forward after a game update.
 | --- | --- |
 | Source | the repository root (11 `src\` projects, 3 `tools\`, 3 `tests\`); a git repository since 2026-09-24, published **public** at https://github.com/DoomMachine/Valheim-SeedLab (MIT). `data\` and `groundtruth\` are git-ignored on the user's decision and exist only locally. Commits: author DoomMachine with the noreply address, **never a `Co-Authored-By` line** (a local `commit-msg` hook refuses one) |
 | Binary | `src\SeedLab.Cli\bin\Release\net10.0\vseed.exe` (`dotnet build src\SeedLab.Cli\SeedLab.Cli.csproj -c Release`) |
-| Needs | .NET 10 SDK; ASP.NET Core 10 shared runtime for `vseed serve`. **No NuGet packages** - it builds offline |
+| Needs | .NET 10 SDK; the ASP.NET Core 10 shared runtime for **every** `vseed` command, not only `serve` (`vseed.runtimeconfig.json` lists `Microsoft.AspNetCore.App`). **No NuGet packages** - it builds offline |
 | Game data | `data\1.0.15-59f53fb5\` - read out of the running game, stamped with the build's `assembly_valheim.dll` SHA-256 |
 | Ground truth | `groundtruth\` - two worlds the game generated (saves + map caches), its own logs, the native corpora |
 | In the game | only `tools\SeedLab.Dumper`, a BepInEx plugin. **It is NOT installed**: run 6 (dungeon names) ran on 2026-09-24 16:15-16:16 and the plugin was retired the same day to `_ModSource\_retired\DoomMachine-SeedLabDumper-20260924-run6` (earlier copies beside it) - see "the dumper" below. Nothing else in SeedLab runs inside Valheim |
@@ -94,13 +94,14 @@ location table.)
 | Natives (11 checks) | `dotnet run --project tests\SeedLab.Tests -c Release -- natives` | **262,780/262,780** `Mathf.PerlinNoise`; 276/276 `Random` traces (1,980 draws); `FloatToHalf` ties away from zero; 93/93 libm; 429/429 hash vectors |
 | Generator internals | `dotnet run -c Release --project tools\SeedLab.GoldenCheck` | 3 seeds, every private field bit-identical: offsets, river seeds, lakes/rivers/streams in order, 2.1 M river points, 8.5 M float comparisons, 0 differing |
 | Fast subset, any time | `vseed selftest` (`--quick`, ~4 s) | re-checks this build against the ground truth |
-| Web server + its security | `vseed serve --selftest` | tiles vs the game's texture, markers, search parity, loopback/Host/CORS/CSP/traversal |
+| Web server + its security | `vseed serve --selftest` | tiles vs the game's texture, markers, search parity, loopback/Host/CORS/CSP/traversal, POSTs from other pages refused, the stop endpoint |
 | Seed arithmetic | `vseed space` | recomputes the lane tables and round-trips before printing |
 
 One of the two ground-truth worlds, `testworldclaude` (seed 319486907), is a **hold-out**: it was never
 used while porting the biome and height code; it matched blind on biome and to 99.9998 % on height, and
-a last one-ulp residual was then diagnosed on both worlds and closed. The fully independent check is
-the third, fresh seed 75539276 (GoldenCheck).
+a last one-ulp residual was then diagnosed on both worlds and closed (valheim-worldgen
+`world-generator.md`). The fully independent check is the third, fresh seed 75539276 (GoldenCheck and
+the location gate).
 
 ## Running it
 
@@ -112,14 +113,26 @@ vseed map <seed>             a PNG (--px, --zoom, --rivers, --plain --palette ga
 vseed hash|invert|space      seed text <-> int32, and the size of the space
 vseed worlds|world <name>    your own saves, read-only
 vseed data|selftest|bench    what data is loaded, is it still right, how fast is this machine
+vseed profile                where one seed's time goes, phase by phase (marks a busy machine TAINTED)
 vseed presets|search|explain search the seed space; explain why one seed passed or failed
-vseed serve                  the local map on http://127.0.0.1:8731 (loopback only, no external request)
+vseed serve                  the local map on http://127.0.0.1:8731 (loopback only, no external request);
+                             --stop / --status find and stop a running one
 vseed clean                  what SeedLab holds in its cache root; --yes removes it
 ```
 
 - Global flags, either side of the command name: `--mode background|balanced|full` (default
   **balanced**), `--threads`, `--cache-dir`, `--ignore-running-game`, `--skip-self-test`,
-  `--accept-unverified-platform`, `--json`, `--debug`.
+  `--accept-unverified-platform`, `--simd auto|scalar|avx2|avx512` (or `SEEDLAB_SIMD`; a ceiling on
+  the vector path, never a change of result), `--json`, `--debug`.
+- **For non-technical users** the repository root has one-click scripts (since 2026-09-25): `SeedLab.bat`
+  (a menu) and `SeedLab 1 - Install or update.bat` to `SeedLab 6 - Remove the build.bat` on Windows,
+  `seedlab.sh` / `SeedLab.command` on macOS and Linux (`docs\scripts.md`). Every session writes
+  `<cache root>\logs\vseed.log`; the previous one is `vseed-prev.log`.
+- **Other CPUs**: every vector path gives the same bits and the self-test fails closed if one does not.
+  `vseed selftest --report` is the machine report to run and send from an untested CPU (needs neither
+  `groundtruth\` nor `data\`); `docs\cpu-compatibility.md` says which path each CPU family gets and what
+  is proved where. A standalone package for testers without Valheim or .NET:
+  https://github.com/DoomMachine/Valheim-SeedLab-IntelTest (release v1.0.0). First result, an Intel i7-12700K: all 93 checks pass (history.md).
 - `--json` on any data command; exit codes `0` ok, `1` a check failed, `2` bad command line, `3` not
   found, `4` internal fault.
 - **The block size is automatic since 2026-09-24** (CLI and web alike; ceiling 256, the user's
@@ -216,14 +229,16 @@ is the user's call, not an agent's - it is recorded here so the next session kno
 | `references/history.md` | what was built and corrected, in order, with evidence |
 
 The project's own `docs\` has one short page per subsystem (`generator`, `locations`, `search`, `web`,
-`data`, `dumper`) plus, since 2026-09-23, three pages that are the authority for a whole question:
+`data`, `dumper`, `scripts`) plus pages that are the authority for a whole question:
 
 | Project page | It is the authority for |
 | --- | --- |
 | `docs\measurements.md` | **every cost/throughput number**, with the machine, the date and the load |
 | `docs\limits.md` | what is NOT true of the tool: grid-relative metrics and their measured errors, bounded rates, unpredictable things, one untested architecture, what is not implemented |
 | `docs\finding-a-seed.md` | the user-facing path: build, search, read the result, open the map |
-| `CHANGES-FOR-THE-USER.md` | what changed in the 2026-09-23 wiring pass, with the proving command per item |
+| `docs\cpu-compatibility.md` | which vector path each CPU gets, the per-level proofs, the machine reports received |
+| `docs\game-data.md` | making `data\` from the reader's own game, step by step (the dumper) |
+| `CHANGES-FOR-THE-USER.md` | what changed for the user, from the 2026-09-23 wiring pass on, with the proving command per item |
 
 `docs\specs\` holds the eight design documents the source cites by name and section. Where a spec and
 the code disagree, **the code and the goldens are the evidence**.

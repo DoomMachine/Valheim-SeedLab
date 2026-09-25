@@ -7,10 +7,10 @@ so nobody re-litigates it.
 **Status, updated 2026-09-23 after the wiring pass:** sections 1, 2, 4, 5, 6, 7, 9, 10, 12 and eight
 of the nine must-fix defects in section 11 are **built and reachable from shipped commands** - the
 proving command for each is in the project's `CHANGES-FOR-THE-USER.md`, and the measured numbers that
-replace section 0's are in `docs\measurements.md`. Still unbuilt: **section 3's named
-`--strategy funnel|sample`** (what ships is `search.screen` plus the scan order, doing the same work
-in the small, with no funnel-ratio report), **defect 9's write-path tripwire test**, and GPU
-(section 8, rejected on purpose). Section 0's record-size law and the 7.36 TB worst case are the
+replace section 0's are in `docs\measurements.md`. Section 3's named `--strategy auto|funnel|sample`
+shipped later the same day, with its stage-1 ratio report (`FunnelRun`; history, "the funnel strategy
+shipped"). Still unbuilt (checked 2026-09-25): **defect 9's write-path tripwire test** (listed in the
+project's `docs\limits.md`), and GPU (section 8, rejected on purpose). Section 0's record-size law and the 7.36 TB worst case are the
 *pre-fix* measurements: that command is now refused before it starts. (The original lived in a session scratchpad, which does not survive; it was copied
 here on 2026-09-23. An earlier copy was lost once already when an agent cleaned its scratch folder.)
 
@@ -219,6 +219,10 @@ of Ctrl+C was explained to them, **"On the server-stop design - confirming the p
   opens it in a new window of its own, so Ctrl+C and closing reach vseed alone.
 - **Stop SeedLab on the page**: a first dialog says what stopping does; if a search is running, a SECOND
   warning names it and says what stopping costs (the finished part is saved; the resume command is shown).
+  **Exception, a funnel in its first stage**: it has no checkpoint yet, so stopping it loses its work so far.
+  Every stop text - this dialog, the first Ctrl+C's message and both `--stop` question paths - says that for
+  such a search, and offers no resume command (per search, via `ServeConsole.StopCosts`; a review on
+  2026-09-25 found one sentence promising a saved part for every search).
 - **Idle reminder, never an automatic stop**: after 60 minutes with no user activity (the page's own polling
   does not count; a running search does) the page, and the server window, suggest stopping it, with the
   option to do so; ignored or "Keep running" starts another 60 minutes, and so on.
@@ -227,7 +231,16 @@ of Ctrl+C was explained to them, **"On the server-stop design - confirming the p
 - **Ctrl+C only counts in the server's own console window**, and only twice within 10 seconds; the first
   press stops nothing and says what is running. Closing the window (which cannot be refused) saves a running
   search's checkpoint before the process ends.
+- **A Windows sign-out or shutdown takes the same graceful stop** (added 2026-09-25, after a review found it
+  never did: a console handler gets no sign-out or shutdown event in a process that has loaded user32.dll,
+  valheim-modding `pitfalls.md` section 10). A hidden top-level window on its own message loop
+  (`src\SeedLab.Cli\Infra\SessionEndWindow.cs`) answers `WM_QUERYENDSESSION` "yes" at once - SeedLab never
+  holds up a shutdown, and nothing stops yet because another program may still cancel it - and on
+  `WM_ENDSESSION` runs the same stop as closing the window: searches saved, the registry file removed. Tested
+  by sending the window both messages; a real sign-out or shutdown has not been tested.
 - A second `vseed serve` opens the browser at the running one instead of failing.
+
+**Built 2026-09-25** (`25f2a9f`; history.md, "the web server starts and stops safely").
 
 ## 14. The session log: exactly two files (decided 2026-09-24)
 
@@ -236,6 +249,8 @@ information, but not a lot of information, and there can be redundancy in case o
 every session that starts a runtime, `vseed.log` becomes `vseed-prev.log` (replacing the older one) and a
 fresh `vseed.log` is written, BepInEx-style (the user's model: `BepInEx\LogOutput.log`, rewritten each game
 start). A vseed started while another runs writes `vseed.log.1` (to `.4`), removed at a later start.
+**Built 2026-09-25** (`25f2a9f`), replacing `95bba24`'s single log; the size cap and the append when
+`vseed-prev.log` is held are the implementer's choices, recorded in history.md.
 
 ## 15. Performance direction (discussed 2026-09-24)
 
@@ -254,8 +269,31 @@ compression ratio, and profile. GPU stays an approximate screening idea only (se
 **The pilot, decided by the user (2026-09-24)** from the merged design (section 16 of the author's working
 notes, which are not in this repository): atlases live in **a folder the user names** - never the cache root, which `vseed clean` may empty -
 and the pilot's in a staging folder on the author's machine; the pilot stores **all 183** location types (not the 67 the
-presets use); it builds in **`--mode full`**; and it runs the **required tier and the overnight tier** (~8-10 h
-plus ~12 h of atlas-vs-live comparison over all 20,000 seeds), on a quiet machine, on a night the user chooses.
+presets use); it builds in **`--mode full`**; and it runs the **required tier and the overnight tier**, on a quiet machine, on a night the user chooses.
+**Size: 5,000 seeds, not 20,000** (the user, 2026-09-25: the 20,000 was "a number that I pulled out of thin air";
+asked, they set the atlas pilot to 5,000). The first 5,000 seeds of the pilot order are the count study's sample, so
+`count-sample.bin` cross-checks every stored count for free; the build is ~1 h at full with all 183 types instead
+of ~3.5-4 h, the overnight comparison ~3 h instead of ~12, and an atlas grows later without recomputing a row.
+The profile keeps its own fixed battery (~1,300 seed-runs), and the whole-range size projection keeps its two
+cheap sets (65,536 consecutive seeds; 1,000,000 seeds at G384).
+
+**Atlas == live, the test baseline (the user, 2026-09-25: "Let's be rigorous and err on the side of caution - set it
+to 9.5 million").** A bug is a fixed defect with an unknown trigger rate, so the baseline is a stated confidence:
+for a defect that fires once in N seeds, testing n seeds sees it with probability 1 - e^(-n/N). The user's line:
+anything rarer than 1 in 1,000,000 is not worth contemplating now. So:
+- **Whole-space families - biomes at G384, G192 and G96: every stored value of 9,500,000 seeds** (indices
+  0..9,499,999 of the pilot order) compared with a fresh live computation, 0 differences required. It sees a
+  1-in-1,000,000 defect with 99.99 % probability (1 - e^-9.5) and a 1-in-500,000 one with 99.9999994 %; a clean run
+  bounds any remaining rate below ~1 in 3.2 million at 95 % (rule of three). Cost on the 9800X3D at full, both
+  sides: ~15 min (G384) + ~41 min (G192) + ~2.2 h (G96) = **~3.1 h**, on the pilot night; the rows are the start
+  of a whole-space atlas, so none of it is thrown away.
+- **Expensive families (heights, rivers, locations)** cannot reach such counts (locations ~1.9 seeds/s: 9.5 M
+  seeds would be ~58 days): every value of the 5,000 pilot rows is checked (a clean run bounds the rate below 1 in
+  1,667 at 95 %), and their safety rests on the design - the atlas never writes a result; every seed it passes is
+  re-evaluated live and every value compared, so the only silent failure is a missed match.
+- **Boundary defects are not sampled**: exhaustive tests enumerate every exact-boundary cell for every grid and
+  edge, and the rare stale-river-cache state is flagged, routed live and tested with a planted condition.
+- **Pass rule:** zero differences anywhere; any difference stops the pilot with the evidence.
 The design's recommendations stand for the rest: `--atlas` never changes which seeds a command visits (explicit
 key/seeds), atlas builds are CLI-only in v1, screen false negatives are kept and named, no provenance field on
 records, non-FMA3 CPUs stay fail-closed, and the profile decides whether scalar speed-ups or AVX-512 come first.
@@ -275,6 +313,17 @@ records, non-FMA3 CPUs stay fail-closed, and the profile decides whether scalar 
   testable here: whether the C runtime's `sin/cos/pow` pick CPU-specific code on other processors (the
   per-machine self-test fails closed if they do), hybrid P/E-core Intel parts (12th gen+) where equal-size
   blocks meet unequal cores, and arm64. Evidence from other real CPUs is still needed.
+  **First evidence, 2026-09-25:** a tester ran the Intel test package (machine report 1.0.0, SeedLab `11aeb8f`) on an
+  Intel Core i7-12700K (Alder Lake, 8P+4E, AVX2, AVX-512 fused off) under Windows 11 25H2 (`ucrtbase.dll`
+  10.0.26100.9444): **93/93 checks PASS at four levels** - numerics 271/271, natives 263,778/263,778, 7 world
+  fingerprints equal to the 9800X3D's. So SeedLab is bit-identical across Intel/AMD and Windows 10/11 C runtimes for
+  everything the report compares. Still open: CPUs without FMA3, `libm-dense` on Windows 11 (the package predates
+  it), hybrid per-core-type timing. **Performance lead:** its pre-generation stops at 21.3 seeds/s on 20 threads -
+  the 9800X3D stops near 21-22 from 8 threads up. **Unverified:** that one ceiling on two CPUs points at the code
+  (allocation / GC / a shared resource) rather than the hardware - nothing has profiled it yet; the quiet-machine
+  profile's P2 step is there to find it. The report is kept with the author's working notes;
+  `docs\cpu-compatibility.md` records it (`ab45aa2`, merged into main as `81e3f97` on 2026-09-25). The package
+  itself: https://github.com/DoomMachine/Valheim-SeedLab-IntelTest, release v1.0.0 (history.md).
 - **Intel SDE (Software Development Emulator) - APPROVED by the user, deferred** (*"Log the SDE for Intel as a
   future task - it is approved, just not now"*, 2026-09-24): run SeedLab's self-test and fingerprints on this
   machine as if on older/newer Intel CPUs (Haswell, Skylake, Ice Lake, Sapphire Rapids, ...) to exercise the
@@ -284,3 +333,5 @@ records, non-FMA3 CPUs stay fail-closed, and the profile decides whether scalar 
   another person can run on an Intel Windows PC with no game and no .NET installed: CPU facts .NET sees, the
   machine self-test, world fingerprints at each instruction-set level compared with this PC's, a short timing
   run - hardware and OS version only, nothing personal - and no game data in it (Iron Gate's content).
+  **Built and released 2026-09-25** as `Valheim-SeedLab-IntelTest` v1.0.0 (history.md), a separate program built
+  from SeedLab `11aeb8f`; since `e4b9079`, `vseed selftest --report` gives a comparable report from SeedLab itself.

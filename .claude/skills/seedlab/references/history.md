@@ -4,7 +4,342 @@ Newest first. Each entry says what changed, why, and how it was verified. Game f
 discovered are recorded in the valheim-worldgen / valheim-modding references and only pointed at from
 here.
 
-## 2026-09-24 (latest) - funnel stage 2 checkpoints where it was told, and `World..ctor` explained
+## 2026-09-25 (latest) - the README says the session log records the process ID
+
+The pre-push release audit (its note 6) found that the
+README's list of what a session log holds left out the `process  pid <n>; <OS> (<RID>); <framework>` line
+that `RuntimeContext` writes at the start of every session. The user's standard counts process IDs among the
+things to take out before posting a log, so the list now names it, beside the other things to remove.
+README only. Committed as `831f55a`, on top of the merge below.
+
+## 2026-09-25 - `vseed profile` and the CPU safety net, merged into main
+
+Steps (1) and (2) of decisions.md section 15 and the CPU-compatibility item of section 16 (the why is there,
+not repeated here). Built on the branch `perf-track` in a worktree of its own
+from the merged design (the author's working notes, not in this repository); merged as `81e3f97` "Merge the profiler
+and the CPU safety net", after which the branch and the worktree were removed. Every piece had to change no
+value the generator computes, so each carries its own proof of that.
+
+What changed, commit by commit:
+- `ed0695b` - the profiler's fixed interface: `Phase` (the permanent phase map; the ids are column ids of a
+  stored profile, appended and never renumbered, 7 left as a hole), `PhaseSink` (one thread's ticks, entries
+  and allocated bytes per phase, reached through a thread-static that is null unless a profiler set it) and
+  `PhaseClock` (per-point counters behind `SEEDLAB_PROFILE_COUNTERS`, a static readonly flag read once, so
+  the JIT removes every counter site from a normal run - and the switch only takes effect in a new process).
+  Read-only views of the river cache (`RiverCacheIsStale`, `RiverCacheCell`, `CopyRiverCachePoints`).
+- `95e542c` - **`vseed profile`**: where one seed's time goes, phase by phase (the constructor,
+  pre-generation and its nine steps, the biome and height passes per grid, the structure counts, the
+  location oracle's six steps), with median, p10, p90, mean, share and allocation per phase, JIT and GC in
+  the measured window, `--threads` as a list, `--counters`, `--overhead`, `--out` (schema
+  `seedlab-profile/1`) and `--per-seed`. Seeds come from one fixed order (`PilotSeedOrder`, the count
+  study's key `0xA17A25EED10C5117`), so profiles from different machines cover the same worlds.
+  **`QuietMachineProbe`** watches the machine before and during the work and marks a run TAINTED, naming
+  what it saw, instead of trusting a busy machine. **`WorldFingerprint`**: five SHA-256 layers per world,
+  with a 64-seed reference recorded before any phase boundary was wired in. Found on the way:
+  `RiverCacheIsStale` is true on 2 of the 64 reference worlds, not about 1e-5 as the design assumed (the
+  1e-5 was the effect on heights, not how often the state occurs).
+- `e4b9079` - **the CPU safety net**. `SimdDispatch` chooses the vector path once per process from the
+  runtime's `IsSupported` flags (never a CPU name), its view of 512-bit speed, a `--simd` /
+  `SEEDLAB_SIMD` ceiling (`auto|scalar|avx2|avx512`) and the widest kernel built. That is AVX2: AVX-512
+  is detected and named but runs the AVX2 path, and says so. `SEEDLAB_SIMD_EXPECT` lets a proof run state
+  what a runtime switch must have done, and the WorldGen module initialiser refuses to load where it did
+  not. The self-test stamp is filed under the ISA flags, the processor from CPUID, `ucrtbase.dll`'s
+  version and the path, and two built-in suites are new (`libm-dense`, `denormals`). **`vseed selftest
+  --report`** is the machine report for testers on other CPUs: it needs neither `groundtruth\` nor
+  `data\` and prints no machine name, user name or path. Also `--simd-all` (prove every path the hardware
+  has), `--isa-json`, `docs\cpu-compatibility.md` and `tests\level-matrix.ps1`.
+- `d905502` - thirteen review findings, all real (two reviews). The quiet probe could not see about a third of the processes (see valheim-modding
+  `pitfalls.md` section 3); an unreadable process now keeps its name, and a second figure, the whole
+  machine's busy time (`GetSystemTimes`, a P/Invoke kept in the CLI as `MachineCpu`; `/proc/stat` on
+  Linux), is judged too. A tainted baseline no longer raises the limit; `SeedLab.*` processes are watched;
+  generator code may not read the profiler's state at all (`BeginCurrent`/`EndCurrent`); the `patch` phase
+  had timed a whole second `MeasureBiomes` (`WorldMeasurement.MeasurePatches` is split out); a leftover
+  `SEEDLAB_PROFILE_COUNTERS=1` now warns; a vector-path divergence names `vseed --simd scalar selftest
+  --report` as the way out; every harness refuses to start while a `DOTNET_` or `COMPlus_` code-generation
+  switch is set and proves its default level against CPUID; the levels K10 (`DOTNET_EnableAVX=0`) and K3c
+  (`COMPlus_EnableAVX512=0`) were added; AVX10.1/10.2 are recorded; the report prints an exception's type
+  and file name only, never its message (which can hold a path).
+- `7d433d1` - `d905502` could take an ended timing leg's CPU time out of the machine figure twice, so a
+  busy interval could read as quiet in `--overhead`. Each reading now carries every excluded child's
+  cumulative CPU time, and a window uses the difference between its two readings.
+- `ab45aa2` - the first machine report from an Intel CPU (entry below).
+
+Verified on the branch (a machine busy with other work, so no timing is a measurement): 64 seeds x 5
+fingerprint layers identical to the pre-profiler recording with the profiler off, phases on, and phases plus
+counters on, and the phase tree adds up on every seed; 7 of 7 planted profiler reads flagged. At each of K0,
+K3, K6, K7, K8 and K10, every process asserting its own level: fingerprints identical and 30 of 30 gate runs
+pass (Acceptance 32/32, location gate 12,228/12,228, natives 11/11, GoldenCheck, `vseed selftest`); knob
+matrix 31/31 with eight states giving eight stamp keys; numerics tripwire 13 of 13 planted uses flagged.
+Search results byte-identical before and after: 11 presets (2,360 seeds) between the `11aeb8f` and
+`95e542c` builds, 14 searches (3,080 seeds, 1,130 records) between `e4b9079` and `d905502`. On the merged
+tree, re-run by the main session: Runtime.Tests 266/266, Search.Tests 536/536, Acceptance 32/32, natives
+11/11, proofs refuse/policy/blocks exit 0, killtest bare 3/3 IDENTICAL and `-KeepAll` 0 DIFFER, `vseed
+selftest` PASS, `vseed selftest --report` PASS with 40/40 digests on AVX2, `vseed serve --selftest` PASS. The
+merge kept both sets of runtime checks (the server registry, the quiet probe, the processor).
+
+Still open:
+- Not tested: the Linux `/proc/stat` reader; AVX10.2 code generation and APX (no such hardware, and .NET
+  10.0.12 has no public way to ask about APX); the CPUID grouping rule on a CPU that has only part of a
+  feature group, and the OS register-state setting, which managed code cannot read.
+- A probe that runs under 1 s has no earlier sample to merge its short last one into, so a false taint is
+  still possible there; the short-tail test relies on timing.
+- Not built, on purpose: timed calibration between paths (with one vector path there is nothing to time;
+  `--simd scalar` is the manual override), the denormal probe in the search workers, the study of the C
+  runtime's non-FMA3 path (a CPU without FMA3 still fails closed), any AVX-512 kernel.
+- The profiler's cost when switched off (at most 1 %, PT4) is not established; it needs the quiet machine.
+  The profile itself and the atlas pilot (decisions.md section 15) have not run.
+- A false `SEEDLAB_SIMD_EXPECT` stops the gate executables with a `TypeInitializationException` rather than
+  a sentence (only `vseed` prints one); the gates count it as a failure, so the proofs hold.
+- For the user: `vseed profile --out` refuses the game's install folders except a folder named
+  `_ModSource`, hard-coded so the pilot can write to a staging folder under it.
+
+## 2026-09-25 - the first machine report from another CPU: an Intel i7-12700K, bit-identical
+
+A tester ran the machine report package (the `Valheim-SeedLab-IntelTest` entry below; SeedLab `11aeb8f`,
+bundled .NET 10.0.12) on an Intel Core i7-12700K (Alder Lake, 8 performance + 4 efficiency cores, AVX2 and
+FMA, AVX-512 fused off) under Windows 11 Pro 25H2 with `ucrtbase.dll` 10.0.26100.9444. **All 93 checks
+passed at four levels** (as found = AVX2, AVX-512 off, AVX2 off, scalar): numerics 271/271, natives
+263,778/263,778, the 11 natives checks, and all 7 world fingerprints equal to the reference made on the
+Ryzen 7 9800X3D. (SeedLab's own natives count is 263,780: the package's `natives-hash.json` leaves out the one
+seed-text entry, and each hash sample is two checks, the hash and its lane split - `NativesSuite.cs`.) The report is kept
+with the author's working notes; the project's
+`docs\cpu-compatibility.md` records it ("Machine reports received", committed as `ab45aa2` on `perf-track`
+and merged in `81e3f97`). What it settles, what is still open and the performance lead it gave are in
+decisions.md section 16. **Unverified:** that lead - pre-generation stopping near 21 seeds/s on both this CPU
+and the 9800X3D - points to a limit in the code (allocation, garbage collection or a shared resource) rather
+than the hardware; nothing has profiled it yet.
+
+## 2026-09-25 - the web server starts and stops safely; two session logs; one-click scripts
+
+**Why.** `vseed serve` ran in the console it was started from, and the first Ctrl+C there ended it at once:
+a running search died mid-block and lost whatever its last checkpoint did not hold, and nothing but that
+console could stop it. SeedLab's users are not necessarily power users. The user's decisions are
+decisions.md sections 13 (the lifecycle) and 14 (two logs); this entry is how they were built. Committed as
+`25f2a9f`.
+
+What changed:
+- **One graceful stop for every trigger** (`WebServerControl.Stop`): Stop SeedLab on the page, the idle
+  reminder's Stop, `vseed serve --stop`, Ctrl+C twice within 10 s in the server's own window, Ctrl+Break,
+  closing the window, SIGTERM/SIGHUP, and a Windows sign-out or shutdown. Each worker leaves its block
+  between two seeds; the last checkpoint is saved on the quick retry schedule (about 1.6 s), because closing
+  a console window leaves the process about 5 s; the server waits at most 3.5 s for searches; each search's
+  stream gets a final `done` that says why it stopped. ASP.NET Core's own console lifetime is replaced by one
+  that does nothing, because its Ctrl+C handling ended the process under a running search.
+- **Sign-out and shutdown**: a hidden window (`SessionEndWindow.cs`), because a console handler never sees
+  them in this process (valheim-modding `pitfalls.md` section 10; decisions.md section 13).
+- **Finding the server**: a registry file `<cache root>\serve\server-<pid>.json` with the pid, the process
+  start time, the URL and a token. A record counts only through the strict liveness check
+  (`ProcessLiveness.IsSameProcessStrict`) and only when its URL is exactly `http://127.0.0.1:<its port>`;
+  `/api/server/state` must answer with the same pid. The token keeps other web pages out, not other programs
+  on the same PC (owner-only on Unix). `--stop` and `--status` run before anything else starts, so they
+  create nothing; a second `vseed serve` opens the running one and exits 0; a vseed server this cache folder
+  does not know about (started with another `--cache-dir`) is listed but never stopped (command lines are
+  read with `NtQueryInformationProcess`, because WMI would need a NuGet package). `serve\` is not a `vseed
+  clean` category.
+- **A resume command that works after any stop**: a page search writes its query to
+  `<checkpoint>.query.json` beside its checkpoint (retired with it), and every resume command names that
+  file. Starting a page search whose checkpoint already exists asks first ("Start again from the first seed"
+  or Cancel, sent as a new `replaceCheckpoint` field) instead of silently overwriting the resume point.
+- **Two session logs**: `logs\vseed.log` is renamed `vseed-prev.log` at every session start;
+  `vseed.log.1`-`.4` are used only while another live session holds the log (recognised from the log's last
+  "written by process" line: pid and start time, which also works where file locks are only advisory). A
+  held `vseed-prev.log` is kept and the new session appends to `vseed.log` (if under 4 MiB) rather than
+  delete the last session's log. A cap the user did not ask for: past 4 MiB only warnings and errors are
+  kept, past 16 MiB nothing, so the two logs stay under about 40 MiB. This replaces `95bba24`'s single log
+  that was emptied at every session start.
+- **One-click scripts**: `SeedLab.bat` (a menu, or the action as an argument) and six numbered files
+  (`SeedLab 1 - Install or update.bat` to `SeedLab 6 - Remove the build.bat`) for Windows; `seedlab.sh` and
+  `SeedLab.command` for macOS and Linux (the executable bit is set in git). Install or update (only
+  installing the .NET SDK asks for administrator rights; the scripts refuse to run elevated and turn the
+  SDK's telemetry off for their builds), open and stop the web page, a command window, uninstall (keeps the
+  build) and remove the build. The README gained "How to use it"; `docs\scripts.md`, `docs\web.md`;
+  `.gitignore` gains `/seedlab-results/`.
+- **Review fixes** (three adversarial reviews; all 22 findings
+  from the three reviews were real). The blocker: a leftover registry file whose pid now belonged to a process
+  vseed cannot inspect counted as a live server, and locked the user out of starting, stopping, uninstalling
+  and removing the build (valheim-modding `pitfalls.md` section 10). Also: sign-out and shutdown never
+  reached the graceful stop; a funnel in its first stage was promised a saved part it did not have
+  (decisions.md section 13); `seedlab.sh`'s `remove_block` could delete everything after a SeedLab block
+  whose end marker had been edited (such a file is now left untouched and the user told which lines to
+  remove); uninstall matched the user's own folders by name; a third Ctrl+C during the stop said "nothing
+  has been stopped yet".
+
+Verified: `SeedLab.Search.Tests` **536/536** (section 18, the lifecycle, is new), `SeedLab.Runtime.Tests`
+**211/211**, `vseed serve --selftest` 17 PASS and 3 MEASURED, `vseed selftest` PASS, proofs
+refuse/policy/blocks exit 0, killtest bare and `-KeepAll` 3/3 IDENTICAL, all on scratch cache roots. A
+script matrix in fresh copies (31 Windows rows and a dash set). A real Ctrl+C sent to the server's own
+console: one press stops nothing, a second within 10 s stops it (exit 0 in 17 ms), one Ctrl+Break stops it
+(exit 0 in 24 ms). The sign-out path, by sending the hidden window both messages: the search saved, the
+registry file removed, exit 0. A reviewer posted `WM_CLOSE` to a real server's console window while a search
+ran: the log shows "stopping: its window was closed" and the checkpoint saved, no registry file was left,
+and the process then exited with 0xC000013A (expected once a close handler returns). In a browser: both stop
+dialogs, the stopped overlay, the idle dialog and the "start again?" dialog.
+
+Never tested: a real sign-out or shutdown; clicking the window's X (the
+reviewer's `WM_CLOSE` is the nearest); the Enter pause in a window of its own; typing an answer at `Stop
+anyway? [y/N]`; `--force`; two servers in one cache root; a stop during the funnel's measurement between its
+stages; anything on macOS or Linux (SIGTERM, SIGHUP, advisory locks, owner-only file modes). Earlier
+script-matrix rows were not re-run after the last fixes (no SDK installed, a real new window, the numbered
+files and the menu, the command window, the "source changed" prompt, administrator refusal for install, web
+and shell). Still open: `vseed search` without `--resume` still overwrites an existing checkpoint (older
+behaviour, kept); the page takes up to about 20 s to notice a stop begun elsewhere (its 15 s poll).
+
+## 2026-09-25 - a machine report testers can run without Valheim: `Valheim-SeedLab-IntelTest` v1.0.0
+
+The decisions.md section 16 item "a machine report for testers without Valheim", built as a separate public
+repository: https://github.com/DoomMachine/Valheim-SeedLab-IntelTest, `main` = `89537c1`, tag and release **v1.0.0** "SeedLab machine report
+1.0.0", published 2026-09-24 21:50 UTC (00:50 local on the 25th). Release asset
+`SeedLab-MachineReport-1.0.0-win-x64.zip`: **37,764,988 bytes, SHA-256
+`aaab4747479700b532c14d7bef63f7242da1287d86f09347826381e060aa3756`** (the release API's digest is the same),
+with `SHA256SUMS.txt` beside it. Checked on GitHub 2026-09-25.
+
+What is in it: `tools\SeedLab.MachineReport` (the program); `vendor\`, 52 files byte-identical to SeedLab
+`11aeb8f` (WorldGen, Seeds, Runtime, the natives suite, `Half16.cs`; `VENDORED.md` lists every blob);
+`natives\`, SeedLab's `groundtruth\natives` scrubbed (the one seed-text entry removed from
+`natives-hash.json`, `manifest-natives.json` rewritten to the 7 files shipped); `reference\fingerprints.json`;
+and an app-local .NET 10.0.12 runtime in `dotnet\` - the apphost looks only in `..\dotnet`, so no .NET needs
+to be installed, and the runtime is redistributed under Microsoft's .NET Library licence, which the user
+accepted. It runs 93 checks at four instruction-set levels in about 3 minutes (the user had been told 5 to
+15), records only hardware and Windows facts, and writes nothing outside its own folder.
+
+Verified before release: 93/93 on this machine at AVX-512, AVX2, AVX and no SIMD; nothing written outside
+the folder (a run with TEMP, TMP, LOCALAPPDATA, APPDATA and USERPROFILE pointed at empty folders left all of
+them empty); a fresh clone of `89537c1` built in a path containing the account name gave a byte-identical
+zip, which proves both that the build reproduces and that no build path leaks; privacy scans of every commit
+and every zip member. One audit; its fixes are
+`5b9b8c1` and `89537c1`: a credit line in `README-FIRST.txt`, "no game files or assets" instead of the false
+"nothing from the game is in this package" (the port and `natives\` are listed in `THIRD-PARTY-NOTICES.md`),
+"and tested" dropped from the credit (nothing showed the user had run it), `<Copyright>` in
+`Directory.Build.props`, and a path filter that stopped at whitespace. SeedLab was pushed first, because
+`VENDORED.md` cites `11aeb8f`. The first report from a tester is the entry above.
+
+Open: the vendored comments that name `testworldclaude` (`UnityRandom.cs:109`, `Half16.cs:13`) and a
+`scratchpad` path (`UnityMath.cs:8`) are public upstream too; a fix goes into SeedLab first, then the files
+are vendored again. The package predates `libm-dense`, so Windows 11's C runtime is only partly verified.
+
+## 2026-09-25 - pushed: `8eee037..e5a8b90`
+
+`git push origin main` - `main` only; the unaudited `perf-track` branch stayed local - sent `f48e682`,
+`83d2f16`, `95bba24`, `3499936`, `86d75bb`, `11aeb8f` and `e5a8b90` to
+github.com/DoomMachine/Valheim-SeedLab (`git ls-remote`: `main` = `e5a8b90`, checked 2026-09-25).
+
+`e5a8b90` "Refresh the published skills from the knowledge base" is the refresh this history's 2026-09-24
+follow-up asked for: 11 files of the repo's `.claude\` copies brought up to this knowledge base as of
+2026-09-25 and scrubbed to the first publication's standard. Two first-pass scrubs were reversed on the
+user's decision (the test-world names `ClaudeTestWold2` and `ClaudeTest` stay, and so do time zones);
+valheim-modding `publishing.md` and the release-auditor agent are left out and listed in the repo's
+`.claude\README.md`. It was committed as `86dec58` and amended before the push: the message was reworded (it
+claimed no local paths, and a few passages still name folders on the author's machine; audit note 5) and the
+two published history lines the push would make false were closed (note 4). The pre-push audit
+found no blockers: 557 blobs across all commits scanned as
+UTF-8 and UTF-16LE, every author and committer DoomMachine, no `Co-Authored-By`. Its note 6 is `831f55a`
+(entry above); its publishing lessons went into the author's publishing procedure (left out, as above).
+
+Left for the user (public since `3c4b214`; the push added nothing new): the character name in
+`docs\specs\05-validation.md`, `src\SeedLab.Saves\CharacterProfile.cs` and `CharacterReader.cs`; about 80
+lines outside `.claude` citing `scratchpad\` or the knowledge base; the install path in about 18 files.
+
+## 2026-09-24 - dungeons are called by the caption on their door (dumper run 6 imported)
+
+The plan in "the `axe-heads` preset, and dumper run 6 prepared" (below) was carried out: run 6 ran on
+2026-09-24 and was imported the same evening. The game facts it settled (38 `Teleport`s in 19 location
+prefabs, which token each carries, the Vegvisir pins, DN_Bossroom's inactive door) are in valheim-modding
+`vanilla-behaviour.md` section 12; the new hold-out world is in valheim-worldgen
+`zones-locations-vegetation.md`. Commits: `3499936` "Dungeons are called by the caption on their door" (branch
+`run6-dungeon-names`), merged as `86d75bb`; then `11aeb8f`.
+
+**The import.** The staged snapshot was the current one plus run 6's ten tables, `goldens\natives-hash.json`,
+its four `B83592B8` goldens and `manifest-assets.json`, copied byte for byte; `manifest.json` is run 6's own
+with only `files[]` recomputed (the union of both runs' paths, 47 files, each with its true size and
+SHA-256) and one note saying so. Every table run 6 rewrote matched the previous snapshot except the stamp's
+date; the two walks gained only `teleports`, `vegvisirs` and `waymarksCaptured`. **Order mattered**: this code
+needs the run-6 snapshot (the strict loader demands the new fields, and an older dump fails naming by name),
+so the old `data\1.0.15-59f53fb5` was moved to `_ModSource\_retired\data-1.0.15-59f53fb5-before-run6-20260924`
+before the staged one replaced it and the branch was merged. `DumpSchemas` was regenerated; the three new DTOs are referenced through
+`LocationOccupantsDef`, because the generator does not transcribe the non-sealed `InteriorDef` base class.
+
+**The naming rule** (`DisplayNameSource.TeleportEnterText`, `src\SeedLab.Data\LocationDisplayNames.cs`): a
+door's `m_enterText`, looked up in the dumped localization table. Only a door the game can use counts: active
+in the prefab, with a target and a caption. Precedence: boss altar, trader, the Bog Witch convention, discover
+label, door, prefab. The boss must win - The Queen's entrance door says "Infested Citadel", and the boss group
+is derived from the name's source - and placed last the rule can only name a place that had no name, so no
+existing name changed. Whatever names a place, its door caption also becomes an alias. **Shared captions
+name nothing**: "Burial Chambers" (Crypt2/3/4), "Infested Mine" and "Putrid Hole" caption each prefab and
+resolve to none of them; `vseed locations --name "Burial Chambers"` lists the prefabs, a query's `location:`
+target is refused with them in its hint, and the web vocabulary drops the spelling without a note. **31 of
+the 183 placed types now have a name** (8 bosses, 3 traders, 3 map-pin labels, 17 dungeon entrances), up
+from 14. The wiki contradicts none of them; Bear Cave, Winding tunnels, Mörkhalla and The Prison have no
+page to check against.
+
+**The guide** (`11aeb8f`): `docs\game-data.md` walks a reader who has never installed a mod through making
+the location data - BepInEx by hand or through a mod manager, building and arming the dumper, a throwaway
+solo world, F4 and the log lines, copying the output into `data\`, `vseed data --verify`, removing the
+dumper. Tested on Windows only; the in-game steps and some mod-manager details are marked Unverified. README,
+CHANGES, `docs\search.md`, `docs\dumper.md` and the dumper manual caught up with run 6 (31 names, the dumper
+retired again, F4 free). With the dumper retired, the comments that named knowledge-base scripts now point at
+`tools\check-game-version.ps1` and `tools\decompile.ps1` - comments only, proved by building the dumper and
+contracts DLLs byte-identical with and without the edits (`-p:DebugType=none`).
+
+Verified: `vseed data --verify` 8/8 on the staged snapshot (47/47 manifest files, 186/186 prefabs walked,
+183/183 placement order); placement identical, every instance's x/y/z bits, zone and biome, three ways (old
+code on old data, old code on new data, new code on new data) on `hnBd9gJf2G` (12,287 instances),
+`MWd8eV6svz` (12,314), `75539276` (12,228) and `8QHItAXH7v` (12,216); `LocationLab fresh --seed-hex B83592B8`
+12,216/12,216 bit-identical, 909 sectors, 32/32 alt biomes, 178/178 prefabs; the door-named types place bit
+for bit against the goldens of `0480A34C` and `B83592B8`; the dropdown golden changed in exactly the 17
+door-named rows. On the merged tree: Runtime.Tests 173/173, Search.Tests 478/478, Acceptance 32/32, proofs
+refuse/policy/blocks pass, `vseed selftest` and `vseed serve --selftest` PASS.
+
+## 2026-09-24 - a file another program holds open no longer kills a run; a session log
+
+**The defect** (the "Access to the path is denied" follow-up of the block-size entry below; the user asked
+for it fixed and for a session log). A checkpoint save failed with a bare "Access to the path is denied."
+whenever another program had the checkpoint open, and the whole run died with it (a CLI run exited 3 with no
+path; in `vseed serve` the run's worker threads stayed parked for the life of the server). Why, and the retry
+that recovers it: valheim-modding `pitfalls.md` section 2. A kill or a failure between the kept-set
+snapshot's rename and the checkpoint's also corrupted a bounded run's resume (measured: 12 duplicated and 12
+missing records out of 50).
+
+What changed (commit `95bba24`; the design is in the author's working notes):
+- Every temp-then-rename goes through `DurableWrite.Replace`: short retries (`RetrySchedule.Quick`, about
+  1.6 s), then a diagnosis in plain words that names the file (in use, read-only, no permission, disk full).
+  A periodic save that still fails is a warning and the run goes on; the last save of an unfinished run
+  retries longer (`Patient`, about 14.6 s, announced on screen) and, if it still fails, is an error with
+  the option to retry (`[r]etry / [g]ive up` in a terminal, a Retry saving button on the page). Workers are
+  always stopped and joined, whatever throws. `SurvivorList` and map PNGs are written atomically too.
+- **The snapshot and the checkpoint are one commit**: the snapshot is written under the generation
+  (`<ckpt>.top` or `<ckpt>.top2`) the checkpoint on disk does not name, and the checkpoint's rename commits
+  it; a snapshot whose `next_block` differs from its checkpoint's is refused.
+- **A session log** modelled on BepInEx's `LogOutput.log` (valheim-modding `environment.md`): `<cache
+  root>\logs\vseed.log`, emptied at every session start, `vseed.log.1`-`.4` while another session holds it,
+  with the start time, what was checked, the integrity outcome, every retry and warning, and how the session
+  ended. **Replaced the next day** by the two-log rotation (entry above; decisions.md section 14).
+- Start-of-session access checks for the files a command will use, explained on failure, with `[r]etry /
+  [a]bort` in a terminal; CLI warnings as they happen, `--json` fields, no "this is a bug" for a file
+  problem; `vseed clean` counts only what it removed and lists what it could not.
+- Web: a warnings list, a Retry saving button, event replay that never drops a warning or the end, and
+  **every POST from another web page refused** (`Sec-Fetch-Site` not same-origin, or a foreign `Origin`;
+  `curl` sends neither and still works) - before this, any page the user visited could POST to
+  `/api/search/{id}/cancel`.
+- Three adversarial reviews; all 24 findings from the three
+  reviews were real (21 distinct). The blocker: a checkpoint that could not be read at a run's first save made the
+  run write its new snapshot over the one the on-disk checkpoint named, so the next `--resume` was refused;
+  a resumed run now takes the snapshot name from the checkpoint it loaded. Also: an unreadable checkpoint
+  was reported as missing ("resuming would start from the beginning"); "it passed the access check, so
+  something changed" was claimed when only the folder had been checked; event replay dropped warnings and
+  `done` after 4,000 events.
+
+Verified: `SeedLab.Runtime.Tests` **173/173**, `SeedLab.Search.Tests` **443/443** (sections 15-17 new), proofs refuse/policy/blocks pass, killtest 3/3 IDENTICAL bounded and keep-all, `vseed serve
+--selftest` 15 PASS and 3 MEASURED, `vseed selftest` PASS. A live search whose checkpoint another process held
+for 5 s warned, kept running and saved again when the file was released; in a real browser, the page went
+"Not saved" (with the diagnosis), "still not saved", then "Saved" once the holder exited.
+
+Still open: the interactive `[r]etry / [a]bort` and `[r]etry / [g]ive up`
+questions and a Ctrl-C at them are untested (whether Windows ends the read as a give-up is unverified); the
+CLI's disk-full exit and the page's handling of a lost stream or a 404 on Retry saving were checked by reading
+only; a rotated run's periodic warning says "the checkpoint could not be saved" when it is the manifest that
+is held (the file it names is right).
+
+## 2026-09-24 - funnel stage 2 checkpoints where it was told, and `World..ctor` explained
 
 **The defect (a follow-up of the block-size change, the user asked for it fixed).** Both front ends
 built funnel stage 2 with a bare `SearchSession.Create`, which named its checkpoint from
@@ -137,8 +472,9 @@ Follow-ups, not in this change:
 - A resumed leg's report puts cumulative "seeds evaluated" beside this leg's rate; the web planner
   ignores the `SearchThreads` ceiling; the page keeps stage 2's placement rate as the machine's.
 - The example in `schema.md` is refused by `vseed explain` (it sets `reduce` with no segments).
-- Observed while testing, present before this change: a checkpoint save fails with "Access to the path
-  is denied" while another process holds the checkpoint file open (a harness polling it every 50 ms
+- **Fixed 2026-09-24 (`95bba24`, entry "a file another program holds open no longer kills a run")**:
+  observed while testing, present before this change: a checkpoint save failed with "Access to the path
+  is denied" while another process held the checkpoint file open (a harness polling it every 50 ms
   triggered it); a virus scanner or file viewer could do the same to a real run.
 - **Done (2026-09-25): the published knowledge-base copies were behind (2026-09-24).** `valheim-modding\references\pitfalls.md`
   has changed since the repo copy was last committed (`8eee037`, 1371 lines vs 1385 at 16:10 and 1424 after
@@ -276,8 +612,8 @@ https://github.com/DoomMachine/Valheim-SeedLab, created by the user. The user's 
   and now writes LF. `.gitattributes` is `* text=auto eol=lf`.
 - Verified before and after the push: 0 `Co-Authored-By` lines in the whole history, every author
   `DoomMachine <58111381+DoomMachine@users.noreply.github.com>`, 0 occurrences of the user's name or
-  email in any pushed tree (that scan did not cover game or platform IDs; the later publication pass
-  did); GitHub's contributor list shows DoomMachine only.
+  email or any secret pattern in any pushed tree (that scan did not cover game or platform IDs; the later
+  publication pass, "republished clean" above, did); GitHub's contributor list shows DoomMachine only.
 
 ## 2026-09-24 - the `axe-heads` preset, and dumper run 6 prepared for dungeon names
 
@@ -1083,7 +1419,7 @@ of that is fixed yet.
 The `WorldGenerator` port was measured against the user's world `asdasdasd` over all 4,194,304 minimap
 pixel centres, then against the hold-out `testworldclaude` that nothing had been tuned on: 0 biome
 mismatches on both, and heights bit-identical as binary16 on all but 5 and 9 pixels, one half-ulp each
-(closed on 2026-09-23 by the Mono-R8 correction). Three knowledge-base facts were corrected in
+(closed on 2026-09-23 by the Mono-R8 correction; valheim-worldgen `world-generator.md`). Three knowledge-base facts were corrected in
 the process, including the claim that Unity's managed `Vector2` members compute in single precision.
 
 The BepInEx dumper (`tools\SeedLab.Dumper`) was written, reviewed twice and run in the live game on

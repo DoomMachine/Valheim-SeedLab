@@ -246,6 +246,9 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   **And do not work around it with a printable placeholder** (2026-09-24): a script that wrote `~` for a
   backslash and ran `.replace("~", "\\")` also rewrote a `~` meaning "about" in the prose, publishing
   `\15 lines` in two knowledge-base files. Build backslashes with `chr(92)` in a script written to a file.
+  **Still happening 2026-09-24/25** in SeedLab's access and lifecycle work: a C# `'\n'` became a real newline
+  and a `\v` a vertical tab (both caught), and a `python -` heredoc's `'\\'` arrived as `'\'`; the same edits
+  written to a file with the Write tool worked.
 - **PowerShell variable names are case-INSENSITIVE, so `$P` and `$p` are one variable.** This broke a
   measurement harness three separate times on 2026-09-23: `$Bin = <dir>` then `foreach ($f in $bin)`
   wiped the directory path; `$P = <out dir>` then `foreach ($p in $list)` did the same; and a helper
@@ -371,9 +374,27 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   a 3-parameter `AccessTools.Method` sits 21 instructions after its `ldstr` (19 under Roslyn). TomTom's
   preflight used a 20-instruction window and would have missed it; it uses 40. Test a Cecil scan against
   the output of **every** compiler that can build the plugin (`MinimapAccess.Init`, 2026-09-24).
+- **.NET 10.0.12's instruction-set switches, verified in child processes** (SeedLab CPU safety net,
+  2026-09-25; assert the EFFECT - `IsSupported` in the child - never a switch's name):
+  `DOTNET_EnableAVX512=0` clears AVX-512 F/BW/CD/DQ/VBMI and 512-bit acceleration, AVX2 and FMA stay;
+  `DOTNET_EnableAVX512F` does not exist; `DOTNET_EnableAVX2=0` clears AVX2, FMA and every AVX-512 flag (AVX and
+  SSE4.2 stay); `DOTNET_EnableAVX=0` leaves SSE4.2 and 128-bit vectors (`Vector<T>` 16 bytes) - the shape of a CPU
+  without AVX; `DOTNET_EnableAVX512v2=0` clears VBMI only; `DOTNET_PreferredVectorBitWidth=256` clears only 512-bit
+  acceleration; `DOTNET_EnableHWIntrinsic=0` makes even `X86Base.IsSupported` false, so `CpuId` cannot be called.
+  The old `COMPlus_` prefix is still honoured, so a harness must strip BOTH prefixes from its children and refuse
+  to start when either is set. `Avx10v2` exists in 10.0.12; there is no public way to ask about APX. On the
+  9800X3D `Vector512.IsHardwareAccelerated` is true. `FileVersionInfo.FileMajorPart` of `ucrtbase.dll` reads 6.2
+  under .NET 10 - use the `FileVersion` string (10.0.19041.3636). About 113 of ~365 processes are unreadable to a
+  non-elevated account, so a "quiet machine" probe must also read the whole machine's busy time, and any check of
+  whether a process is alive or is ours must decide what "access denied" means (section 10, the liveness entry).
 - **A comment-only edit still changes a DLL's SHA-256** - the portable PDB's ID is embedded in the
   assembly. To prove "comments only", build before and after with `-p:DebugType=none` and compare those
-  hashes (SeedLab dumper and contracts, 2026-09-24: byte-identical that way).
+  hashes (SeedLab dumper and contracts, 2026-09-24: byte-identical that way). **That works only within one
+  commit.** The SDK also stamps the git commit into the informational version - SeedLab's built
+  `SeedLab.WorldGen.dll` reads `ProductVersion 0.1.0+25f2a9f4f6a9f8ff2419ba15a3c411e6f8972ee0` (read
+  2026-09-25) - and into the PDB it points to, so every commit changes every DLL's hash even when its source
+  did not change. Across commits compare behaviour instead: world fingerprints, results files byte for byte,
+  test digests (SeedLab's profiler and CPU work, `7d433d1`).
 
 ## 4. Game code and Harmony
 
@@ -1466,3 +1487,62 @@ same day:** SeedLab now sizes blocks automatically when none is given (at least 
 256), prints why, warns about an explicit size that idles workers, and labels a measured rate "(N of M
 workers had work)" whenever some had none - so this trap now announces itself. The lesson stands for
 any tool whose unit of work is also its unit of scheduling.
+
+## A console program that has loaded user32.dll never hears a sign-out or shutdown (2026-09-25, SeedLab)
+
+**What happened.** `vseed serve` promised that a Windows sign-out or shutdown stops running searches with
+their checkpoints saved, through the same console handler that catches Ctrl+C and a closed window (on
+Windows, .NET's `PosixSignal.SIGTERM` is that handler, and .NET does not map a logoff at all). A review
+listed the running server's modules - `USER32.dll`, `win32u.dll`, `GDI32.dll` and `gdi32full.dll` were
+loaded - and Microsoft's `SetConsoleCtrlHandler` documentation says that once a console application has
+loaded gdi32.dll or user32.dll, its handler is not called for `CTRL_LOGOFF_EVENT` or `CTRL_SHUTDOWN_EVENT`.
+So a sign-out or shutdown would have ended the server abruptly: a running search loses everything since its
+last checkpoint, and the server's registry file is left behind.
+
+**Do instead** (what `src\SeedLab.Cli\Infra\SessionEndWindow.cs` does, following that documentation): a
+hidden **top-level** window (`CreateWindowEx` with extended style 0, never shown) on its own thread with its
+own message loop. Answer `WM_QUERYENDSESSION` "yes" at once and stop nothing yet, because another program may
+still cancel the shutdown; on `WM_ENDSESSION` run the whole graceful stop inside the message, because Windows
+may end the process as soon as it returns (the stop must fit well inside about 5 s). A message-only window
+(parent `HWND_MESSAGE`) is not sent these broadcast messages. Test it by sending the window both messages;
+SeedLab has not tested a real sign-out or shutdown. For Ctrl+C tests see "Testing Ctrl-C" above.
+
+## A liveness check that says "alive" when it cannot look is right for a reaper and wrong for a registry (2026-09-25, SeedLab)
+
+**What happened.** SeedLab's `ProcessLiveness.IsSameProcess` treated a process whose start time it could not
+read as still the same process, and `IsAlive` treated any access error as alive. For the scratch reaper that
+bias is right: it must never delete a live run's files, and keeping a stale folder only costs disk. The web
+server's registry reused it, where it is backwards. A leftover `serve\server-<pid>.json` - the server ended
+without cleanup (Task Manager, `taskkill /f`, a power cut) and its pid later reused by a process vseed cannot
+inspect - counted as a running server: `vseed serve` said "already running" and started nothing, `--stop`
+got no answer, `--stop --force` got "Access is denied", and the uninstall and remove-build scripts were
+blocked, with no message naming the file to delete. A reviewer planted one registry file per running pid:
+112 of 328 were classed as live servers (svchost, csrss, lsass, MsMpEng, System, ...), because about a third
+of processes are unreadable to a non-elevated account (section 3).
+
+**Do instead:** decide the direction of doubt per use - "when in doubt, keep" for a cleaner, "when in doubt,
+not ours" for anything that can lock the user out. SeedLab's registry now uses a strict check
+(`ProcessLiveness.IsSameProcessStrict`: a start time that cannot be read means "not ours"), asks the server
+itself (`/api/server/state` must answer with the same pid), lets `--force` end only a process whose identity
+is proven, and names a stale file as safe to delete (seedlab `history.md`, the 2026-09-25 lifecycle entry).
+
+## A checkpoint names its snapshot by full path, so it cannot simply be moved aside (2026-09-25, SeedLab)
+
+A bounded run's checkpoint records its kept-results snapshot in `kept_snapshot` as the path it was written to
+(`<checkpoint path>.top` or `.top2`, built from the checkpoint's own path, which in the default layout is
+under the absolute cache root; `Checkpoint.cs`, `CheckpointStore.cs`, read 2026-09-25). Moving or renaming a
+checkpoint - the obvious way to set an old resume point aside before starting the same search again - leaves
+it naming the snapshot at the old place, so the moved file no longer describes a matching pair. The fix for
+that review finding asks the user before a new page search replaces an existing checkpoint, rather than
+moving anything. To move one, copy the snapshot, point `kept_snapshot` at the copy and write the checkpoint
+at its new path, as `CheckpointStore.AdoptLegacyStageTwo` does.
+
+## A field every request already sends cannot carry a second confirmation (2026-09-25, SeedLab web page)
+
+SeedLab's page sets `query.confirmed = true` on every run (`runSearch` in `src\SeedLab.Web\wwwroot\app.js`:
+it shows the cost-confirmation dialog only when one is needed, then sets the field either way; the server
+refuses a POST without it). A review asked for a second question - "a checkpoint of this search already
+exists; start again from the first seed?" - and reusing `confirmed` for it would have meant the page had
+always already said yes. The fix is a field of its own, `replaceCheckpoint`, sent only by the "Start again"
+button; without it the server answers 400 `checkpoint-exists` with the checkpoint's path and resume command
+(`EngineSearchEngine.cs`). Before treating a flag as consent, find every place that sets it.
