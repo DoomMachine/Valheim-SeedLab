@@ -24,7 +24,7 @@ namespace SeedLabTests
     /// <para><b>The binaries sit beside the copy</b> (<c>with\bin\vseed\</c>), and each run's working
     /// directory is <c>with\</c>, so both of the CLI's walk-ups (from the working directory and from the
     /// binary) find the copy and nothing else. A binary run from its build folder inside a SeedLab tree
-    /// would walk up to that tree's own <c>groundtruth\</c> (fix.md section 6, item 4). A second copy
+    /// would walk up to that tree's own <c>groundtruth\</c> instead. A second copy
     /// under <c>without\</c> has no ground truth anywhere above it - the public repository's layout. The
     /// run refuses to start if any folder above <c>&lt;work&gt;</c> holds a <c>groundtruth\</c>, since
     /// that would be found instead.</para>

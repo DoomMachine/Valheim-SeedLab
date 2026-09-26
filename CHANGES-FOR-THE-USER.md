@@ -93,7 +93,9 @@ dated 2026-09-26 further down.
   `tools\SeedLab.MonoProbe`, which runs the game's own code on the game's own runtime, as the
   evidence. See "Three rounding helpers now compute at the game's precision". **Proof:**
   `dotnet run -c Release --project tests\SeedLab.Tests -- rounding` - 196 checks; the probe itself is
-  `powershell -ExecutionPolicy Bypass -File tools\SeedLab.MonoProbe\run-rounding-probe.ps1`.
+  `powershell -ExecutionPolicy Bypass -File tools\SeedLab.MonoProbe\run-rounding-probe.ps1`, with
+  `-ValheimDir "<your Valheim folder>"` added unless SeedLab sits inside the game folder or
+  `SEEDLAB_VALHEIM_DIR` names it.
 
 ---
 

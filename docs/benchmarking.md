@@ -12,6 +12,12 @@ Build first: `dotnet build tests\SeedLab.Tests -c Release` (for the golden), the
 `dotnet build src\SeedLab.Cli -c Release` **last**: the test project builds its own copy of the search
 library, and `tests\SeedLab.Search.Tests` refuses a `vseed` whose copy differs from its own.
 
+**The search benchmark and the location sections need the game data** (`data\`, made by the dumper -
+[`data.md`](data.md)). `vseed search` refuses every search without it, so on a copy of SeedLab without
+`data\` each `bench-search.ps1` query is refused at its dry run and skipped. `vseed profile` refuses a run
+that includes a location section (`t5`, part of the default battery of 7); `--tier t2`, `t3` and `t4` and
+the river golden need only the seeds.
+
 **A timing from a busy machine is not a measurement.** Close the game, other SeedLab windows and any
 build before you start. Both timing tools watch the machine and mark a run **TAINTED**, naming what they
 saw (another `vseed`, Valheim, a `dotnet` build, or other programs using more than one core). A tainted

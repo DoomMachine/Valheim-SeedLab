@@ -18,7 +18,11 @@ questions without launching Valheim:
 
 ```powershell
 .\tools\SeedLab.MonoProbe\run-rounding-probe.ps1
+.\tools\SeedLab.MonoProbe\run-rounding-probe.ps1 -ValheimDir "D:\Steam\steamapps\common\Valheim"
 ```
+
+It looks for Valheim only in `SEEDLAB_VALHEIM_DIR` and in the folders above SeedLab (SeedLab inside the
+game folder). Anywhere else, name the game folder with `-ValheimDir`, as in the second line.
 
 Needs the .NET SDK and the .NET Framework's C# compiler (`%WINDIR%\Microsoft.NET\Framework64\
 v4.0.30319\csc.exe`, present on every Windows 10/11). It reads the game folder and writes nothing there.
