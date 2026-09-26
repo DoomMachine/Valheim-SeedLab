@@ -197,7 +197,9 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   the fix: a byte scan of both DLLs for `<first name>`, `<surname>`, `C:\Users`, `.pdb`, `obj\`,
   `AppData` and `scratchpad` returns zero hits, including when built from a clone under the user's own
   profile folder. **Rule: scan every packaged byte before publishing anything** — a clean source tree
-  says nothing about the compiled artifact.
+  says nothing about the compiled artifact. **Not enough on its own (2026-09-26):** a git-ignored
+  `*.csproj.user` turned symbols back on for MobTracker while `git status` was clean; pass `-p:DebugType=none` on the
+  command line and refuse a DLL with a CodeView entry.
 - **Git for Windows turns LF into CRLF on checkout.** `core.autocrlf=true` is set in its *system*
   gitconfig (`C:\Program Files\Git\etc\gitconfig`), so `git config --global --get core.autocrlf` returns
   nothing while `git config --get core.autocrlf` returns `true`. A repository holding bash scripts
@@ -273,6 +275,30 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   contain spaces, and the startup cloud-file listing writes `worlds/<name>/` with no leading `/`. Extract with
   `(?:^|[\s/])worlds(?:_local)?/([^/\r\n]+)/` and `ZNet\.LoadWorld: (.+?) \(`, match as byte strings
   case-insensitively, and print counts only, never the names.
+- **The compiler can keep a returned value on the stack, so an IL check of "returns only X" needs source shaped
+  for it** (TomTom 1.3.0, 2026-09-26).
+  - **What happened:** `bool ok = FindProtocol.CallerMayFind(...); if (!ok) LogRefusal(peer); return ok;` compiled
+    (Roslyn, Release) to `call; dup; brtrue.s <ret>; ldloc.1; call LogRefusal; ret` - no local, one `ret` - and the
+    new rule FAILed the correct build.
+  - **Instead:** dump the IL first (`scripts/decompile-module.ps1` writes a plugin's whole IL), and shape the source
+    so the property is a plain pattern: `CallerMayFind` now returns `FindProtocol.CallerMayFind(...)` directly, and
+    the Harmony prefix calls `FindServer.CallerRefused()` when it is false. Do not teach the check to replay `dup`;
+    prove it on both compilers (`build.sh`'s legacy csc and the SDK) and on the inverted mutant.
+- **When a strict tripwire flags innocent new code, reshape the code and keep the check exact** (TomTom 1.3.0,
+  the first preflight run of the server side, 2026-09-26).
+  - **What happened:** a `BinaryWriter` over a `MemoryStream` tripped the file-writer check; a warning that boxed an
+    `Int32` next to the search origin's x/z tripped Wayfinder's coordinate-readout check
+    (`LocationSearch.OnServerPluginAnswer`); and three new routed-call sites tripped the one-call-site rule.
+  - **Instead:** fixed without loosening - a hand-rolled little-endian writer (`FindProtocol`), the warning moved
+    to `LocationSearch.WarnMissing`, and an exact allowlist (method + literal call name) proven by mutants s01/s02.
+    Widening a type-based check for one legitimate use lets every illegitimate one through.
+- **A mutant run whose setup failed can report the previous run's builds as current** (TomTom 1.2.0,
+  2026-09-26).
+  - **What happened:** a heredoc-edited mutant driver died with a SyntaxError, and the one-line command went on
+    to run preflight over the previous run's folders. The control "failed" - the only tell.
+  - **Instead:** one script that stops at the first failure; a driver that deletes only its own marked output
+    folder; and results that name their tree (the mutant driver now prints the commit, the dirty count and a
+    source hash first and writes `RUN.txt`).
 
 ## 2. Shell and file tooling
 
@@ -439,16 +465,58 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   by hand; and `powershell -File s.ps1 -P ""` fails with "Missing an argument for parameter".
 - **`decompile.ps1 -Assembly BepInEx` failed from the game folder** until 2026-09-26: `Get-GameAssemblyPath` took
   any existing path, and `BepInEx` there is the folder, so ILSpy threw "Access to the path ... is denied". It now
-  accepts only a file (`Test-Path -PathType Leaf`). Generic types still need their backtick name
-  (`AcceptableValueList`1`) and may report "type not found".
+  accepts only a file (`Test-Path -PathType Leaf`). `-Type` is matched against ILSpy's `Name`/`FullName`
+  (`decompiler/Program.cs`), not the reflection name: write a generic WITHOUT its backtick (`AcceptableValueList` or
+  `BepInEx.Configuration.AcceptableValueList`), a nested type with a dot or alone (`ItemDrop.ItemData` or
+  `ItemData`; `ItemDrop+ItemData` fails), and a utility type with its assembly
+  (`-Type SyncedList -Assembly assembly_utils`; also `Utils`, `Vector2s`). A miss prints "type not found" on
+  stderr, and `powershell -File decompile.ps1` still exits 0 (the script does not pass on the decompiler's 1), so
+  read the output.
+  (Corrected 2026-09-26: this line said generics need the backtick; all ten cases re-run the same evening.)
 - **Three Windows PowerShell 5.1 parser and binder traps** (SeedLab's `tests\bench-search.ps1`, 2026-09-25/26):
   a large `[ordered]@{...}` literal with values of mixed types can fail with "Argument types do not match" -
   build it key by key; `[DateTimeOffset]::TryParseExact(s, fmt, culture, styles, [ref]$ts)` fails with "Cannot
   find an overload ... 5" unless `$ts` is typed first (`[DateTimeOffset]$ts = [DateTimeOffset]::MinValue`), not
   `$ts = $null`; and a line inside `( ... )` cannot start with `+` - end the previous line with the operator.
+- **PowerShell path parameters read `[` and `]` as wildcards**, so a folder such as a Steam library named
+  `Games [Steam]` is "not found" by `Test-Path`, `Resolve-Path`, `Get-FileHash`, `Get-Content`, `Copy-Item`,
+  `Move-Item`, `Remove-Item`, `Get-ChildItem` and `Add-Type -Path`. MobTracker's `publicize.ps1` then stopped the
+  build and `mutants.ps1` reported no Valheim install. Pass every path a tool is given with `-LiteralPath` (MobTracker
+  `a4786df`, 2026-09-26; checked through a folder named `probe [Steam]`).
+- **To test that a script restores an environment variable, run it with `&` in the same session**: a child
+  `powershell -File` has its own environment, so the parent can never see a leak. With `&`, an `exit` inside a
+  function of that script ends the whole script and sets `$LASTEXITCODE`. MobTracker's `tools/mutants.ps1`
+  (`95bf14b`) restores `VALHEIM` on every exit path with a `Finish` function (restore, then `exit`) plus a
+  script-level `trap` that restores it and `break`s (2026-09-26).
+- **Git Bash's `/tmp` is not a path Windows programs understand.** It maps to `%TEMP%` (`cygpath -w /tmp/x` shows
+  where), but Windows Python given `'/tmp/x.json'` raises `FileNotFoundError` (2026-09-26). Pass a relative path or a Windows path.
+- **The harness's PowerShell tool can refuse a command as touching a "system path".** In the MobTracker publishing
+  session (2026-09-26) a command containing both `cmd /c ...` and `Remove-Item Env:X` was refused with
+  "Remove-Item on system path '/c' is blocked". Use `New-Item -ItemType Junction` instead of `cmd /c mklink /J`, and
+  `$env:X = $null` instead of `Remove-Item Env:X`. **Unverified:** the exact trigger - a probe
+  `$env:KBPROBE = "1"; cmd /c echo x; Remove-Item Env:KBPROBE` ran without a refusal. The same guard refuses
+  `Remove-Item` on some `%TEMP%` paths. A test junction must not outlive its test: remove the link itself
+  (`[IO.Directory]::Delete("<link>")`), never recursively, then check its target.
+- **Python's console output here is cp1252, so what `print` shows is not what the file holds** (2026-09-26, at
+  least four times). A character outside cp1252 (`→`, `↔`) raised
+  `UnicodeEncodeError: 'charmap' codec can't encode`. An em dash, which cp1252 has, went out as byte 0x97 and
+  the tool showed U+FFFD, which was taken for corruption; the file held a correct U+2014, and the fix script's
+  `assert` (one U+FFFD expected, 0 found) stopped it writing. Instead: set
+  `PYTHONIOENCODING=utf-8` (a Git Bash prefix, or `$env:PYTHONIOENCODING` in PowerShell) or call
+  `sys.stdout.reconfigure(encoding="utf-8")`; judge an encoding by code points (`repr`, `hex(ord(c))`), never by
+  the console.
+- **Read-only subagents have no Write tool, and a heredoc fallback breaks backslashes** (2026-09-24..26). Read-only
+  agents (such as `valheim-api-investigator`) got "No such tool available: Write ..." nineteen times.
+  One then wrote `pe.py` through a Bash heredoc, and its `":\\Users"` needle became a `unicodeescape` SyntaxError.
+  Instead, from the PowerShell tool: a single-quoted here-string (`$s = @'` ... `'@`, with the closing `'@` at
+  column 0) and `[IO.File]::WriteAllText($p, $s, (New-Object Text.UTF8Encoding $false))`; or a Bash heredoc with no
+  backslash at all (forward slashes, `chr(92)`); and run Python with `PYTHONIOENCODING=utf-8`.
 
 ## 3. Build
 
+- **Never build a checkout while another run's tests execute from its `bin\Release`** (SeedLab, 2026-09-26): a
+  change to `Directory.Build.props` (a version bump) makes every project stale, so a build or a `dotnet run` without
+  `--no-build` rebuilds the binaries under the running tests. Wait for them, or build in a copy.
 - **Use the .NET SDK** (installed 2026-09-18): SDK-style csproj, `netstandard2.1`, `LangVersion latest`,
   game DLLs referenced with `<Private>false</Private>`. `assets/plugin-template/` is a working start. A
   project that must also build with the legacy C# 5 compiler should set `<LangVersion>5</LangVersion>`
@@ -560,6 +628,27 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   provided: an assembly-level `[IgnoresAccessChecksTo("assembly_valheim")]` (the attribute class declared in the
   plugin itself) and `AllowUnsafeBlocks` (which emits `SkipVerification`). Proven: the original source built this
   way compiles to exactly the original DLL (MobTracker's `tools/compare-il.ps1`, 23 types, 3619 IL instructions).
+- **A quoted path that ends in a backslash breaks the command line it is passed on.** In MSBuild
+  `<Exec Command="... -ValheimDir &quot;$(ValheimDir)&quot;" />`, a `ValheimDir` ending in `\` turns the closing
+  quote into `\"`, an escaped quote, and the Exec fails with MSB3073; write `$(ValheimDir.TrimEnd('\'))`. The same
+  happens when a PowerShell script passes such a path, if it also contains a space, to a child
+  `powershell -File` (MobTracker's `deploy.ps1` calling `preflight.ps1`): trim the trailing backslash first. Fixed in
+  MobTracker `a4786df` (2026-09-26), proved with the game reached through a folder named `probe [Steam]` and a
+  stand-in game folder `fake game [x] y`, each given with a trailing backslash. What the child script receives
+  (tested with `ProcessStartInfo.Arguments` set to the exact command line, 2026-09-26): as the **last** argument,
+  `-ValheimDir "E:\Valheim\"` arrives as `E:\Valheim"` - trim `\` and `"` and it works (MobTracker `9728509`);
+  **anywhere earlier**, the escaped quote swallows the arguments after it into that value (`-ValheimDir "…\" -KeepDir
+  X` arrived as one value, and a leftover fragment was bound to the first positional parameter), which no script can
+  undo - so a caller must leave the backslash off, and a tool should turn positional binding off (next entry).
+- **A PowerShell script accepts misspelt and stray arguments unless it is an advanced script.** A plain `param()`
+  script ignores `-Plugn x` and puts unmatched words in `$args`: MobTracker's `preflight.ps1 -Plugn build\MobTracker.dll`
+  quietly checked the installed plugin instead and passed. `[CmdletBinding(PositionalBinding = $false)]` makes a
+  misspelt name and a stray word both errors (ParameterBindingException), via `&` and via `powershell -File`. **But
+  in Windows PowerShell 5.1 an advanced script (`[CmdletBinding()]` or any `[Parameter()]`) started with
+  `powershell.exe -File` sees `$PSScriptRoot` EMPTY in its parameter defaults** (fine via `&`, fine in the body -
+  probed with PS 5.1.19041, 2026-09-26): adding
+  `[CmdletBinding()]` broke MobTracker's build, whose csproj runs `publicize.ps1 -File` with an `$OutDir` default of
+  `Join-Path (Split-Path $PSScriptRoot -Parent) ...`. Default such parameters to `""` and set them in the body.
 
 ## 4. Game code and Harmony
 
@@ -671,6 +760,11 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   - **Instead:** before reasoning from a vanilla method's result, check whether an installed mod patches it.
     `scan-mod-patches.ps1` lists this one as `Achievements . IsCheatedAtAll <- Achievements_IsCheatedAtAll_Patch`.
     The general rule: in a modded install, vanilla code alone does not settle what a patched method returns.
+- **Docs must not promise that a `.cfg` edit takes effect at once** (TomTom v1.3.0 release audit, 2026-09-26):
+  both package READMEs said it; the release's claims check blocked it; the corrected sentence then named the
+  wrong actor ("the game's next save" instead of the plugin's own settings save), which the re-audit caught as
+  minor (it shipped in 1.3.0; an open text item for the next release). Mechanism: game-api.md, "BepInEx and
+  Harmony".
 
 ## 5. Input, cursor, UI
 
@@ -1312,7 +1406,9 @@ patch has to be adjusted.
 A patch that added two fields to `Checkpoint.Save` printed "ok" and changed nothing, because one of its
 several `replace` calls had no `assert old in s` in front of it. The failure only surfaced three runs
 later as "resume: no kept-results snapshot". Every replacement in a patch script gets its own
-`assert old in s, <which one>` - the assert is the test.
+`assert old in s, <which one>` - the assert is the test. `sed -i` is the same: it exits 0 when nothing matched.
+On 2026-09-26 a `sed -i` that lost backslashes to the Bash tool left the old line, and only a grep after it
+showed that; grep the result after every `sed -i`, or use a script that asserts each count.
 
 ## A percentile table is only as good as the parameter it was measured with (2026-09-23, SeedLab)
 
@@ -1392,6 +1488,13 @@ list against what the code actually walks. And make the tool say so itself: the 
 that always writes `found: true|false`, publishes what it did and did not search, and flags a NOT FOUND
 as `inconclusive` when any source was skipped or failed. A tool that can only report presences will
 report an absence by staying quiet, and quiet is indistinguishable from broken.
+
+It happened again, in an answer to the user (2026-09-26, TomTom Find design): reading only
+`locationchildren.json` of the 1.0.16 dump, an answer said the Draugr Village (`WoodVillage1`) and the
+Fuling Village (`GoblinCamp2`) have no chest; its own reasoning noticed the oddity and dismissed it unchecked.
+Their chests are in `roomchildren.json` (`DungeonGenerator` rooms); corrected 30 minutes later (valheim-worldgen
+`zones-locations-vegetation.md` section 11). A negative that surprises you is the one to check before it reaches
+the user.
 
 ## A warning that fires on healthy data trains the reader to skip warnings (2026-09-23, SeedLab dumper)
 

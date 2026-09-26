@@ -105,6 +105,14 @@ device is Null (multiplayer.md section 1.4).
   material Hidden/VideoComposite ...`, eight `Could not find video decode shader pass ...` and `Failed to play intro
   cinematic`. The same lines appear with BepInEx switched off (both logs are kept with that test install).
 
+**Load-testing a plugin there:** install BepInEx from the game's own pack with the console off, and run with a
+random password, `-public 0`, a scratch `-savedir` and `-logFile`, and `SteamAppId=892970` as the server's
+`start_headless_server.bat` sets it; for a vanilla comparison run, switch doorstop off. Use a copy of the server
+folder or ask its owner first. It tests loading only: a player joining needs the plugin in the client too. Each server run also leaves the Steam game-server client's own files in
+the server folder - `logs\` (`connection_log_2456.txt` and others), `config\config.vdf` and `appcache\` (seen on
+disk after the 2026-09-25 and 2026-09-26 runs; **Unverified:** their origin is inferred from names and times, not
+decompiled). They are not part of a mod install: leave them, and never publish `config.vdf`.
+
 ## Boot chain (how a mod gets loaded)
 
 1. `winhttp.dll` + `doorstop_config.ini` (Unity Doorstop, `.doorstop_version` 4.4.0 in the root) inject

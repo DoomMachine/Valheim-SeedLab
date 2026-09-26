@@ -454,8 +454,9 @@ Sources: ZRpc.Register*, ZRoutedRpc.Register*, ZNetView.Register* / decompiled. 
   - **The unforgeable identity is the connection.** A Harmony prefix on `ZRoutedRpc.RPC_RoutedRPC` that stores `rpc` in
     a static, cleared again by a Finalizer, lets a handler running inside that call find its peer: the entry of
     `ZNet.instance.GetPeers()` whose `m_rpc == rpc`. Admin test on the server:
-    `ZNet.instance.IsAdmin(rpc.GetSocket().GetHostName())` (section 6.3).
-    **Derived, not tested:** a routed call the handler itself makes with target
+    `ZNet.instance.IsAdmin(rpc.GetSocket().GetHostName())` (section 6.3). TomTom 1.3.0 does this (`RoutedCallContext`;
+    released in v1.3.0, commit `5a83509`, 2026-09-26; a working-tree build of the same code loaded live on a dedicated
+    server, and no player has joined one yet). **Derived, not tested:** a routed call the handler itself makes with target
     0 or its own id runs synchronously inside the outer call, so it would see the outer call's `rpc`.
   - **ServerSync's copy is not a substitute.** Its `SnatchCurrentlyHandlingRPC`, a prefix on `ZRpc.HandlePackage` in every mod
     that embeds it (list them with `scan-mod-patches.ps1 -Target HandlePackage`), stores the `ZRpc` and never clears it, so outside a

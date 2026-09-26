@@ -78,8 +78,9 @@ of the public TomTom/Wayfinder repository instead (https://github.com/DoomMachin
 
 Every mod should have: a `preflight.ps1` that checks its Harmony targets and reflected members against
 the shipped game (the TomTom repository has one), a hash check of the deployed DLL, and `[BepInProcess("valheim.exe")]`
-if it is client-only (a process-name filter, not an OS filter — see environment.md). Before publishing a
-build, scan every packaged byte for absolute paths and personal names (pitfalls.md, section 1).
+if it is client-only (a process-name filter, not an OS filter — see environment.md); a mod with a server side
+names both `valheim.exe` and `valheim_server.exe`. Before publishing a build, scan every packaged byte for
+absolute paths and personal names (pitfalls.md, section 1).
 
 ## Keeping this knowledge base true
 

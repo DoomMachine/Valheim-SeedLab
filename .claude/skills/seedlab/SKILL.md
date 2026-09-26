@@ -89,13 +89,13 @@ checkpoints and the built `vseed.exe` end to end: section 14 runs a CLI funnel a
 search under `--cache-dir` and needs a Release CLI built from the same source plus the dumped
 location table.)
 
-| Gate | Command | Result on 1.0.16 (2026-09-26, binaries built at `ded6c94`) |
+| Gate | Command | Result on 1.0.16 (2026-09-26, binaries built at `ded6c94`; each gate here passed again on a fresh clone of `048ccd1`, the alpha 0.2.0a, in the 2026-09-27 release audit) |
 | --- | --- | --- |
 | Acceptance (terrain, 32 checks) | `dotnet run --project tests\SeedLab.Acceptance.Tests -c Release` | 32/32; biomes 0 mismatches and **4,194,304/4,194,304** binary16 heights exact per world, on both re-created worlds; location heights 12,314/12,314 and 12,287/12,287 bit-exact |
 | Location gate | `dotnet run -c Release --project tools\SeedLab.LocationLab -- gate` | fresh world `Throwaway` **12,182/12,182** bit-identical, 974 sectors, 32/32 alt biomes; the 1.0.16 saves of the three reference worlds 12,314 / 12,287 / 12,228; all 27 of the game's logged counters. **Fails** (`MISSING`) when its log is absent, since `ded6c94` |
 | Natives (11 checks) | `dotnet run --project tests\SeedLab.Tests -c Release -- natives` | **262,780/262,780** `Mathf.PerlinNoise`; 268 `InitState` seeds and 276/276 `Random` traces (1,980 draws); `FloatToHalf` ties away from zero; 93/93 libm; 429/429 hash vectors |
 | Generator internals | `dotnet run -c Release --project tools\SeedLab.GoldenCheck -- data\1.0.16-96cfc004` | run 7's 3 captures, every private field bit-identical: 677,094 + 675,579 + 729,925 river points, 0 differing; `GetHeight` 12,182/12,182 |
-| Fast subset, any time | `vseed selftest` (`--quick`, ~4 s) | 14 ok on this build against the ground truth; **passes silently when a ground-truth file is missing** (proofs-and-gates.md) |
+| Fast subset, any time | `vseed selftest` (`--quick`, ~4 s) | 15 ok on 0.2.0a (2026-09-27, 2.9 s): the new row N1 is the machine self-test with the generator goldens (263,780/263,780). Since `f8a8f4d` (in the alpha 0.2.0a, **not yet reviewed**) it **fails** when a ground-truth file is missing; before it, it passed silently (proofs-and-gates.md) |
 | Web server + its security | `vseed serve --selftest` | tiles vs the game's texture, markers, search parity, loopback/Host/CORS/CSP/traversal, POSTs from other pages refused, the stop endpoint. **Not re-run on the 1.0.16 data**; with stale data it failed its marker check, because the page hangs instead of refusing (history.md, the web diagnoses) |
 | Seed arithmetic | `vseed space` | recomputes the lane tables and round-trips before printing |
 
@@ -244,7 +244,10 @@ As it worked for 1.0.16 on 2026-09-26 (history.md has the detail):
 5. **New data folder:** copy the dumper's output folder whole into `data\<version>-<first 8 hex>\` and change
    nothing in it. The dumper does not make `constraint-atlas.json` or `count-sample.*`, and no tool rebuilds
    them: without them every `vseed search` is refused. On 2026-09-26 the 1.0.15 ones were re-stamped, after
-   proving the tables identical (history.md). `vseed data --verify` must pass 8/8.
+   proving the tables identical (history.md). `vseed data --verify` must pass 8/8. **The same holds for a person who
+   clones the public repository and makes their own dump**: location answers work, search does not (the atlas's
+   "not found" is turned into a refusal by `SearchPreflight.AppendCheck`) - a product gap until the atlas and count
+   sample builders ship in `tools\` (the repository's docs now say so, 2026-09-26).
 6. **Point the gates at the new worlds**: `git grep` the old fresh-world seed hex in `tests` and `tools` (two
    gates hard-coded 1.0.15's). Rebuild every project after each commit, the CLI last. Then acceptance, the
    location gate, natives, GoldenCheck, `selftest`, Runtime.Tests, Search.Tests and the safety proofs - they

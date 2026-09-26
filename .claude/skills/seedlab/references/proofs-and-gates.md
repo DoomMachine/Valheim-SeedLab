@@ -58,9 +58,10 @@ evidence folder, with the author's working notes.
 - `LocationLab played` / `gate` **fail** since `ded6c94` when `groundtruth\worldgen-testworldclaude.log` is
   absent: `alt-biomes MISSING <path>`, `game log MISSING <path>`, `GATE: FAIL`, exit 1. (Before it, `GATE: PASS`
   with the 27 counters and the alt-biome check silently dropped.)
-- **`vseed selftest` still passes silently** on `main` (`ded6c94`). A fix, `f8a8f4d` (a later commit,
-  21:28 on 2026-09-26: a new row N1 and failing `V1c` / natives rows on an incomplete ground truth), was not
-  reviewed or merged when this was recorded. On `main`, without a
+- **`vseed selftest` passed silently** up to `ded6c94`. The fix `f8a8f4d` (21:28 on 2026-09-26: a new row N1 and
+  failing `V1c` / natives rows on an incomplete ground truth; the test `SeedLab.Tests groundtruth-completeness`, 32
+  checks, fails 21 of them against `ded6c94`) is on `main` since the alpha 0.2.0a, **merged without its review and
+  fix phases** (history.md, "0.2.0a"). Up to `ded6c94`, without a
   world's `.fwl2` it prints 13 rows, no `V1c/<world>` (`SelfTestCommand.cs:209`); without any of the four
   natives files the natives suite is not registered (`NativesSuite.cs:55-93`, `CliRuntime.cs:160-172`),
   `vseed.log` shows `289 recorded values` instead of `264069`, and `selftest --report` wrongly says "not beside
@@ -281,14 +282,17 @@ measurement pass.
   there (271 numerics checks + 263,780 recorded native values, stamped in `<cache>\selftest`,
   demonstrated by altering one recorded hash and watching `vseed seed` exit 1).
 - **Open since 2026-09-26** (history.md has each):
-  - `vseed selftest` passes silently on an incomplete `groundtruth\` (section 2.0); the review left it to the
-    user, and a fix (`f8a8f4d`) was still unmerged at 21:30 on 2026-09-26.
-  - The rounding defect: `Utils.FloorToInt`, `RoundToInt` and `WorldSpaceToMapSpace` are ported with a float
-    rounding the game does not do, so a point a hair from a zone edge or a 12 m sector line can get the
-    neighbouring zone, a map pixel one off, or - rarely, never yet seen - a different location answer. No
-    gate discriminates it: none of the ground-truth worlds hits the band. Fix proposed, not built.
-  - `WorldFingerprintReference.json` is stamped 1.0.15, so L4/L5 are "computed but not compared" on 1.0.16;
-    re-recording it is the user's decision.
+  - **Fixed in the alpha 0.2.0a, each still awaiting its review and fix phases** (the review has not run yet;
+    history.md, "0.2.0a"):
+    - `vseed selftest` passed silently on an incomplete `groundtruth\` (section 2.0): `f8a8f4d` makes it fail.
+    - The rounding defect: `Utils.FloorToInt`, `RoundToInt` and `WorldSpaceToMapSpace` were ported with a float
+      rounding the game does not do, so a point a hair from a zone edge or a 12 m sector line could get the
+      neighbouring zone, a map pixel one off, or - rarely, never seen - a different location answer. `0b31717`
+      computes them as the game's IL does, proved by `tools\SeedLab.MonoProbe` and 196 `rounding` checks (46 fail
+      against the old code). No gate discriminates it: none of the ground-truth worlds hits the band.
+    - `WorldFingerprintReference.json` was stamped 1.0.15, so L4/L5 were "computed but not compared" on 1.0.16:
+      `3412934` re-recorded it on 1.0.16 (only `recorded_utc`, `data` and a new `note` changed; all 320 digests
+      equal the 1.0.15 recording), and `selftest --report` now compares all 40 digests of its 8 seeds.
   - CheckerSelfTest T7 (`Vendor_BlackForest count at_least 2` expects Ok, gets WarnDegenerate) is a stale
     expectation, 18/19 on both builds, and nothing runs it.
   - `CountSample._cached` is process-wide, not keyed by the atlas's build (harmless today).

@@ -4,6 +4,40 @@ Newest first. Each entry says what changed, why, and how it was verified. Game f
 discovered are recorded in the valheim-worldgen / valheim-modding references and only pointed at from
 here.
 
+## 2026-09-27 - 0.2.0a, an alpha: three fixes on `main` without their review; docs; the release audit
+
+**What is on `main` after `ded6c94`.** On 2026-09-26 three fixes were implemented and their review and fix phases
+postponed; what is published meanwhile is an alpha with an explicit note.
+- `f8a8f4d` `vseed selftest` fails on an incomplete ground truth (new row N1, so 15 rows); `3412934` the world
+  fingerprint reference re-recorded on 1.0.16 (`selftest --report` compares 40 digests, not 24); `0b31717` the
+  rounding helpers at the game's precision (old defect A, in the 1.0.16 audit entry below), with
+  `tools\SeedLab.MonoProbe` as the evidence. **None of the three has had its review and fix phases**; that review
+  is prepared and waits for the user's go-ahead.
+- `1df6fa8` version **0.2.0a**: 0.2.0 because the line adds tools and the 1.0.16 verification since 0.1.0, `a`
+  because of the three. The assemblies say 0.2.0; the informational version and `vseed --version` say 0.2.0a
+  (`Verified.EngineVersion`); checkpoints record it but never compare it, so saved searches still resume. The `a`
+  comes off after the review and fixes (the user's versioning rule, 2026-09-26).
+- `b4f28ec` the docs: a Status note at the top of the README (an alpha, not for active use; the last reviewed
+  version is 0.1.0, `f65a331`), the 0.2.0a section of CHANGES, every page on 1.0.16 (game-data.md section 14
+  corrected: a missing constraint atlas refuses every search). `048ccd1` a refresh of this `.claude` copy.
+  `77b97ac` the audit's text fixes.
+
+**Release audit of `f65a331..048ccd1`, 2026-09-27: publish, no blocker.** On a fresh clone of `048ccd1`: build 0
+errors; Runtime.Tests 326/326, `rounding` 196/196, the river-golden self-test 16/16, Search.Tests 543/543,
+`--profile-check` 43/43; with copies of `data\` and `groundtruth\`: `data --verify` 8/8, `selftest` 15 ok (N1
+263,780/263,780), `selftest --report` PASS on 40 digests, natives 11/11, ground-truth completeness 32/32,
+GoldenCheck PASS (`GetHeight` 12,182/12,182), the location gate PASS (12,314 / 12,287 / 12,228, 27 game-log
+counters, 32 alt-biome slots), acceptance 32/32. The rounding probe on the game's runtime gave -1 / 100 / 340 /
+zone 0 with `-O=-float32` and 0 / 101 / 341 / zone 1 without. Acted on: this skill still described `ded6c94`
+(corrected in place: the self-test row, the proofs' section 2.0 and open items, old defect A), and three text fixes
+in `77b97ac` - the rounding probe finds Valheim only in `SEEDLAB_VALHEIM_DIR` or a folder above SeedLab, so its
+command shows `-ValheimDir`; `docs\benchmarking.md` says the search benchmark and `vseed profile`'s `t5` sections
+need `data\` (checked in `ProfileCommand`: only a `t5` section opens the location table); a test comment no longer
+cites a local note. **Left to the user:** the three commits' own messages carry no alpha note, and
+`5d94b63`..`0b31717` build as "0.1.0" (the note is in `1df6fa8`, `b4f28ec`, the README and CHANGES; changing it per
+commit rewrites six hashes, then another refresh and audit); a `__pycache__/` and `*.pyc` rule in `.gitignore`.
+Own check the same day: the Release `vseed` (0.2.0a) `selftest` 15 ok, PASS, 2.91 s.
+
 ## 2026-09-26 - a tainted baseline profile, and the build kept for the A/B
 
 After the merge, a full `vseed profile` baseline ran on the `ded6c94` build (`vseed.dll` `a82dd777...585b4c`):
@@ -197,16 +231,20 @@ and saves: code unchanged; the engine byte-identical (the details, and what 1.0.
 valheim-modding `environment.md` and the valheim-worldgen references). Location answers were refused, by
 design, until the data was re-dumped (run 7, above).
 
-**Old defect A: SeedLab rounds too early in three helpers** (predates 1.0.16; **not fixed** as of 2026-09-26).
+**Old defect A: SeedLab rounds too early in three helpers** (predates 1.0.16; **fixed in `0b31717`** at 22:27 on
+2026-09-26, without its review and fix phases, and shipped in the alpha 0.2.0a - the entry "0.2.0a" at the top).
 The game computes `Utils.FloorToInt`, `Utils.RoundToInt` and `AltBiomeWorldData.WorldSpaceToMapSpace` in double;
 the port rounds to float first (`ZoneMath.cs:34`, `BiomeGrid.cs:112`, `SeedLab.Saves\ValheimRounding.cs:33,36`;
 the mechanism is in valheim-modding `pitfalls.md` section 9). Effects: `vseed at` can print the neighbouring zone
 within 0.125 m of a zone edge; a map marker can land a pixel off; a location answer can differ in rare cases
 where a candidate sits a hair from a 12 m alt-biome sector line (filters 10a/10b), after which that type's later
 placements can shift too (**Inferred**, never observed: no ground-truth world hits the band; `RegisterLocation`'s
-zone is unreachable at vanilla radii). Terrain answers are not affected. Fix: compute in double,
-`(int)((double)f + 64000.0) - 64000` and `(int)(((double)x - 6.0) / 12.0 + 1024.0)`, re-run the location gate,
-and add in-game checks of these functions to the dumper's natives mode; a defect fix, so a patch bump.
+zone is unreachable at vanilla radii). Terrain answers are not affected. The fix `0b31717` computes in double,
+`(int)((double)f + 64000.0) - 64000` and `(int)(((double)x - 6.0) / 12.0 + 1024.0)`, as the IL does, and
+`MinimapGeometry.WorldToPixel` narrows its argument to float at the call as the game does; its expected values come
+from `tools\SeedLab.MonoProbe`, which runs the game's own IL on the game's own x64 Mono offline (with `-O=-float32`
+it gives -1 / 100 / 340 / zone 0, without it the old .NET answers 0 / 101 / 341 / 1). The in-game check in the
+dumper's natives mode was not added. Every gate on the four 1.0.16 worlds is unchanged (none hits the band).
 
 **Old defect B: the create-world text boxes accept more than letters and digits.** Proven for the world name
 (a punctuation mark and a space); **Unverified** for the seed box. SeedLab's count of typeable seed texts is then too
@@ -227,7 +265,8 @@ Comments and citations to fix: `WorldField.cs:195` (`IsLavaPreHeightmap` uses `c
 **Loose ends.** An investigator copied the 1.0.16 game DLLs into the author's archive folder unasked (Iron
 Gate's code, local only); keeping it is the user's decision (still open). The IL fingerprint script and the
 two Mono-probe recipes that ran the game's own x64 runtime offline were left in a session's temporary
-folder and were **not rescued** when this was recorded, so their hashes and the recipe are not recorded.
+folder and were not rescued; since then the probe was rebuilt as `tools\SeedLab.MonoProbe` in this repository
+(`0b31717`, with `run-rounding-probe.ps1`).
 
 ## 2026-09-26 - measurement tooling merged: `vseed profile` resources, `--saturate` / `--plan`, a search benchmark, a river-points golden
 

@@ -249,6 +249,17 @@ defaults to `true`, calls `Save()` — which rewrites the whole file from `Entri
 `WriteDescription`. So a description-only change is safe to ship without a migration, and the old text
 in an existing `.cfg` is replaced the first time the new plugin binds.
 
+**Editing a `.cfg` while the game or server runs does nothing, and a later settings save writes the old value
+back** (BepInEx 5.4.23.3, `BepInEx.Configuration.ConfigFile`, decompiled 2026-09-26 and re-checked with
+`decompile.ps1` and `find-usages.ps1`): `Reload` is called only from the
+`ConfigFile` constructor, and none of the 12 DLLs in `BepInEx\core` references `FileSystemWatcher`, so a hand edit
+mid-session is never read and `SettingChanged` does not fire - unless the plugin calls `Config.Reload()` itself
+(some mods do; TomTom does not). With `SaveOnConfigSet` true (the default), any setting change (`ConfigEntry<T>.Value`'s setter
+-> `OnSettingChanged` -> `Save()`) rewrites the whole file from memory, e.g. TomTom's Find range slider writes
+`SearchRange` and with it the old `WhoMayFind`; each `Bind` at start saves too, with the values just read. A change
+through ConfigurationManager in game does fire `SettingChanged` (it sets `BoxedValue`). Tell admins: stop, edit,
+start.
+
 Harmony 2.9.0.0: `[HarmonyPatch(typeof(T), "Method")]` resolves private members by name; add
 `new Type[] { ... }` to pick an overload (e.g. `RemovePin` has two). `AccessTools.Method`,
 `AccessTools.Field`, `AccessTools.Property(...).GetGetMethod(true)`,
