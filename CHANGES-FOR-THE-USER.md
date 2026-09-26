@@ -591,6 +591,21 @@ complete copy passes; each of the six mutations fails with the row naming the fi
 no-ground-truth layout say what they should; every file is back afterwards). Run against the binaries
 built before this change, the same test fails 21 of its 32 checks - the silent passes the review found.
 
+## The machine report compares the location fingerprints again (2026-09-26)
+
+`vseed selftest --report` compares each of its 8 seeds' five world fingerprints with a reference made
+on your machine. Since the move to Valheim 1.0.16 it compared only the three terrain layers, because the
+reference had been recorded with the 1.0.15 game data, and said "L4-L5 are computed but not compared".
+
+Before re-recording, all **320** digests of the reference's 64 seeds (five layers each) were computed
+again on 1.0.16 and compared with the 1.0.15 recording: **320 of 320 equal**, 40 of 40 for the report's
+8 seeds. The reference was then recorded again with the 1.0.16 data; only its time, its `data` field and
+a new `note` changed. The 1.0.15 recording stays in git (the file at `ded6c94`), and
+`docs\cpu-compatibility.md` says which recording is which.
+
+**Proof:** `vseed selftest --report` now ends `PASS - ... all 40 compared world digests bit for bit`
+(it said 24), with `L4-L5: computed with game data 1.0.16-96cfc004`.
+
 ## Still not implemented — named so you do not go looking
 
 - **GPU.** Still rejected after CPU SIMD delivered 6.03× bit-exactly. A GPU path could only ever be

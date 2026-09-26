@@ -19,10 +19,14 @@ namespace SeedLabAcceptanceTests
     ///   dotnet run -c Release --project tests\SeedLab.Acceptance.Tests -- --record-fingerprints &lt;file.json&gt; [--threads N]
     ///
     /// <para>The five-layer world fingerprints (<see cref="WorldFingerprint"/>) of the 64 reference seeds
-    /// were recorded ONCE, by a build with the profiler's types present and no phase boundary or counter
+    /// were recorded by a build with the profiler's types present and no phase boundary or counter
     /// wired into the generator, at the runtime's default ISA settings, into
-    /// <c>WorldFingerprintReference.json</c>. This check recomputes them three ways and requires every
-    /// digest to equal the recording:</para>
+    /// <c>WorldFingerprintReference.json</c> - first on 2026-09-24 with the 1.0.15 game data, then again
+    /// on 2026-09-26 with the 1.0.16 game data, after all 320 digests had been recomputed on 1.0.16 and
+    /// found equal to the 1.0.15 recording (git keeps that file; its "data" field and "note" say which
+    /// build a recording belongs to, and the location layers are only compared against a recording of
+    /// the same data). This check recomputes them three ways and requires every digest to equal the
+    /// recording:</para>
     /// <list type="number">
     /// <item><b>off</b> - no sink on any worker thread: the generator's boundaries see null. A sink set
     /// on the calling thread meanwhile must record nothing, which proves the sink is per thread;</item>
@@ -316,12 +320,21 @@ namespace SeedLabAcceptanceTests
         {
             if (args.Length < 2 || args[1].StartsWith("-", StringComparison.Ordinal))
             {
-                Console.Error.WriteLine("usage: --record-fingerprints <file.json> [--threads N]");
+                Console.Error.WriteLine("usage: --record-fingerprints <file.json> [--threads N] [--note <text>]");
                 return 2;
             }
 
             string path = Path.GetFullPath(args[1]);
             int threads = IntArg(args, "--threads", Math.Max(1, Environment.ProcessorCount / 2));
+
+            // A JSON file has no comment: what a reader must know about this recording (the game build it
+            // was made on, what it replaced) goes in a "note" field. MachineReport and the checks read
+            // "data", never this.
+            string? note = null;
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (args[i] == "--note") note = args[i + 1];
+            }
             if (PhaseClock.CountersOn)
             {
                 Console.Error.WriteLine("refusing to record with SEEDLAB_PROFILE_COUNTERS set: a reference is recorded with everything off.");
@@ -350,6 +363,7 @@ namespace SeedLabAcceptanceTests
                 j.WriteString("data", fp.DataStamp);
                 j.WriteNumber("world_gen_version", WorldFingerprinter.WorldGenVersion);
                 j.WriteString("recorded_with", "the profiler's types present and nothing wired to them; runtime ISA settings at their defaults");
+                if (!string.IsNullOrEmpty(note)) j.WriteString("note", note);
                 j.WriteStartObject("layers");
                 foreach (string l in WorldFingerprint.LayerNames) j.WriteString(l, WorldFingerprint.Describe(l));
                 j.WriteEndObject();

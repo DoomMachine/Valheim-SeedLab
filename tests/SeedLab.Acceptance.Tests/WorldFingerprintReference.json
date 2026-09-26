@@ -1,9 +1,10 @@
 {
   "schema": "seedlab-world-fingerprint/1",
-  "recorded_utc": "2026-09-24T19:40:29Z",
-  "data": "1.0.15-59f53fb5",
+  "recorded_utc": "2026-09-26T18:49:50Z",
+  "data": "1.0.16-96cfc004",
   "world_gen_version": 2,
   "recorded_with": "the profiler\u0027s types present and nothing wired to them; runtime ISA settings at their defaults",
+  "note": "Re-recorded 2026-09-26 on Valheim 1.0.16 (Steam build 25527674, assembly_valheim.dll 96cfc004f7f4...) with the game data 1.0.16-96cfc004. Before this recording all 320 digests (64 seeds x L1-L5) were recomputed on 1.0.16 and found equal to the previous recording, made 2026-09-24 with the 1.0.15 game data 1.0.15-59f53fb5, which git keeps (this file at commit ded6c94). Only recorded_utc, data and this note differ from it. \u0027vseed selftest --report\u0027 compares L4-L5 only with a recording of the same data.",
   "layers": {
     "L1": "GetBiome and GetBaseHeight bits on the 1024^2 lattice at 24 m, deferred handle",
     "L2": "pre-generation: offsets, seeds, lakes, rivers, streams, river-point grid in stored order, river cache",

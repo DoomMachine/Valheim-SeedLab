@@ -271,9 +271,27 @@ vseed selftest --report --json   # the same with every digest in full
 ```
 
 It needs neither `groundtruth\` nor `data\` (a clone of the public repository has neither): the
-terrain fingerprints need only the seed, and the location layers say they were not computed. It
+terrain fingerprints need only the seed, and the location layers say they were not computed. A
+`groundtruth\` that IS beside the build but lacks `natives\` or one of its four files makes the report
+say `incomplete: <file> missing` and fail (since 2026-09-26). It
 contains no machine name, user name or path. Nothing is sent anywhere by SeedLab; the person running
 it decides whether to send the text. It runs the self-test even when `--skip-self-test` is given.
+
+**The reference the fingerprints are compared with** is
+`tests\SeedLab.Acceptance.Tests\WorldFingerprintReference.json`, embedded in `vseed`: 64 seeds, five
+layers each, made on the reference machine. Its `data` field names the game data it was recorded with,
+and its `note` says the rest:
+
+- **2026-09-24**, Valheim 1.0.15, game data `1.0.15-59f53fb5` - the recording every level-matrix and
+  machine-report result before 2026-09-26 was compared with. Git keeps it: the file at `ded6c94`.
+- **2026-09-26**, Valheim 1.0.16 (Steam build 25527674), game data `1.0.16-96cfc004` - recorded after
+  all 320 digests had been recomputed on 1.0.16 and found **equal** to the 1.0.15 recording. Only the
+  recording time, the `data` field and the note changed.
+
+The report compares L1-L3 (the lattice, pre-generation, the point grid) always, and L4-L5 (every
+placement, the location oracle) only when the game data beside the build is the data the reference was
+recorded with: a 1.0.16 build with `data\1.0.16-96cfc004` compares all 40 digests of its 8 seeds; with
+other game data it compares the 24 terrain digests and says why.
 
 **If SeedLab refuses to start** with "the O5 AVX2 8-wide ... Perlin path does not agree with the
 reference transcription", the AVX2 path differs on that CPU - the case the report exists for, and one
