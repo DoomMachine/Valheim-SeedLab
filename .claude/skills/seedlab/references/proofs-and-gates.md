@@ -1,11 +1,13 @@
 # SeedLab: the oracles, the gates and what they really prove
 
-Contents: 1. The four oracles · 2. The gates · 3. What each oracle cannot discriminate ·
-4. Measured cost · 5. Open ends
+Contents: 1. The four oracles · 2. The gates (2.0 on 1.0.16, and what a missing file does) ·
+3. What each oracle cannot discriminate · 4. Measured cost · 5. Open ends
 
 Every figure here was produced by running something on this machine between 2026-09-22 and 2026-09-23,
-against Valheim 1.0.15 (network 40, Steam build 25390630, `assembly_valheim.dll` sha256 `59f53fb5...`).
-Numbers are quoted with the world they came from, because a number without its world is not evidence.
+against Valheim 1.0.15 (network 40, Steam build 25390630, `assembly_valheim.dll` sha256 `59f53fb5...`),
+except section 2.0: **the gates were re-run on 2026-09-26 against Valheim 1.0.16** (Steam build 25527674,
+`96cfc004...`) and its own worlds. Numbers are quoted with the world they came from, because a number without
+its world is not evidence.
 
 ---
 
@@ -27,6 +29,52 @@ cache and 99.43 % / 99.51 % against the `.db2` floats, with errors up to 47 floa
 (valheim-modding `pitfalls.md` section 9).
 
 ## 2. The gates
+
+### 2.0 On Valheim 1.0.16 (2026-09-26)
+
+Run from the SeedLab root on binaries built at `ded6c94` (every assembly `0.1.0+ded6c943...`), with the
+`SEEDLAB_*` variables unset and fresh cache roots; the ground truth is the rebuilt `groundtruth\` (four worlds
+1.0.16 created: `asdasdasd`, `testworldclaude`, `ClaudeTestWold2` re-created from their seeds, and
+`Throwaway`, the fresh world dumper run 7 ran in) and the data is `data\1.0.16-96cfc004`. Evidence: the fix round's report (section 3) and its
+evidence folder, with the author's working notes.
+
+| Gate | Result |
+| --- | --- |
+| `vseed data --verify` | **all 8 checks passed**, MATCH: 25/25 files (155,494,018 B), 707 rows, 35/35 names and hashes, 35 quantities, 521 table rows against 429 recorded hashes, constants, 186/186 prefabs walked, order 183/183. The 1.0.15 folder (`SEEDLAB_DATA_DIR` = it, `SEEDLAB_VALHEIM_DIR` = an empty folder): 8/8, UNVERIFIED as expected, 47/47 files |
+| `vseed selftest` (full; also `--strict`) | PASS, **14 ok**, G1 "same build (1.0.16)": T2 biomes 2,542,492/2,542,492 and 2,562,380/2,562,380 (white 1,651,812 / 1,631,924), T3 heights 4,194,304 x 2, T3a 1,788,980 edge pixels, 0 disagree; `vseed.log`: `264069 recorded values` from `groundtruth\natives` |
+| `vseed selftest --report` | PASS: natives 263,780/263,780; 24 world digests bit for bit; L4-L5 "computed but not compared" (the reference file is stamped 1.0.15; all 40 digests of the 8 report seeds equal it, checked by the review) |
+| Acceptance | **32 passed, 0 failed**: S2/S3 0 differ on both worlds; S4 -0.0 pixels 1 and 2; S7 12,314 / 12,287; T3 TIER A both; T5 location heights 12,314/12,314 and 12,287/12,287 bit-exact |
+| `LocationLab gate` | **GATE: PASS.** Fresh `Throwaway` (`BB9B7F96`) **12,182/12,182** exact, 974 sectors, 32/32 assignments (100/100 slots), 178/178 prefabs, order 183/183. Played: 12,314/12,314, 12,287/12,287, 12,228/12,228, 0 engine-only. Alt biomes: 32 assigned to 92 sector slots, 1 under-min warning in the game's log and 1 in the engine, all counters equal. Game log: 27 types, 27 reproduced exactly. With the 1.0.15 data instead: PASS, fresh `0480A34C` 12,228/12,228 and the three 1.0.16 saves exact |
+| `SeedLab.Tests -- natives` | **11/11**: Perlin 262,780/262,780; 268 `InitState`; 276 traces / 1,980 draws; 1,634 halves; 93 libm; 49 `WorldAngle`; 429 hashes |
+| `GoldenCheck -- data\1.0.16-96cfc004` | **PASS**, 3 captures bit-identical: rivers 161 / 140 / 170; river points 677,094 + 675,579 + 729,925, 0 differing; `GetHeight` 12,182/12,182 (37 placed, 1,769 river-weighted) |
+| `SeedLab.Runtime.Tests` | 326 passed, 0 failed |
+| `SeedLab.Search.Tests` (~10 min) | **543 passed, 0 failed**; section 8: the door-named types place exactly as the game did in `BB9B7F96` (1,549 instances); section 19: the atlas used is the same build's, refusals enabled (not ADVISORY) |
+| `proof.exe refuse / policy / bounded / rotate / blocks / screen` | all exit 0 (`tests\SeedLab.Search.Safety.Tests` is `proof.exe <subcommand>`; a bare run prints usage and exits 2) |
+| `killtest.ps1` | 3 kills, each resumed in 1 leg: IDENTICAL x3. It exits 0 even on DIFFERENT, so read the `IDENTICAL` lines |
+| `vseed search ... --dry-run` (both folders in `data\`) | exit 0, `location table 1.0.16 / 96cfc004`, 0 `ADVISORY` / `REFUSED` lines |
+
+**What fails, and what does not, when a ground-truth file is missing** (mutation tests on a copy of
+`groundtruth\`, the fix round's report, section 4):
+- `LocationLab played` / `gate` **fail** since `ded6c94` when `groundtruth\worldgen-testworldclaude.log` is
+  absent: `alt-biomes MISSING <path>`, `game log MISSING <path>`, `GATE: FAIL`, exit 1. (Before it, `GATE: PASS`
+  with the 27 counters and the alt-biome check silently dropped.)
+- **`vseed selftest` still passes silently** on `main` (`ded6c94`). A fix, `f8a8f4d` (a later commit,
+  21:28 on 2026-09-26: a new row N1 and failing `V1c` / natives rows on an incomplete ground truth), was not
+  reviewed or merged when this was recorded. On `main`, without a
+  world's `.fwl2` it prints 13 rows, no `V1c/<world>` (`SelfTestCommand.cs:209`); without any of the four
+  natives files the natives suite is not registered (`NativesSuite.cs:55-93`, `CliRuntime.cs:160-172`),
+  `vseed.log` shows `289 recorded values` instead of `264069`, and `selftest --report` wrongly says "not beside
+  this build" (`MachineReport.cs:269-272`).
+- Loud: `SeedLab.Tests natives` (exit 2 without `natives-perlin.bin`, an unhandled exception without another
+  file); acceptance (crashes at S5 without a `.fwl2`); `vseed data --verify` (fails 2 of 8 without
+  `groundtruth\location-names.csv`; `vseed selftest` exits 3 without `groundtruth\decoded`).
+- So read a PASS for its rows: `V1c/<world>` twice, `Passed with the generator goldens from
+  ...\groundtruth\natives: 264069 recorded values`, `game log 27 types`, `alt-biomes ... all counters equal`
+  (valheim-modding `pitfalls.md` section 10).
+
+The subsections below are the 1.0.15 record (2026-09-22/23). Their counts on the two played worlds and in the
+natives are the same on 1.0.16. The 1.0.15 world copies and game log they cite were lost on 2026-09-26; the
+fresh-world golden `0480A34C` survives in `data\1.0.15-59f53fb5\goldens\`.
 
 ### Acceptance suite - terrain
 
@@ -225,8 +273,25 @@ measurement pass.
   WARN-DEGENERATE only, and both silent when the sample is missing or its build tag disagrees with the
   atlas's. Fired and negative-controlled live; see `references/history.md`, top entry. The sample's
   provenance re-check against the current build is a **spot check** — 3 seeds x 183 types = 549 cells,
-  0 differing — not a re-run of the 5 000.
+  0 differing — not a re-run of the 5 000. **On 1.0.16** (2026-09-26) the 1.0.15 sample and atlas were
+  re-stamped, not rebuilt (no tool can rebuild them): 251 rows / 45,933 cells re-computed on 1.0.16 by the
+  builder and 100 rows / 18,300 cells by the review, 0 differing (history.md, "the 1.0.16 ground truth").
 - Cross-architecture exactness is untested: the port is bit-exact on x64, and `Math.Sin/Cos/Atan2/Pow`
   plus float evaluation could differ on arm64. The machine self-test **is** now wired and fails closed
   there (271 numerics checks + 263,780 recorded native values, stamped in `<cache>\selftest`,
   demonstrated by altering one recorded hash and watching `vseed seed` exit 1).
+- **Open since 2026-09-26** (history.md has each):
+  - `vseed selftest` passes silently on an incomplete `groundtruth\` (section 2.0); the review left it to the
+    user, and a fix (`f8a8f4d`) was still unmerged at 21:30 on 2026-09-26.
+  - The rounding defect: `Utils.FloorToInt`, `RoundToInt` and `WorldSpaceToMapSpace` are ported with a float
+    rounding the game does not do, so a point a hair from a zone edge or a 12 m sector line can get the
+    neighbouring zone, a map pixel one off, or - rarely, never yet seen - a different location answer. No
+    gate discriminates it: none of the ground-truth worlds hits the band. Fix proposed, not built.
+  - `WorldFingerprintReference.json` is stamped 1.0.15, so L4/L5 are "computed but not compared" on 1.0.16;
+    re-recording it is the user's decision.
+  - CheckerSelfTest T7 (`Vendor_BlackForest count at_least 2` expects Ok, gets WarnDegenerate) is a stale
+    expectation, 18/19 on both builds, and nothing runs it.
+  - `CountSample._cached` is process-wide, not keyed by the atlas's build (harmless today).
+  - The atlas's `absence` block is not derived from `count-sample.bin` (4 of 15 rows differ by 1-2 seeds);
+    warn-only.
+  - `vseed serve --selftest` was not re-run on the 1.0.16 data.

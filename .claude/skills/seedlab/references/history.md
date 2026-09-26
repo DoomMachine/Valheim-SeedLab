@@ -4,7 +4,368 @@ Newest first. Each entry says what changed, why, and how it was verified. Game f
 discovered are recorded in the valheim-worldgen / valheim-modding references and only pointed at from
 here.
 
-## 2026-09-25 (latest) - the README says the session log records the process ID
+## 2026-09-26 - a tainted baseline profile, and the build kept for the A/B
+
+After the merge, a full `vseed profile` baseline ran on the `ded6c94` build (`vseed.dll` `a82dd777...585b4c`):
+21 measurements (t2 G384, t3 G384, t3 G12, t5 prefix 2 / 22 / 67 / 183, each at 1, 8 and 16 workers),
+`--saturate` about 60 s each. The output and an exact copy of that build (27 files; its `vseed.dll` hashes
+equal) are kept with the author's working notes for a later quiet A/B, e.g. the per-worker buffer reuse.
+
+**TAINTED: its timings are not measurements.** Other sessions' builds ran throughout (`VBCSCompiler`,
+several `dotnet`; the run's own verdict: "the machine was not quiet", limit 2.62 foreign cores). Quote
+only what does not depend on the load:
+- **Allocation per seed:** t3 **48.5 MiB** (G384 at 8 and 16 workers; G12 48.7), t5 **about 131 MiB**
+  (130.6-135.6 MiB over prefixes 2, 22 and 67). The profiler's per-entry figures: pre-generation 51.0 MB
+  (10^6 bytes) per entry, the t5 biome field 85.7 MB.
+- **Memory:** the working set peaked at 2.65 GiB in the t5 prefix-183 section at 16 workers; the process's
+  lifetime peak was 2.68 GiB working set, 2.81 GiB private.
+- **Unverified - a counter defect, probably:** 11 of the 21 sections report `allocated 0 B (0 B per seed)`
+  (t3 G12 and all four t5 prefixes at 1 worker; t2 G384 at 8 and 16; t5 prefixes 22 and 183 at 8; 67 and 183
+  at 16), and t3 G384 at 1 worker reports 30.6 MiB per seed against 48.5 at 8 and 16. Not investigated; do
+  not use those sections' allocation figures.
+
+The quiet-machine before/after run is still to do (the measurement-tooling entry below).
+
+## 2026-09-26 - the 1.0.16 ground truth, the data moved in, and every gate on 1.0.16
+
+Plan, build, two reviews and a fix round (their reports, every command's output and the tools are with the
+author's working notes). Verified on disk and in git the same evening.
+
+**`groundtruth\` rebuilt** (by a build script, from the second copy, which stayed
+56/56 unchanged): 75 files, 111,554,979 B. `MANIFEST.sha256` `8ffe95d3...` (74/74 OK) and `README.md`
+`849c1a4a...` (they were `fd96e547...` / `7888b528...` until the fix round; the old copies are kept). It holds:
+- `worlds\`: four worlds of 12 files each - `asdasdasd`, `testworldclaude`, `ClaudeTestWold2` (re-created in
+  1.0.16 from their seeds) and `Throwaway` (run 7's world);
+- `decoded\` biome and height rasters of all four, decoded independently of SeedLab: white pixels 1,651,812
+  (`asdasdasd`, edge 1,788,980, unknown 0), 1,631,924, 1,634,660 and 1,670,448 - the same counts as on 1.0.15
+  for the first two;
+- full-precision location lists: `asdasdasd` 12,314 rows (1,861 named), `testworldclaude` 12,287 (1,834),
+  `ClaudeTestWold2` 12,228 (1,775); `location-names.csv` with 35 names, taken from the 1.0.16 logs;
+- `worldgen-testworldclaude.log` (lines 615-929 of the reference-worlds session's log): 27 logged types, 25
+  `Failed to place all` plus 2 seen only in a `took more than` line. The 1.0.15 log had 29; placement is
+  identical, so the difference is timing (**Inferred**);
+- `natives\` (run 7's 8 files) and the two sessions' logs. The play-session logs were not copied (private).
+  `natives\manifest-natives.json` is the natives run's own record, not a description of the folder.
+
+**The derived files, re-stamped for 1.0.16** (the tools that made them no longer exist; the tables were
+proven identical first): `constraint-atlas.json` `b196f1ab...` -> `63ca2def...`, `count-sample.json` `e920337e...`
+-> `bb1ea438...`, `count-sample.bin` unchanged (`d66c2a8f...`). Evidence on the real files: the atlas's
+`sampling` block 84/84 cells over 240 seeds / 480 runs (StartTemple 240/240); its `observed` block
+1,094/1,098 values, the other 4 `null` against n = 0; its hard fields 2,928/2,928; `totalQuantity` 12,939 =
+12,939; the count sample 251 rows / 45,933 cells re-computed on 1.0.16, 0 differ (the review added 100 rows /
+18,300 cells, 0 differ). Convention: the 1.0.16 derived files carry the table's stamp (`dumped=2026-09-26`),
+the 1.0.15 ones their source dumps' stamps. The 1.0.16 `manifest.json` gained note 7 (`a0a46a63...`, 7,818 B);
+its README is `9a54b926...`. The atlas's `absence` block is not derived from `count-sample.bin` (4 of 15 rows
+differ by 1-2 seeds; pre-existing, warn-only), and the lost 1.0.15 location lists held x, z at 0.1 m
+(**Inferred** from the 1,094/1,098).
+
+**Both snapshots moved into `data\`** only after `vseed data --verify` passed 8/8 on each; re-hashed after the
+move 67/67 and 33/33, no link or junction under `data\`.
+
+**Code, now on `main`** (author and committer DoomMachine with the noreply address, no trailers):
+- `f0807d4` LocationLab points at the 1.0.16 ground truth: the fresh-world seed is `0480A34C` if present,
+  else the dump's only fresh-world golden; one constant for the log's name; `WorldRef.FreshSave` joins the
+  played worlds.
+- `26531d4` **`ConstraintAtlas` follows the location table's build.** It took the first `data\*` folder with an
+  atlas, so with two builds in `data\` every search on the new build was ADVISORY and the D4/D5 rules read the
+  old sample; the `51cbf8e` binary in the same layout prints the ADVISORY warning (negative control). New
+  Search.Tests section 19, 8 checks.
+- `56ea943` Search.Tests section 8 compared door placements only for 1.0.15's two fresh worlds, so on 1.0.16
+  it compared 0 worlds and FAILED; `BB9B7F96` added (1,549 instances, bit-identical and in order). Lesson:
+  after an update, `git grep` the old fresh-world seed hexes in `tests` and `tools`.
+- `5d94b63` "Verified against Valheim 1.0.16 (Steam build 25527674)": `Verified.cs` 1.0.16 / 25527674 /
+  `96cfc004...6127`, the usage line, the acceptance harness's comment.
+- `ded6c94` a missing worldgen log fails the played check (review finding F1; below).
+
+**The gates on binaries built at `ded6c94`** (the fix round's report, section 3; the table is in `proofs-and-gates.md` 2.0):
+`data --verify` 8/8 on both snapshots (1.0.16: 25/25 files, 155,494,018 B, 707 rows, 35/35, 35 quantities,
+521 against 429 hashes, 186/186, 183/183; 1.0.15: 47/47 files, 250,161,931 B); `selftest` 14 ok (T2
+2,542,492/2,542,492 and 2,562,380/2,562,380, T3 4,194,304 x 2, T3a 1,788,980, natives 263,780); acceptance
+32/32; LocationLab gate PASS (Throwaway 12,182/12,182, 974 sectors, 32/32, 178/178, order 183/183; played
+12,314 / 12,287 / 12,228; log 27/27; alt biomes 32 in 92 slots, 1 under-min warning each side) and PASS with
+the 1.0.15 data (`0480A34C` 12,228/12,228); natives 11/11 (Perlin 262,780); GoldenCheck PASS (rivers
+161 / 140 / 170, river points 677,094 + 675,579 + 729,925, `GetHeight` 12,182/12,182); Runtime.Tests 326/0;
+Search.Tests 543/0; the `proof.exe` subcommands and killtest (IDENTICAL x3) pass; searches dry-run with 0
+ADVISORY lines; the repository's `tools\check-game-version.ps1` exits 0.
+
+**The review round: 6 findings, all real, none touching a value a seed produces.** F1 (Medium): a missing
+`worldgen-testworldclaude.log` still gave `GATE: PASS` - **fixed in `ded6c94`** (both log checks print
+`MISSING <path>` and return 1; mutation-tested: `5d94b63` exit 0, `ded6c94` exit 1). F1b (Low): `vseed selftest`
+passes when a natives file or a `.fwl2` is missing - **deferred to the user** (CLI code). Four documentation
+and method findings fixed (the two READMEs; a privacy scan that missed names with spaces, replaced by a
+corrected one). The review also found all 40 fingerprint digests of the 8 report seeds on 1.0.16 equal
+to the 1.0.15 reference, and the 1.0.15 golden `0480A34C` equal to `ClaudeTestWold2`'s 1.0.16 save,
+12,228 = 12,228 (valheim-worldgen `zones-locations-vegetation.md` 3.7).
+
+**For the user to decide:** F1b; re-recording `WorldFingerprintReference.json` for 1.0.16 (L4/L5 are "computed
+but not compared"); whether `manifest.json` note 7 gets a corrective note. **Defects for later:** CheckerSelfTest T7 is a stale expectation (18/19 on both builds, and
+nothing runs it - see the correction in "the feasibility checker, and two metrics deleted" below);
+`CountSample._cached` is process-wide, not keyed by the atlas (harmless today); `docs\game-data.md` lines 9-11
+(a missing atlas refuses every search - what happens) contradict lines 538-541 ("still runs"). **The tools
+need a permanent home** (the seedlab skill's `scripts\` or the repository's `tools\`, with their hard-coded
+paths parameterised before anything is published): the ground-truth build, re-stamp and manifest scripts,
+the atlas and count-sample checks, the checker harness, the save-against-golden comparer and the privacy
+check, all still with the author's working notes.
+
+## 2026-09-26 - the data and the ground truth deleted by accident, and rebuilt
+
+**What happened** (16:32-16:34): after the measurement tooling was fast-forwarded into `main` (reflog, 16:32:38),
+the main session ran `git worktree remove` on the benchmark worktree, whose `data\` and `groundtruth\` were junctions into
+the main checkout's git-ignored folders. It deleted their contents permanently. The pitfall and the safe
+procedure are in valheim-modding `pitfalls.md` section 2. The web-fix implementer was stopped at 16:34.
+
+**Lost for good:** the 1.0.15 game logs (among them `LogOutput-20260922-worldgen.log` and run 6's
+`Player-prev.log`, whose only other copy had rotated away), the 1.0.15 world copies and their decoded map
+caches, and the location lists and `location-names.csv` as they were. `groundtruth\natives` survived only as
+the Intel test package's scrubbed copy, and run 7 superseded it.
+
+**The user chose to rebuild from 1.0.16.** In a game session at 16:40-16:43 they re-created the three
+reference worlds from their seeds - `asdasdasd` (`MWd8eV6svz`, -1772362158), `testworldclaude` (`hnBd9gJf2G`,
+319486907), `ClaudeTestWold2` (`ClaudeTest`, 75539276) - and entered each once. Their saves, map caches and
+logs, and run 7's, were copied read-only right after each session into a second copy outside the
+repository (56 files).
+
+**`data\1.0.15-59f53fb5` rebuilt byte for byte where it can be proven** (the rebuild's report is with the author's
+working notes): 67 files, 313,578,988 B; 49 identical to a retired copy of the snapshot from before run 6,
+16 to run 6's raw output in
+`%USERPROFILE%\AppData\valheim-dumper\1.0.15-59f53fb5`; `manifest.json` rebuilt by run 6's own import script,
+rescued from a session's working folder (the script's SHA-256 `a12bc55b...`; only
+its two paths changed): **`903118576214e7dae978907af56e5e1ee2b5aab808aaf9613ffa160f3b5ff687`**, 11,151 B, 47
+entries, 250,161,931 B, 7 notes. The lost file's hash was never recorded, so identity cannot be proven; it is
+placement-equivalent: `vseed locations` gives 12,287 / 12,314 / 12,228 / 12,216 for the four 1.0.15 seeds,
+`LocationLab fresh` 12,228/12,228 (`0480A34C`) and 12,216/12,216 (`B83592B8`), and all 40 self-test world
+digests, L4/L5 included, equal the reference recorded on the original. Its README is the retired one with a
+9-line note (`2e4b957b...`). **Record every snapshot's `manifest.json` hash from now on**: 1.0.15
+`90311857...`, 1.0.16 `a0a46a63...`.
+
+An independent verifier passed both staged snapshots; the only failures were
+environmental until `groundtruth\` existed again (`data --verify` 6/8 without `location-names.csv`, `selftest`
+exit 3 without `groundtruth\decoded`, every 1.0.16 search refused without an atlas). Its check of the three
+reference worlds' 1.0.16 saves against SeedLab on the 1.0.16 data: 12,314 = 12,314, 12,287 = 12,287, 12,228
+= 12,228, 0 only on either side. Technique used for the old build: `SEEDLAB_DATA_DIR` = its folder and
+`SEEDLAB_VALHEIM_DIR` = an empty folder (verdict "no Valheim install found", location answers allowed).
+
+## 2026-09-26 - dumper run 7: the 1.0.16 data, and it is identical to 1.0.15's
+
+**Build and preflight.** Built at `f65a331` with `-p:DeployToGame=false` (deterministic: a `--no-incremental`
+rebuild gives the same bytes): `SeedLab.Dumper.dll` `FAEEE8D7...F6F3F7` (207,360 B), `SeedLab.Contracts.dll`
+`15504007...0B2F` (25,600 B). Against run 6 the Dumper's IL is unchanged (747 members) and Contracts differs by
+two reader-side fields only (`LocationOccupantsDef.teleports`, `.waymarksCaptured`). `preflight.ps1` against
+1.0.16: **464 checks, 0 failures**; `-SelfTest` 484/0 with all 11 planted probes firing. F4 and the four
+`seedlab_*` commands were free (`find-key-usage.ps1 -Plugins` and a Cecil `ldstr` scan). Mods: the same 16
+plugins as run 6 (TomTom 1.1.1 instead of 1.1.0); nothing was switched off.
+
+**The session** (the user, 2026-09-26): `17 plugins to load`,
+`ARMED in mode 'all'`. At the menu: natives (`random: 268 seeds, 276 traces`, `perlin: 262780 samples in 4
+blocks`) and the generator captures of `MWd8eV6svz` (-1772362158: lakes 111, rivers 140, streams 2135) and
+`hnBd9gJf2G` (319486907: 119, 161, 2059); the seed field read `characterLimit = 10, validation = Alphanumeric`
+(what that does and does not mean: valheim-worldgen `seeds-and-world-files.md` 2.2). Then the new world
+`Throwaway` (`VRbvYNainE`, -1147437162; genloc 13.6 s, 28 `Failed to place all` lines) and F4 at 16:33:02:
+232 locations (183 in the run), 257 vegetation, 32 alt biomes, 12,182 instances (37 placed), 6,260
+localization strings, prefab walk **186 loaded, 0 failed**, room walk **358 loaded, 0 failed**, the three
+sought names FOUND, `asset dump DONE`; quit 16:33:56 with a normal save. The only warnings were the game's
+28 counters, the usual 19 `SoftReference unreadable` (disabled entries) and 22 session-drift notes. The plugin
+was then retired to `_ModSource\_retired\DoomMachine-SeedLabDumper-20260926-run7` (`dumper.enable` = `all`;
+hashes re-checked). `Random.state` was equal at start and end of the menu modes and changed
+during the asset dump (START `[-1624461846,...]`, END `[500600206,...]`), as it did in run 6's log; the game
+drawing between frames is the likely cause (**Unverified**). **Correction:** SKILL.md and `docs\dumper.md` said
+run 6's state was identical at start and end; run 6's session log (read before it was lost) shows it was not.
+
+**The output**, `%USERPROFILE%\AppData\valheim-dumper\1.0.16-96cfc004\`: 29 files, 155,512,833 B, all 25
+`files[]` entries matching; copied whole into `data\1.0.16-96cfc004\` (the dumper's own `manifest.json`, equal to
+`manifest-assets.json`, recomputed nothing). **Against 1.0.15, stamp masked:** `locations`, `altbiomes`,
+`vegetation`, `prefab-constants`, `locationprefabs`, `search` and `locationchildren` are identical;
+`version-constants` differs only in `gameVersion`; `seed-input` and the natives half, libm and random goldens
+are identical; both menu captures are identical and their river-point files byte-identical;
+`natives-hash.json` differs only in entry 428 (the dump world's own seed text); the Perlin block of "real
+arguments" holds 588 samples (1.0.15's 833; it depends on the session's menu world); `localization.json`
+gained 2 keys and reworded 6, none a place name; `roomchildren.json` differs in one room's session drift
+(`morkhalla_endcap02`), which placement does not read.
+
+**Checked on the new data at once:** `vseed data` MATCH; `LocationLab fresh --seed-hex BB9B7F96` PASS, 12,182 /
+12,182 exact, 974 sectors, 32/32 assignments, 178/178 prefabs, order 183/183; per-type counts equal across the
+game's log, the save, the golden and `vseed` on all 183 types; the L4/L5 placement digests of the 8 report
+seeds, 16/16, equal the 1.0.15 reference.
+
+## 2026-09-26 - Valheim 1.0.16 audited: nothing SeedLab copies changed; two old defects found
+
+Valheim 1.0.16 (Steam build 25527674, `assembly_valheim` `96cfc004...`) was installed by Steam on 2026-09-25.
+Five read-only comparisons of the new code with the port - biomes and heights, pre-generation, locations, seeds
+and saves - and a critic covering what they left out (their reports are with the author's working notes). **No port
+change was needed.** Biomes, heights, rivers, location placement, seeds
+and saves: code unchanged; the engine byte-identical (the details, and what 1.0.16 did change, are in
+valheim-modding `environment.md` and the valheim-worldgen references). Location answers were refused, by
+design, until the data was re-dumped (run 7, above).
+
+**Old defect A: SeedLab rounds too early in three helpers** (predates 1.0.16; **not fixed** as of 2026-09-26).
+The game computes `Utils.FloorToInt`, `Utils.RoundToInt` and `AltBiomeWorldData.WorldSpaceToMapSpace` in double;
+the port rounds to float first (`ZoneMath.cs:34`, `BiomeGrid.cs:112`, `SeedLab.Saves\ValheimRounding.cs:33,36`;
+the mechanism is in valheim-modding `pitfalls.md` section 9). Effects: `vseed at` can print the neighbouring zone
+within 0.125 m of a zone edge; a map marker can land a pixel off; a location answer can differ in rare cases
+where a candidate sits a hair from a 12 m alt-biome sector line (filters 10a/10b), after which that type's later
+placements can shift too (**Inferred**, never observed: no ground-truth world hits the band; `RegisterLocation`'s
+zone is unreachable at vanilla radii). Terrain answers are not affected. Fix: compute in double,
+`(int)((double)f + 64000.0) - 64000` and `(int)(((double)x - 6.0) / 12.0 + 1024.0)`, re-run the location gate,
+and add in-game checks of these functions to the dumper's natives mode; a defect fix, so a patch bump.
+
+**Old defect B: the create-world text boxes accept more than letters and digits.** Proven for the world name
+(a punctuation mark and a space); **Unverified** for the seed box. SeedLab's count of typeable seed texts is then too
+small, and the wording in `vseed space`, `Seeds\SeedAlphabet.cs:9,18,38` and `SeedSpace.cs:9-10` needs
+re-scoping; the 2^32 worlds, every suggested text and SeedLab's hashing are unaffected. Only the valheim-worldgen skill's Python
+helper hashes non-BMP characters wrongly.
+
+**Smaller findings, no output affected:** `GetNormal` (`WorldGeneratorPort.cs:2290`) and `GetTerrainDelta`'s
+slope (`:2325`) sum `Vector3.magnitude` in float where the game keeps double (`GetNormal` is used only by a test,
+the slope is discarded). The `WorldFingerprint` reference digests are computed by the port, so they catch port
+regressions but cannot detect a game update. `SeedLab.Saves\MinimapColors.cs` hard-codes the map colours from
+1.0.15 prefab data, so a re-tint would go unnoticed (the dumper should emit the live `Minimap` colours).
+Comments and citations to fix: `WorldField.cs:195` (`IsLavaPreHeightmap` uses `cheap: false`), `ZoneMath.cs:28-29`
+(the comment behind defect A), the `AltBiomeWorldData` citation ranges (`BiomeField.cs:172` -> 148-297, `:371`
+-> 379-456, `BiomeGrid.cs:10` -> 99-130, `AltBiomes.cs:101` -> 299-343), `SeedLab.Saves\WorldDb.cs:13` (line 2073
+-> 1975).
+
+**Loose ends.** An investigator copied the 1.0.16 game DLLs into the author's archive folder unasked (Iron
+Gate's code, local only); keeping it is the user's decision (still open). The IL fingerprint script and the
+two Mono-probe recipes that ran the game's own x64 runtime offline were left in a session's temporary
+folder and were **not rescued** when this was recorded, so their hashes and the recipe are not recorded.
+
+## 2026-09-26 - measurement tooling merged: `vseed profile` resources, `--saturate` / `--plan`, a search benchmark, a river-points golden
+
+Nine commits on `f65a331`, built in a worktree of their own (`0146d07`, `29b2522`, `59341d0`, `221d58d`,
+then after three reviews `347fb7f`, `e8e2833`, `77fea00`, `e756548`, `51cbf8e`), fast-forwarded into `main`.
+Reports: the author's working notes. **No value a seed produces can have changed:** `git diff f65a331..51cbf8e` touches no file under
+`SeedLab.WorldGen`, `.Search`, `.Locations`, `.LocationOracle` or `.Data`; the per-seed work block of
+`ProfileCommand` is character-identical.
+- **`vseed profile`** (schema `seedlab-profile/2`, every /1 field kept): per section the processor time
+  (user and kernel, busy cores, each worker's own thread time), memory (allocated bytes, sampled working set /
+  private / GC heap / committed peaks, the exact window peak from Windows' counters, the profiler's own
+  table), disk I/O, a steady-state rate, the GC (`heap_count_max`, last and last full collection), and a
+  `sizing` line. **`--saturate <seconds>`** sizes each measurement: an uncounted pilot grows until one run has
+  worked 10 % of the target (0.5-3 s), then seeds = max(32 per worker, rate x seconds), rounded up to a
+  multiple of the workers, at most 1,000,000; the plan and its estimated total print first. **`--plan
+  <profile.json>`** replays a document's sections on another build with the same seed lists (refused if a
+  list's SHA-256 differs), re-runs its pilots uncounted, refuses a different `--counters` or a t5 plan on other
+  game data, and records every build and machine difference. `--threads max`.
+- **`tests\bench-search.ps1`** (Windows PowerShell 5.1, ASCII): times each stage of a real `vseed search`
+  (start-up, preflight, plan, open, scan, finish writing, report and exit) with processor time, busy cores,
+  peaks, I/O and page faults, from what vseed already prints; queries Q1-Q7 with `-Quick` forms; marks a run
+  TAINTED when other programs ran; puts vseed in a kill-on-close job object, stops it after `-TimeoutMinutes`
+  (default 60), refuses while Valheim runs unless `-AllowGame`, and refuses elevated. A full run is projected
+  at about 20 minutes, never timed on a quiet machine.
+- **River-points golden** (`SeedLab.Tests river-golden --write | --check | --self-test`): every lake, river,
+  stream, river-grid cell (in enumeration order) and river point of a seed, plus probes through five handles
+  (eager, deferred, forks with and without the inherited cache) re-read after other worlds; format 2, 2.13 MiB
+  per seed. **The golden for the A/B (kept with the author's working notes):
+  142,921,580 B, SHA-256 `53467e907f4d9de69837563df68549c85d7fb6cc052075e9c54f392ba76e643c`**, 64 seeds from index
+  0 of key `0xA17A25EED10C5117`, written by `SeedLab.WorldGen.dll` `4158f3016c1004e9`; `--check` PASS. Seeds #18
+  and #41 end pre-generation with a stale river cache and are exercised. The self-test passes 16/16, and a
+  planted per-worker buffer reuse fails 8 of 8 seeds (54 invariants).
+- **Verified at `51cbf8e`** (with the 1.0.15 data and 1.0.16 installed): clean Release build, 0 errors;
+  Runtime.Tests 326/326, `--profile-check` 43/43; acceptance 32/32; natives 11/11; both IL tripwires; the
+  safety proofs; killtest 6 IDENTICAL; selftest PASS; `--report` 24/24 digests. Search.Tests 348 passed / 12
+  failed and `serve --selftest` 1 FAIL, identical at `f65a331`: every location answer refused on the
+  mismatched data. All 9 commits DoomMachine, no trailers.
+- **Found on the way:** a finished funnel leaves `<hash16>.survivors` in the cache's `checkpoints` (not fixed);
+  the funnel's gate stage runs its placements on one thread (about 12 s of a 36 s smoke run, tainted - a
+  candidate bottleneck); the funnel and sample strategies wrote byte-identical results for the same 512 seeds.
+  `HeapCount` = 16 is the configured maximum, not DATAS's live count (valheim-modding `pitfalls.md` section 10).
+  **Unverified:** whether the port's river-cell enumeration order matches the game's (the dumped river-point
+  goldens could settle it; not compared). **Not done:** the quiet-machine before/after measurement (a
+  `--saturate` profile and the full bench before the memory-reuse change, `--plan` and `river-golden --check`
+  after it).
+
+## 2026-09-26 - the web page diagnosed; the user's decisions; the fix not built yet
+
+The user's report (2026-09-26) on their web session of 2026-09-25: a search stuck at "0 of 200,000" with the
+CPU busy, no log of the operation, a Stop that "does nothing", and an impossible search allowed with unclear
+options. Four diagnoses (three with a second, independent diagnostician's addendum) and a design (with the author's working notes),
+on `f65a331`. **Proved:**
+- **"0 of 200,000" was by design.** The count is whole blocks written in order (`SearchRun.cs:1166`); the
+  automatic block was 256 seeds and one worker checks a block alone, about 9 minutes at the measured
+  ~2.06 s per seed per worker, so a 5 min 23 s run could only show 0. The CLI behaves the same.
+- **The session log existed.** The server wrote its full log (5,587 B) in the real `%LOCALAPPDATA%\SeedLab`;
+  the session had read a shadow copy of that folder (valheim-modding `pitfalls.md` section 2). But the
+  log held one line for the whole search, the terminal logs no plan or outcome either, and nothing on the
+  page says where the log is.
+- **The Stops.** The search panel's Stop is seen only when a worker claims a new block, so the work ran on
+  (94 s after the cancel: still running, 631 CPU-s). "Stop SeedLab" did stop the work (1.4 s in the user's
+  log; 1.9-2.1 s measured); the process then waited at "Press Enter to close this window" (only when vseed
+  owns its console, the double-click path), and that wait makes `vseed serve --stop` and "SeedLab 3" report
+  failure after 10 s. The checkpoint held nothing (`next_block 0`), which no dialog said. Terminal Ctrl+C also
+  waits for whole blocks, and the 120 s budget overran by up to a block (9-11 minutes here).
+- **Threads:** 20 was accepted on 16 logical cores with no clamp; 20 workers were not faster than 16, while
+  the estimate said 12 % faster.
+- **The saved query could never match** (the 1.0.15 data): "every trader spot within 1,500 m" holds only if
+  Hildir and the Bog Witch were never placed and all ten of Haldor's spots sit on the 1,500 m circle; the
+  preflight passed it as Ok. The nice-to-have "every boss altar within 2,500 m" scores 0 in every world with
+  Fader; 2,500 m is the page's default for every distance metric; "every single place" silently dropped a
+  missing member; distances from spawn were falsely capped at 10,500 m (up to 15,600 m is possible; 10,530 m
+  measured).
+- **On game data that does not match the installed game, the page's location request never finishes**
+  (`computing` / `queued` for as long as polled) while the CLI refuses at once; it also fails `vseed serve
+  --selftest`'s marker check after 180 s (the same at `f65a331`).
+
+**The user's decisions** are in `decisions.md` section 17 (1-7, and D1-D3 on the design's questions: blocks
+of about a minute for slow searches, a grace period at the time limit, a search's own log beside its results
+and a warning before a new search discards a resumable one) and section 14 (the per-search log). **None is
+built or on `main`:** the implementer was stopped at 16:34 for the data rebuild, and its unfinished work
+(stop, thread-count and estimate code, 30 files) is preserved as a work-in-progress commit on a local branch,
+after a commit that pins every preset's query hash - "not reviewed, not
+tested and not for merging as is". A workflow stopped earlier left a second, unused plan.
+
+## 2026-09-25 - the quiet-machine CPU comparison: the 22 seeds/s ceiling is the GC mode
+
+Run at the user's request after the push, on a quiet machine (no workflows, no build server, no vseed or
+Valheim; 5.6 % mean load over 10 s before, 1.9 % before the profile). Everything (the run conditions, the report, both
+profiles as text and JSON, the extracted package) is kept with the author's working notes.
+
+- **The published package on the reference machine:** the local `dist\` zip's SHA-256 equals the v1.0.0
+  release (`aaab4747...3756`), extracted fresh, `Run SeedLab machine report.bat --no-pause`: **93/93 PASS** at
+  avx512, avx2, avx and scalar, exit 0, 167 s. Timings beside the Intel i7-12700K's (1 thread / half / all):
+  biome grid 144.0 / 1,013.3 (8) / 1,659.0 (16) seeds/s against 106.8 / 938.7 (10) / 1,439.4 (20); pre-generation
+  7.0 / 22.8 (16) against 4.9 / 21.3 (20).
+- **`vseed profile --tier t4 --threads 1,2,4,8,16 --seeds 256`** (pilot order, server GC as `vseed` ships):
+  7.16 / 13.57 / 23.66 / 39.36 / **55.62** seeds/s (7.8x at 16); GC pause 5.0 / 9.7 / 17.2 / 25.7 / 36.3 % of wall;
+  CPU ms/seed 173 at 1 worker, 224 at 16 (x1.30, SMT - hypothesis H10 confirmed). Pre-generation allocates
+  **48.81 MiB per seed** (rivers.render 21.89, streams1.render 25.88; H3 confirmed). Of its CPU time, the stream
+  search is 77.6 % (streams1 34.6, streams2 42.5), rendering 17.8 %, lakes 4.0 %, the river search 0.5 % - H2's
+  predicted 45-60 % for stream search was refuted.
+- **The same with `DOTNET_gcServer=0 DOTNET_gcConcurrent=1`** (the package's GC; the profile's runtime line says
+  "workstation GC"): 7.06 seeds/s at 1 worker, **22.18 at 16**, GC 50.9 % of wall. That reproduces both
+  machines' package ceiling, so the ceiling is the package's default workstation GC, not the CPUs and not a
+  shared resource in SeedLab. A real `vseed search` gets ~55 seeds/s at `--mode full`, ~39 at `balanced`.
+- **What is left, and the next lever:** under server GC the collector still holds 36 % of the wall time at 16
+  workers; reusing the river and stream rendering buffers per worker should cut it (**Unverified:** by how
+  much). For the machine-report package v1.1: run pre-generation under server GC (or report both), or its
+  figure keeps understating SeedLab.
+- **Traps met:** a PowerShell 5.1 script with `$ErrorActionPreference = "Stop"` that redirected a native
+  program's output with `*>` stopped at the program's first stderr line (`NativeCommandError`), leaving an empty
+  output file; running it through `cmd.exe /c "... > file 2>&1"` worked (valheim-modding `pitfalls.md`).
+- Recorded in the project's `docs\cpu-compatibility.md` as `f65a331` (it replaces "points at a limit in the
+  code" with the measurement), audited (no blockers; two wording notes taken before the push) and **pushed
+  2026-09-25, `main` = `f65a331`**.
+
+## 2026-09-25 - pushed: `e5a8b90..71d5111`, eleven commits
+
+The server lifecycle (`25f2a9f`), the profiler and CPU safety net (merge `81e3f97`), the README's process-ID
+line (`831f55a`), the refreshed `.claude` copies (`b087ce1`) and one wording commit (`71d5111`) went public on
+2026-09-25 with `git push origin main`; `git ls-remote` then gave `main` = `71d5111`. The refresh was a
+three-way merge per file (the author's publishing procedure), scrubbed where master cites the author's
+local report folders, the local clone of the test package, or that procedure's sections.
+
+The pre-push audit (`e5a8b90..b087ce1`, every blob in UTF-8 and UTF-16LE, 79 live
+identifiers from this PC in 29 categories) found no blocker and nothing important. Four wording notes were
+fixed before the push in `71d5111`: the scripts refuse to run elevated for every action **but Help** (three
+places said "whatever the action"); `docs\cpu-compatibility.md` said "built from this branch" after the merge;
+the `.claude` README said the names of all other programs were removed (Windows' own process names appear in
+a pitfall); a published history line cited the pre-amend commit, which was never public. Two notes left for
+later: `vseed profile --out` hard-codes the author's `_ModSource` folder as its one allowed place inside the
+game folder (remove after the atlas pilot); `MachineReport` prints a Perlin failure's `ex.Message`, which is
+built only from numbers today but would not be guaranteed path-free for a new exception type. A `git archive`
+zip of `71d5111` (what GitHub's "Download ZIP" serves) has CRLF `.bat` files and mode 755 on `seedlab.sh` and
+`SeedLab.command`.
+
+## 2026-09-25 - the README says the session log records the process ID
 
 The pre-push release audit (its note 6) found that the
 README's list of what a session log holds left out the `process  pid <n>; <OS> (<RID>); <framework>` line
@@ -105,9 +466,9 @@ seed-text entry, and each hash sample is two checks, the hash and its lane split
 with the author's working notes; the project's
 `docs\cpu-compatibility.md` records it ("Machine reports received", committed as `ab45aa2` on `perf-track`
 and merged in `81e3f97`). What it settles, what is still open and the performance lead it gave are in
-decisions.md section 16. **Unverified:** that lead - pre-generation stopping near 21 seeds/s on both this CPU
-and the 9800X3D - points to a limit in the code (allocation, garbage collection or a shared resource) rather
-than the hardware; nothing has profiled it yet.
+decisions.md section 16. That lead - pre-generation stopping near 21 seeds/s on both this CPU and the
+9800X3D - was resolved the same day: the package's workstation GC, not the hardware (entry "the quiet-machine
+CPU comparison" above).
 
 ## 2026-09-25 - the web server starts and stops safely; two session logs; one-click scripts
 
@@ -1972,8 +2333,10 @@ dumped data still compiles and simply issues no atlas-backed refusal.
 
 ### T1, the test that matters, measured
 
-`CheckerSelfTest` ships in the library so the CLI, the web API and the test project all run the code
-that ships. Measured on this machine, full pass, 1.0 s:
+`CheckerSelfTest` ships in the library, so it tests the very code the CLI, the web API and the test project
+use. (Corrected 2026-09-26: this read "so the CLI, the web API and the test project all run" it; `git grep`
+finds no caller, so nothing in the repository runs it, and its T7 has since gone stale - 18/19 on 1.0.15 and
+1.0.16 alike.) Measured on this machine, full pass, 1.0 s:
 
 - **T1a** 36,829 real instances over 179 types (`asdasdasd` 12,314 + `testworldclaude` 12,287 +
   `locationinstances-0480A34C` 12,228), **0 outside the checker's own feasible set**. Rows resolve by

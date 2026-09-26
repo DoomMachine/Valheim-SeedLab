@@ -42,7 +42,7 @@ Some items are also backed by this machine's `Player.log` and save folders. Thos
 - **Join server:** `JoinServer` -> `ZNet.SetServer(false, false, false, "", "", null)` (**sets `ZNet.m_world = null`**) -> `ZNet.SetServerHost(...)` (Steam user / PlayFab / dedicated IP, resolved asynchronously) -> `TransitionToMainScene()` (FejdStartup.JoinServer / decompiled).
 - `TransitionToMainScene` fades out, then `Invoke("LoadMainSceneIfBackendSelected", m_instantStart ? 0f : 1.5f)`. If `m_startingWorld || ZNet.HasServerHost()` is true, it calls `LoadMainScene()` -> `SystemResourceManager.FastLoadScene(m_mainScene)`. Otherwise it retries every 0.25 s. After 50 retries it gives up with `ErrorConnectFailed` (FejdStartup.LoadMainSceneIfBackendSelected / decompiled).
 - Command-line options that the client build honours: `-console`, `-demomode`, `-joinserverwithcharacter`, `-password`, `-simulationdistance`, `-joincode`, `+connect <addr>`, `+connect_lobby <id>` (FejdStartup.ParseArguments / HandleStartupJoin / decompiled).
-  **`FejdStartup.ParseServerArguments` (`-savedir`, `-saveinterval`, `-backups`, `-world`, ...) has NO callers in this client assembly**, so those switches do nothing in the Steam client (IL xref: zero call sites). `ZNet.IsDedicated()` is hard-coded to `return false;` (ZNet.IsDedicated / decompiled).
+  **`FejdStartup.ParseServerArguments` (`-savedir`, `-saveinterval`, `-backups`, `-world`, ...) has NO callers in this client assembly**, so those switches do nothing in the Steam client (IL xref: zero call sites). `ZNet.IsDedicated()` is hard-coded to `return false;` (ZNet.IsDedicated / decompiled). The dedicated server's own DLL calls `ParseServerArguments()` from `FejdStartup.Awake` and applies `-simulationdistance` (default level 2) at `ZNet.s_onZNetStart` (multiplayer.md section 1.4, 1.0.16, 2026-09-26).
 
 ### 1.3 Main scene: order of creation
 Awake, then Start, then first frames. Each of these singletons assigns its static instance in `Awake`:
@@ -288,14 +288,14 @@ if ((bool)Player.m_localPlayer) {
 ## 7. Local data locations
 
 - `Utils.GetSaveDataPath(src)` (assembly_utils): returns `""` when `FileHelpers.CloudStorageSupportedAndEnabled && src.IsAutoOrCloud()`; otherwise `m_saveDataOverride` if one is set, else `Utils.persistantDataPath = Application.persistentDataPath` (Utils.GetSaveDataPath / decompiled).
-  `SetSaveDataPath` is only called from the dead `ParseServerArguments`.
+  `SetSaveDataPath` is only called from `ParseServerArguments`, which is dead in the client and runs on the dedicated server (`-savedir`; multiplayer.md section 1.4).
 - On this machine **(observed)** `persistentDataPath` = `C:\Users\<user>\AppData\LocalLow\IronGate\Valheim\`, containing:
   - `Player.log`, `Player-prev.log`: the Unity player log, which includes all `ZLog` output. BepInEx mirrors it into `<game>\BepInEx\LogOutput.log` **(observed)**. The in-menu "show log" button opens `Application.persistentDataPath` (FejdStartup.OnButtonShowLog). `CustomLogger` symlinks are macOS-only (CustomLogger / decompiled).
   - `screenshots/screenshot_yyyy-MM-dd_HHmmss.png`: **F11** in `GameCamera.LateUpdate` (also RMB in free-fly). The path is always Local, and nothing is written if the file already exists (GameCamera.ScreenShot / decompiled; observed files).
   - `worlds_local/<worldName>/`: local worlds, **and the minimap texture cache for every world, including cloud worlds**.
   - `characters_local/`: local characters (path from code). **Not present on this machine**, because its only character is in Steam Cloud.
   - `cache/<worldName>_biomedatacache.bin`: `AltBiomeWorldData` cache (AltBiomeWorldData.GetFilePath / decompiled). The folder exists here but is empty **(observed)**.
-  - `adminlist.txt`, `bannedlist.txt`, `permittedlist.txt`: server lists, created by the host's `ZNet.Awake` (Local storage).
+  - `adminlist.txt`, `bannedlist.txt`, `permittedlist.txt`: server lists, created by the host's `ZNet.Awake` (Local storage). A dedicated server started with `-savedir X` writes them, and `worlds_local\`, under `X` instead (seen live 2026-09-26; multiplayer.md section 6.3).
   - `serverlist_local/`.
   - `worlds/` and `characters/` here only hold `steam_autocloud.vdf` **(observed)**.
 - **Steam Cloud** saves (`FileSource.Cloud`) are **(observed)** at `<Steam>\userdata\<accountId>\892970\remote\worlds\<worldName>\...` and `...\remote\characters\<name>.fch`. On this machine that is a Steam folder outside Program Files, and the Player.log lines read "Cloud Save: ... /worlds/asdasdasd/_main.1.fwl2".
@@ -337,14 +337,14 @@ if ((bool)Player.m_localPlayer) {
 | `ZoneSystem.instance` | `ZoneSystem.Awake` | `OnDestroy` | `GetGroundHeight`/`GetSolidHeight` are **physics raycasts**. They only work where terrain colliders are loaded (near the player); otherwise they return `p.y` / `false` (ZoneSystem.GetGroundHeight / decompiled) |
 | `Minimap.instance` | `Minimap.Awake` | `Minimap.OnDestroy` | **`AddPin` before `Minimap.Start` throws a NullReferenceException** (`m_visibleIconTypes`); pins added before `LoadMapData` can be wiped (section 3). Survives death |
 | `Hud.instance` | `Hud.Awake` | `Hud.OnDestroy` | |
-| `Player.m_localPlayer` (public static field) | `SetLocalPlayer` in `Game.SpawnPlayer` | `Player.OnDestroy`: at `_RequestRespawn` (10 s after death), on `SkipIntro`, and at `Game.Shutdown` (end of frame) | null for several seconds after scene load (8+ s for logout-point and bed spawns) and during each respawn. A bed respawn waits 8+ s. A StartTemple respawn waits only for `IsAreaReady` and can take under a second **(observed: "Starting respawn" and the new `Player(Clone)` both at 19:08:21)**. **When `SetLocalPlayer` runs, inventory and skills are NOT loaded yet** (`LoadPlayerData` comes next). In `Player.Awake`, `m_localPlayer` is not yet this player; use `m_nview.IsOwner()` |
+| `Player.m_localPlayer` (public static field) | `SetLocalPlayer` in `Game.SpawnPlayer` | `Player.OnDestroy`: at `_RequestRespawn` (10 s after death), on `SkipIntro`, and at `Game.Shutdown` (end of frame) | **never set on a dedicated server** (its `Game.FixedUpdate` never calls `UpdateRespawn`; multiplayer.md section 1.4). null for several seconds after scene load (8+ s for logout-point and bed spawns) and during each respawn. A bed respawn waits 8+ s. A StartTemple respawn waits only for `IsAreaReady` and can take under a second **(observed: "Starting respawn" and the new `Player(Clone)` both at 19:08:21)**. **When `SetLocalPlayer` runs, inventory and skills are NOT loaded yet** (`LoadPlayerData` comes next). In `Player.Awake`, `m_localPlayer` is not yet this player; use `m_nview.IsOwner()` |
 | `ObjectDB.instance` | menu: `FejdStartup.Start` copy (via `AddComponent<ObjectDB>` + `CopyOtherDB`); game: the main scene's own ObjectDB (**inferred**; its `Awake` sets `m_instance = this`) | replaced per scene | |
 
 **Useful public hooks and events:**
 - `Game.m_playerInitialSpawn` (static event, first spawn per session).
 - `PlayerProfile.SavingStarted` / `SavingFinished` (static `Action`).
 - `ZNet.WorldSaveStarted` / `WorldSaveFinished` (static `Action`, server).
-- `ZNet.s_onZNetStart` (public static `Action`, invoked in `ZNet.Start`).
+- `ZNet.s_onZNetStart` (public static `Action`, invoked in `ZNet.Start`). `FejdStartup.QueueSettingSimulationDistance` uses it to apply a simulation distance once per start, removing itself.
 - `Game.IsShuttingDown()`, `Game.WaitingForRespawn()`.
 
 **Useful Harmony targets (private is fine):** `Minimap.LoadMapData` (postfix = pins restored), `Game.SpawnPlayer` (postfix = local player fully loaded), `Player.OnDeath` (owner only), `Game._RequestRespawn` (prefix = the player is about to be destroyed), `Game.Shutdown` (prefix = the last point where the player and minimap exist before the final save).

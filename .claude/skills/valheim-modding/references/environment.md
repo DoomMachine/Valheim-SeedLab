@@ -1,23 +1,73 @@
 # Environment — the machine, the game build, the toolchain
 
-KB-STAMP game-version=1.0.15 network=40 steam-build=25390630 assembly_valheim-sha256=59f53fb55d99d22a33e8ed094eec8d21e9f133543bce92bc3d80dce44033adb1
+KB-STAMP game-version=1.0.16 network=40 steam-build=25527674 assembly_valheim-sha256=96cfc004f7f4a6f30d070bef39eafd79c466a137121c4665a2f19fb9c15c6127
 
-Every game-code fact in the valheim-* skills was verified against the build in the stamp above.
-`scripts/check-game-version.ps1` compares it with what is installed now (exit 2 = the game changed).
-Last full verification: 2026-09-22. Reconciled and extended 2026-09-23 (the SeedLab findings, several
-serialized prefab values corrected from a runtime dump) with the stamp re-checked and unchanged - the
-game has not moved since, so nothing needed re-deriving.
+`scripts/check-game-version.ps1` compares the stamp above with what is installed now (exit 2 = the game
+changed). The knowledge base was fully verified against 1.0.15 on 2026-09-22 (reconciled and extended
+2026-09-23 with the SeedLab findings), and **re-stamped to 1.0.16 on 2026-09-26** after the checks below.
+
+**What the stamp means since 2026-09-26.** 1.0.16 is Steam build 25527674, network 40, `assembly_valheim.dll`
+SHA-256 `96cfc004f7f4a6f30d070bef39eafd79c466a137121c4665a2f19fb9c15c6127` (installed by Steam 2026-09-25
+17:02). These surfaces were re-checked on 1.0.16 before the stamp moved:
+- **Everything SeedLab reproduces**: biomes, heights, rivers, lakes and streams; location placement (the 11
+  filters, draw order, alt biomes, spawn point, dungeon names, Vegvisir and rune-stone targets); seed text to
+  seed, world set-up and the suggested seed; every save layout and version number; the map-cache format. Five
+  read-only audits compared the 1.0.16 code with SeedLab's port instruction by instruction, and a critic
+  checked what they left out; nothing changed (seedlab `history.md`, the 1.0.16 audit). Then proven
+  on 1.0.16's own output: four worlds 1.0.16 created, and all of SeedLab's gates on them (seedlab
+  `proofs-and-gates.md`).
+- The MobTracker review's slice (vanilla-behaviour.md sections 4, 5 and 14-18; multiplayer.md sections 3.2,
+  3.5 and 5.2) and TomTom 1.2.0's surface (preflight 49/49 on the installed DLL, and the decompiles that
+  release needed, 2026-09-26).
+
+**Facts outside those surfaces were verified on 1.0.15 and have not been re-read on 1.0.16 one by one.** The
+update did change code elsewhere, so treat such a fact as **Unverified on 1.0.16** and re-read it with
+`decompile.ps1` before relying on it. A line that says "1.0.16" has been re-read. SeedLab's `DATA-STAMP` is
+separate (seedlab skill).
+
+**What 1.0.16 changed, and what it did not** (2026-09-26, the audit's file hashes and dates; the code
+compared as above):
+- **Code rewritten** (new file dates 2026-09-25 17:02): `assembly_valheim.dll` (grew from 2,569,728 to
+  2,572,288 bytes), `assembly_utils.dll` (`95810ce3...`), `SoftReferenceableAssets.dll` (`74f088e5...`), the
+  other `assembly_*`, `gui_framework`, Splatform, PlayFab, MagicaClothV2, steamworks, `lib_burst_generated.dll`
+  and `valheim.exe`. **None of the code SeedLab copies changed.**
+- **Data rewritten:** `resources.assets`, `globalgamemanagers*`, `level0`, `sharedassets0`, and 14 SoftRef
+  bundles, `d59cfac` (the alt biomes) among them. The re-dump (SeedLab dumper run 7) found the location table,
+  alt biomes, vegetation, prefab constants and location children **identical to 1.0.15 apart from the stamp**;
+  `localization.json` gained 2 keys and reworded 6, none a place name (seedlab `history.md`, 2026-09-26).
+- **Not rewritten:** the SoftRef `manifest` and `manifest_extended` (dated 2026-09-17) and
+  `Unity.TextMeshPro.dll` (2026-09-16).
+- **The engine is unchanged**, by full SHA-256: the files below are byte-identical to the stock 6000.0.75f1
+  editor's player files, except CoreModule, which every project strips for itself (the editor's copy is
+  `302E3CB3...`) and which equals the hash SeedLab's spec 03 section 1 recorded under 1.0.15. `UnityPlayer.dll`
+  also equals SeedLab's DATA-STAMP. `Player.log` reports `Initialize engine version: 6000.0.75f1 (26349cd2a5c8)`.
+  `mono-2.0-bdwgc.dll` and `mscorlib.dll` equal the 1.0.15 hashes recorded below on 2026-09-24. `System.Core`
+  and `System` are **Inferred** unchanged from 1.0.15: they are the stock files of the same engine, but no
+  1.0.15 hash of them was recorded. Next time, hash the editor's copies rather than trust file dates.
+
+  | File | SHA-256 |
+  | --- | --- |
+  | `UnityPlayer.dll` | `4D161E15D8CCDB32EB73262E7A3E0A66F8C175B50A38E22AE5B0E8FB9AEA98F3` |
+  | `UnityEngine.CoreModule.dll` | `FBA3821A...D990` |
+  | `MonoBleedingEdge\EmbedRuntime\mono-2.0-bdwgc.dll` | `35FD9D8065EE84D0C9312B4B3BB19ECA3C1196C952E66D74DC8895CFFF0AA028` |
+  | `mscorlib.dll` | `5ED1180FC8CB409D57952296C7F573F2B1B3D3D2A2CD37258EF407498A17DD4D` |
+  | `System.Core.dll` | `9493EBE16569F6067BEEF5281D68E83EE9511DB7F55245B1DC2C95E8E189FCE3` |
+  | `System.dll` | `439CA04B265472AFE66DF7802BED26E880B3DB35E33C7E0ECF182611F4B9B6D7` |
+- **Not kept:** a copy of the 1.0.15 assemblies, so no direct old-vs-new diff was possible (pitfalls.md
+  section 1). An investigator copied 1.0.16's game DLLs into the author's archive folder
+  unasked; whether to keep it is the user's decision (still open 2026-09-26). It is Iron Gate's code: local
+  only, never published.
 
 ## The game
 
 | | |
 | --- | --- |
 | Install | `<Valheim>` - the game folder, `<Steam library>\steamapps\common\Valheim` (Steam app 892970) |
-| Game version | **1.0.15**, network version 40 (from the game's own startup log line `Valheim version: ...`) |
+| Game version | **1.0.16**, network version 40 (from the game's own startup log line `Valheim version: ...`), installed 2026-09-25; the KB was verified on 1.0.15 and re-stamped to 1.0.16 on 2026-09-26 after the re-checks above - read what the stamp covers |
 | Engine | Unity **6000.0.75f1**, changeset `26349cd2a5c8` (the strings `6000.0.75f1 (26349cd2a5c8` in `UnityPlayer.dll` and `6000.0.75f1` in `valheim_Data/globalgamemanagers`, read 2026-09-24; `UnityPlayer.dll` FileVersion 6000.0.75.2503836) |
 | Mod loader | BepInEx **5.4.23.3** via BepInExPack Valheim 5.4.2333 (Thunderstore) |
 | Harmony | 0Harmony **2.9.0.0** (HarmonyX) in `BepInEx\core` — `__runOriginal`, `__state`, `__result`, `__instance` all available |
-| Executable | `valheim.exe` (client). The dedicated server's name `valheim_server.exe` is **Unverified** from game code (see multiplayer.md §1.1). `[BepInProcess("valheim.exe")]` keeps a mod off the server — it is a *process-name* filter, not an OS filter (boot chain, step 3) |
+| Executable | `valheim.exe` (client). **The dedicated server is installed too**: `valheim_server.exe`, see "The dedicated server" below. `[BepInProcess("valheim.exe")]` keeps a mod off the server — it is a *process-name* filter, not an OS filter (boot chain, step 3). (**Corrected 2026-09-26:** this said the server's name was Unverified from game code.) |
 
 **Where the game code lives.** `valheim_Data\Managed\assembly_valheim.dll` (2.5 MB) holds nearly all
 game code. `Assembly-CSharp.dll` is a 23 KB stub — do not look there. Also:
@@ -29,6 +79,31 @@ with the game), `UnityEngine.JSONSerializeModule.dll` (JsonUtility).
 **Input.** The game uses Unity's **new Input System**. `UnityEngine.Input` is unavailable — use
 `ZInput` (see vanilla-behaviour.md). BepInEx's own `KeyboardShortcut.IsDown()` goes through
 `BepInEx.UnityInput.Current`, which probes legacy Input; prefer `ConfigEntry<KeyCode>` + `ZInput.GetKeyDown`.
+
+## The dedicated server
+
+As of 2026-09-26 (checked on disk at about 21:40):
+
+| | |
+| --- | --- |
+| Install | `<Steam library>\steamapps\common\Valheim dedicated server\` - Steam app **896660** "Valheim Dedicated Server", build **25527701** (`appmanifest_896660.acf`; updated 2026-09-25, the same day as the client), executable `valheim_server.exe` |
+| Game code | its own `valheim_server_Data\Managed\assembly_valheim.dll`, SHA-256 `7cab9b49d31ec064591ca80402dd35c566e03b7297cfb7bf4696c38da4e24d8b`: the client's source built with a server symbol. What differs, and what does not: multiplayer.md section 1.4. `Splatform.Steam.dll` is not in its `Managed` folder |
+| Mods | **None: vanilla, no BepInEx, no `winhttp.dll`.** A BepInEx test install (2026-09-26, a mod's server load test) was moved out again and kept, with its logs, in the author's archive |
+
+**Running it** (the 2026-09-26 test): `valheim_server -nographics -batchmode -name "<name>" -port 2456 -world <world>
+-password <pw> -public 0 -savedir <folder> -logFile <file>`. The server's `FejdStartup.Awake` quits unless the graphics
+device is Null (multiplayer.md section 1.4).
+- **Always pass `-logFile <path>`.** Without it the server writes Unity's log to the same
+  `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\Player.log` as the client, and a server run on 2026-09-25 had
+  overwritten the client's (pitfalls.md section 7).
+- `-savedir <folder>` takes the admin, ban and permitted lists and `worlds_local\` with it (multiplayer.md section 6.3).
+- **BepInEx works there unchanged** (live, 2026-09-26): BepInEx 5.4.23.3 copied from the game's own pack (the
+  `winhttp.dll` doorstop) loaded a plugin with `[BepInProcess("valheim_server.exe")]`, and the log header read
+  `BepInEx 5.4.23.3 - valheim_server`.
+- **Headless noise, not a mod fault:** each start logs `AsyncResourceUpload failed.` (x2), `This custom render path
+  shader needs to have at least 1 passes.` (x2), `Could not find material Hidden/VideoDecode ...`, `Could not find
+  material Hidden/VideoComposite ...`, eight `Could not find video decode shader pass ...` and `Failed to play intro
+  cinematic`. The same lines appear with BepInEx switched off (both logs are kept with that test install).
 
 ## Boot chain (how a mod gets loaded)
 
@@ -54,9 +129,16 @@ with the game), `UnityEngine.JSONSerializeModule.dll` (JsonUtility).
      `Paths.ProcessName` using `StringComparison.InvariantCultureIgnoreCase`, so it accepts any
      executable whose name minus its final extension is `valheim` (a Linux or Proton client included).
      The filter does exclude the dedicated server everywhere, because `valheim_server` != `valheim`;
-     the Chainloader logs `Skipping [...] because of process filters`. (The server executable's own name
-     is still corroborated only by a third-party mod's attribute — multiplayer.md §1.1 — and the Linux
-     client/server binary names remain unknown.)
+     the Chainloader logs `Skipping [...] because of process filters`. (The server executable,
+     `valheim_server.exe`, is installed here and was seen on disk on 2026-09-26; the Linux client and server
+     binary names remain unknown.)
+   - **How the filter matches** (decompiled `BepInProcess`, `Paths.SetExecutablePath`, `Chainloader.Start`, BepInEx
+     5.4.23.3, 2026-09-26): `Paths.ProcessName` is `Path.GetFileNameWithoutExtension` of the executable path doorstop
+     passes in. A plugin is skipped unless one of its `[BepInProcess]` names, with `".exe"` removed (a case-sensitive
+     `Replace`), equals `Paths.ProcessName` ignoring case. The attribute is `AllowMultiple = true`, so one plugin can
+     name both `valheim.exe` and `valheim_server.exe`; a plugin with **no** attribute loads in every process. So
+     `[BepInProcess("valheim_server.exe")]` would also match a Linux `valheim_server.x86_64` (that name is
+     **Unverified**). Loading on the Windows server was seen live (see "The dedicated server" above).
    - A plugin whose `[BepInDependency]` is missing is skipped: a plugin that needs Jotunn, installed without
      it, never loads ("missing dependencies: com.jotunn.jotunn").
    - `[BepInIncompatibility(guid)]`: in one pass over all plugins, any plugin whose incompatible GUID is
@@ -113,6 +195,10 @@ Two uses, no Editor project needed:
   (`typeof(object).Assembly.Location` reports the game's file). TomTom's `run-tests.sh` does this since
   2026-09-24; the text-handling differences it catches are in vanilla-behaviour.md section 13. An earlier
   claim that the editor's Mono "cannot load the game's corlib" came from trying the 6000.6.2f1 copy.
+  **But that `mono.exe` is 32-bit x86** (PE machine 0x14C) and loads `mono-2.0-sgen.dll`, not the player's
+  x64 `mono-2.0-bdwgc.dll` (checked 2026-09-26, the 1.0.16 audit). It is fine for corlib and text tests, and
+  **not a numerics oracle** for the x64 player: its floating-point results are x86's, which is different
+  evidence (pitfalls.md section 9, the `-O=-float32` entry).
 - **Profiling:** `Variations\win64_player_development_mono` is present, so the Unity Profiler's
   development-player swap is available for a *copy* of the game (the release player cannot be profiled).
 
@@ -125,17 +211,22 @@ Shells: Git Bash (the Bash tool) and Windows PowerShell 5.1. See pitfalls.md for
   BepInEx\                     core\ (Mono.Cecil for the scripts), plugins\, config\, LogOutput.log
   _ModSource\SeedLab\          where the author keeps the SeedLab repository (a clone can live anywhere)
   _ModSource\_retired\         superseded installs, kept rather than deleted
+<Valheim dedicated server>\    the dedicated server (Steam app 896660), in the same steamapps\common\ as the
+                               game; asmdiff.ps1 and scene-scripts.py compare it with the client by default
 
 <SeedLab repository>\          SeedLab: the offline, bit-exact world generator and the vseed CLI (skill: seedlab)
   .claude\skills\              these skills (valheim-modding, valheim-worldgen, seedlab)
-    valheim-modding\scripts\   decompile, api-surface, find-usages, find-key-usage, scan-mod-patches,
-                               check-game-version (PowerShell), validate-kb.py (needs PyYAML)
+    valheim-modding\scripts\   decompile, decompile-module (a whole assembly and its IL), api-surface,
+                               find-usages, find-key-usage, scan-mod-patches, check-game-version,
+                               asmdiff (two builds' assemblies compared) (PowerShell), validate-kb.py
+                               (needs PyYAML), scene-scripts.py (two builds' main scenes)
     valheim-worldgen\scripts\  valheim_saves.py (read-only seed hash and save parsers)
   .claude\agents\              valheim-api-investigator
-  data\1.0.15-59f53fb5\        game data read out of the running game (location table, alt biomes, prefab
-                               constants, native goldens), stamped with the build it came from (local only)
-  groundtruth\                 what the game itself wrote: two worlds' saves and map caches, its own logs
-                               (local only)
+  data\<version>-<hash>\       game data read out of the running game (location table, alt biomes, prefab
+                               constants, native goldens), stamped with the build it came from: 1.0.16-96cfc004\
+                               (dumper run 7) and 1.0.15-59f53fb5\ (local only)
+  groundtruth\                 what the game itself wrote: four 1.0.16 worlds' saves and map caches, its own
+                               logs (local only)
   tools\SeedLab.Dumper\        the BepInEx plugin that captured data\ - installed only while a dump is run
 ```
 

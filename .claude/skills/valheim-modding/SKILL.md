@@ -1,6 +1,6 @@
 ---
 name: valheim-modding
-description: Verified knowledge and tools for modding Valheim (build 1.0.15, the game folder is found automatically) - the game's real API and accessibility, how vanilla systems behave inside (map pins, input, cursor, HUD, console, player lifecycle, multiplayer map sharing), BepInEx and Harmony specifics, scanning the installed mods, the build toolchain, and hard-won pitfalls. Includes a decompiler and Mono.Cecil scripts for reading game code. Use this whenever working on any Valheim mod or BepInEx plugin, reading or patching Valheim game code, choosing a Harmony patch target or a hotkey, debugging a mod from LogOutput.log, or answering any question about how Valheim works internally - even when the user just names a game class like Minimap, Player or ZNet.
+description: Verified knowledge and tools for modding Valheim (build 1.0.16, the game folder is found automatically) - the game's real API and accessibility, how vanilla systems behave inside (map pins, input, cursor, HUD, console, player lifecycle, multiplayer map sharing, object loading and simulation distance, creatures, pathfinding), the dedicated server (its own build, running it, routed-RPC security), BepInEx and Harmony specifics, scanning the installed mods, the build toolchain, and hard-won pitfalls. Includes a decompiler (single members or a whole plugin with its IL) and Mono.Cecil scripts for reading game code. Use this whenever working on any Valheim mod or BepInEx plugin, reading or patching Valheim game code, choosing a Harmony patch target or a hotkey, debugging a mod from LogOutput.log, or answering any question about how Valheim works internally - even when the user just names a game class like Minimap, Player or ZNet.
 ---
 
 # Valheim modding
@@ -33,11 +33,14 @@ scripts use BepInEx's own `BepInEx\core\Mono.Cecil.dll`.
 | Question | Tool |
 | --- | --- |
 | What does vanilla actually do in X? | `scripts/decompile.ps1 -Type Minimap -Member AddPin` (whole type: omit -Member; other DLL: -Assembly assembly_utils / BepInEx / a path) |
+| What does a whole plugin (or any small assembly) do, end to end - including its IL? | `scripts/decompile-module.ps1 -Assembly <path to .dll> -OutDir <scratch folder>` - one `.cs` with every type (nested iterator and lambda classes too) plus a full `.il` disassembly, references resolved from the game, `BepInEx\core` and `BepInEx\plugins`. Built on first run from `scripts/decompiler-module/`. Verified 2026-09-26: output byte-identical to the scratch build it replaced. Write the output to a scratch folder, never to anything you might publish |
 | Does member X exist, and is it public or PRIVATE? | `scripts/api-surface.ps1 -Type 'Minimap,Minimap/*' -Filter Pin` |
 | Who calls / reads / writes X? Where is string S used? | `scripts/find-usages.ps1 -Needle "PinData::m_save"` (add `-Plugins` to include installed mods) |
 | Is this hotkey free? | `scripts/find-key-usage.ps1 -Keys "F4,Insert" -Plugins` — vanilla code AND mod configs |
 | Who else patches this method? | `scripts/scan-mod-patches.ps1 -Target "TakeInput"` |
 | Has the game updated? | `scripts/check-game-version.ps1` |
+| What differs between two builds of an assembly (client vs dedicated server, or an old copy vs the installed game)? | `scripts/asmdiff.ps1 -Out <scratch file>` - types, member surface and access, every method whose IL differs; `-A`/`-B` pick the two `Managed` folders (default: the client and the dedicated server beside it), `-Constants`, `-ShowIL "Game::FixedUpdate/0"` |
+| Do two builds' main scenes hold the same objects? | `python scripts/scene-scripts.py` - GameObjects and MonoBehaviour classes of `Assets/Scenes/main.unity` (SoftRef bundle `17245031`) in the client and the dedicated server, read offline; `--a`/`--b` for other `_Data` folders |
 | Is the knowledge base itself intact? | `python scripts/validate-kb.py` — frontmatter (strict YAML), sizes, paths, encoding, stamp |
 
 Work from decompiled code, not guesses: read the member, then the members it calls, then its callers
@@ -51,12 +54,12 @@ For a larger investigation, delegate to the **valheim-api-investigator** agent.
 
 | File | Read it when |
 | --- | --- |
-| `references/environment.md` | you need versions, paths, the boot chain, the toolchain, or the KB-STAMP |
+| `references/environment.md` | you need versions, paths, the boot chain, the toolchain, the KB-STAMP, or the installed dedicated server (build, hash, how to run it) |
 | `references/pitfalls.md` | always, once per session; before building, patching, or touching input/UI/pins |
 | `references/game-api.md` | you are about to call or patch a game type — signatures and accessibility |
-| `references/vanilla-behaviour.md` | you need to know what vanilla does inside: pins, map gestures, map sharing, input gating, cursor, HUD, console, lifecycle, heights, vanilla keys, BepInEx loader |
+| `references/vanilla-behaviour.md` | you need to know what vanilla does inside: pins, map gestures, map sharing, input gating, cursor, HUD, console, lifecycle, heights, vanilla keys, BepInEx loader, which objects are loaded (simulation distance, per-level radii), characters, pathfinding tiles, audio volume, rendering |
 | `references/game-operations.md` | startup/loading order, death, logout, saving, local files, when instances are null |
-| `references/multiplayer.md` | anything networked: ZNet roles, ZDOs, RPCs, map sharing, pings, cheat gating, client vs server |
+| `references/multiplayer.md` | anything networked: ZNet roles, the dedicated server's own build, ZDOs, RPCs (routing, forged senders, delivery), map sharing, pings, cheat gating and admin lists, client vs server |
 
 Which other mods are installed differs per machine: before choosing a patch target or a key, scan your
 own install with `scripts/scan-mod-patches.ps1` and `scripts/find-key-usage.ps1 -Plugins`.
@@ -67,10 +70,11 @@ Copy `assets/plugin-template/` to a folder of its own (the author uses `<Valheim
 rename `ExampleMod` (csproj, GUID, namespace, `ModAuthor`) and build with `dotnet build` (it finds the
 game through `-p:ValheimDir=<Valheim>` or `SEEDLAB_VALHEIM_DIR`). It already has: SDK project
 against the game DLLs with deploy-on-build, per-class Harmony patching, fail-safe `Update` with
-throttled logging, text-input gating for hotkeys, F4 as the default key (unused by vanilla, but held by
-SeedLab's dumper while it is armed - check with `scripts/find-key-usage.ps1 -Plugins` before keeping
-it). For a mod with several editions from one source, copy the layout of the public TomTom/Wayfinder
-repository instead (https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder).
+throttled logging (keys and per-frame work in separate try blocks), text-input gating for hotkeys, a guarded
+key read (`KeyPressed`: a key the game cannot read is ignored after one warning), and an unbound default key
+(never F4, which SeedLab's dumper holds while it is armed - check any key with
+`scripts/find-key-usage.ps1 -Plugins`). For a mod with several editions from one source, copy the layout
+of the public TomTom/Wayfinder repository instead (https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder).
 
 Every mod should have: a `preflight.ps1` that checks its Harmony targets and reflected members against
 the shipped game (the TomTom repository has one), a hash check of the deployed DLL, and `[BepInProcess("valheim.exe")]`

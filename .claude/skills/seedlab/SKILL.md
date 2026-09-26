@@ -1,11 +1,13 @@
 ---
 name: seedlab
-description: SeedLab and its vseed CLI - DoomMachine's offline, bit-exact reimplementation of Valheim 1.0.15 world generation - the repository these skills ship in. Use it whenever a task needs the biome, terrain height, rivers, map image, island or land statistics, or location placement (bosses, traders, dungeons, altars) of a seed without launching the game; whenever a seed text must be hashed, inverted or searched for; whenever someone asks "find me a seed with X"; and whenever work touches SeedLab's source, its data\ snapshot of game data, its ground truth, its gates, the dumper plugin, the local web map on 127.0.0.1 and its start/stop scripts, the per-seed performance profiler, or which CPUs and vector paths SeedLab is proved on.
+description: SeedLab and its vseed CLI - DoomMachine's offline, bit-exact reimplementation of Valheim world generation (verified against 1.0.16, unchanged from 1.0.15) - the repository these skills ship in. Use it whenever a task needs the biome, terrain height, rivers, map image, island or land statistics, or location placement (bosses, traders, dungeons, altars) of a seed without launching the game; whenever a seed text must be hashed, inverted or searched for; whenever someone asks "find me a seed with X"; and whenever work touches SeedLab's source, its data\ snapshot of game data, its ground truth, its gates, the dumper plugin, the local web map on 127.0.0.1 and its start/stop scripts, the per-seed performance profiler, or which CPUs and vector paths SeedLab is proved on.
 ---
 
 # SeedLab
 
-**Valheim 1.0.15 world generation, offline and exact.** A .NET 10 command-line tool (`vseed`) and a
+**Valheim world generation, offline and exact** - verified against **1.0.16** (Steam build 25527674,
+`assembly_valheim` `96cfc004...`) since 2026-09-26 (`Verified.cs`, commit `5d94b63`); the port was built and
+first proven on 1.0.15, whose generation 1.0.16 did not change. A .NET 10 command-line tool (`vseed`) and a
 local web map that answer "what is in this seed" without launching the game, and can scan the whole
 2^32 seed space. Built by DoomMachine's sessions 2026-09-22/23; it is the repository this skill ships
 in (on the author's machine it lives at `<Valheim>\_ModSource\SeedLab`, inside the game folder), and the
@@ -21,9 +23,9 @@ never do, and how to bring it forward after a game update.
 | Source | the repository root (11 `src\` projects, 3 `tools\`, 3 `tests\`); a git repository since 2026-09-24, published **public** at https://github.com/DoomMachine/Valheim-SeedLab (MIT). `data\` and `groundtruth\` are git-ignored on the user's decision and exist only locally. Commits: author DoomMachine with the noreply address, **never a `Co-Authored-By` line** (a local `commit-msg` hook refuses one) |
 | Binary | `src\SeedLab.Cli\bin\Release\net10.0\vseed.exe` (`dotnet build src\SeedLab.Cli\SeedLab.Cli.csproj -c Release`) |
 | Needs | .NET 10 SDK; the ASP.NET Core 10 shared runtime for **every** `vseed` command, not only `serve` (`vseed.runtimeconfig.json` lists `Microsoft.AspNetCore.App`). **No NuGet packages** - it builds offline |
-| Game data | `data\1.0.15-59f53fb5\` - read out of the running game, stamped with the build's `assembly_valheim.dll` SHA-256 |
-| Ground truth | `groundtruth\` - two worlds the game generated (saves + map caches), its own logs, the native corpora |
-| In the game | only `tools\SeedLab.Dumper`, a BepInEx plugin. **It is NOT installed**: run 6 (dungeon names) ran on 2026-09-24 16:15-16:16 and the plugin was retired the same day to `_ModSource\_retired\DoomMachine-SeedLabDumper-20260924-run6` (earlier copies beside it) - see "the dumper" below. Nothing else in SeedLab runs inside Valheim |
+| Game data | `data\<version>-<hash>\` - read out of the running game by the dumper, stamped with the build's `assembly_valheim.dll` SHA-256. As of 2026-09-26: **`1.0.16-96cfc004\`** (33 files: dumper run 7's 29, a README, and the three derived files re-stamped from 1.0.15) and `1.0.15-59f53fb5\` (rebuilt after that day's deletion: every data file byte-identical to a surviving source, `manifest.json` regenerated). With both present, vseed picks the one matching the installed game |
+| Ground truth | `groundtruth\` - **private, never published**: four worlds Valheim 1.0.16 created on 2026-09-26 (saves, map caches and their decoded rasters), the game's logs of those two sessions, the natives run 7 recorded, the location lists; `MANIFEST.sha256` checks it (74 lines) and its `README.md` says where each file came from. Rebuilt 2026-09-26 from a second copy kept outside the repository |
+| In the game | only `tools\SeedLab.Dumper`, a BepInEx plugin. **It is NOT installed** (checked 2026-09-26 evening): run 7 ran on 2026-09-26 (asset dump at 16:33) and the plugin was retired to `_ModSource\_retired\DoomMachine-SeedLabDumper-20260926-run7` (earlier runs beside it) - see "the dumper" below. Nothing else in SeedLab runs inside Valheim |
 
 ## The invariants - never break these
 
@@ -87,21 +89,22 @@ checkpoints and the built `vseed.exe` end to end: section 14 runs a CLI funnel a
 search under `--cache-dir` and needs a Release CLI built from the same source plus the dumped
 location table.)
 
-| Gate | Command | Result at 2026-09-23 |
+| Gate | Command | Result on 1.0.16 (2026-09-26, binaries built at `ded6c94`) |
 | --- | --- | --- |
-| Acceptance (terrain, 32 checks) | `dotnet run --project tests\SeedLab.Acceptance.Tests -c Release` | 32/32; biomes 0 mismatches and **4,194,304/4,194,304** binary16 heights exact per world, on both worlds |
-| Location gate | `dotnet run -c Release --project tools\SeedLab.LocationLab -- gate` | **12,228/12,228** fresh-world instances bit-identical; 12,314 and 12,287 of the played worlds; 938/938 sectors; 32/32 alt biomes; all 29 of the game's own `placed N out of M` counters |
-| Natives (11 checks) | `dotnet run --project tests\SeedLab.Tests -c Release -- natives` | **262,780/262,780** `Mathf.PerlinNoise`; 276/276 `Random` traces (1,980 draws); `FloatToHalf` ties away from zero; 93/93 libm; 429/429 hash vectors |
-| Generator internals | `dotnet run -c Release --project tools\SeedLab.GoldenCheck` | 3 seeds, every private field bit-identical: offsets, river seeds, lakes/rivers/streams in order, 2.1 M river points, 8.5 M float comparisons, 0 differing |
-| Fast subset, any time | `vseed selftest` (`--quick`, ~4 s) | re-checks this build against the ground truth |
-| Web server + its security | `vseed serve --selftest` | tiles vs the game's texture, markers, search parity, loopback/Host/CORS/CSP/traversal, POSTs from other pages refused, the stop endpoint |
+| Acceptance (terrain, 32 checks) | `dotnet run --project tests\SeedLab.Acceptance.Tests -c Release` | 32/32; biomes 0 mismatches and **4,194,304/4,194,304** binary16 heights exact per world, on both re-created worlds; location heights 12,314/12,314 and 12,287/12,287 bit-exact |
+| Location gate | `dotnet run -c Release --project tools\SeedLab.LocationLab -- gate` | fresh world `Throwaway` **12,182/12,182** bit-identical, 974 sectors, 32/32 alt biomes; the 1.0.16 saves of the three reference worlds 12,314 / 12,287 / 12,228; all 27 of the game's logged counters. **Fails** (`MISSING`) when its log is absent, since `ded6c94` |
+| Natives (11 checks) | `dotnet run --project tests\SeedLab.Tests -c Release -- natives` | **262,780/262,780** `Mathf.PerlinNoise`; 268 `InitState` seeds and 276/276 `Random` traces (1,980 draws); `FloatToHalf` ties away from zero; 93/93 libm; 429/429 hash vectors |
+| Generator internals | `dotnet run -c Release --project tools\SeedLab.GoldenCheck -- data\1.0.16-96cfc004` | run 7's 3 captures, every private field bit-identical: 677,094 + 675,579 + 729,925 river points, 0 differing; `GetHeight` 12,182/12,182 |
+| Fast subset, any time | `vseed selftest` (`--quick`, ~4 s) | 14 ok on this build against the ground truth; **passes silently when a ground-truth file is missing** (proofs-and-gates.md) |
+| Web server + its security | `vseed serve --selftest` | tiles vs the game's texture, markers, search parity, loopback/Host/CORS/CSP/traversal, POSTs from other pages refused, the stop endpoint. **Not re-run on the 1.0.16 data**; with stale data it failed its marker check, because the page hangs instead of refusing (history.md, the web diagnoses) |
 | Seed arithmetic | `vseed space` | recomputes the lane tables and round-trips before printing |
 
-One of the two ground-truth worlds, `testworldclaude` (seed 319486907), is a **hold-out**: it was never
-used while porting the biome and height code; it matched blind on biome and to 99.9998 % on height, and
-a last one-ulp residual was then diagnosed on both worlds and closed (valheim-worldgen
-`world-generator.md`). The fully independent check is the third, fresh seed 75539276 (GoldenCheck and
-the location gate).
+The ground-truth worlds: `asdasdasd` (`MWd8eV6svz`, the development world) and `testworldclaude`
+(`hnBd9gJf2G`, 319486907, a **hold-out** never used while porting the biome and height code: it matched blind
+on biome and to 99.9998 % on height, and a last one-ulp residual was then diagnosed and closed, valheim-worldgen
+`world-generator.md`), `ClaudeTestWold2` (`ClaudeTest`, 75539276, the first fresh-world check), all three
+re-created in 1.0.16 on 2026-09-26; and `Throwaway` (`VRbvYNainE`, -1147437162), the fresh world dumper run 7
+ran in, which is the independent check on 1.0.16 (GoldenCheck and the location gate).
 
 ## Running it
 
@@ -142,8 +145,11 @@ vseed clean                  what SeedLab holds in its cache root; --yes removes
   `search.block_size` / web box value is kept and WARNS with the idle count; a `--resume` adopts the
   checkpoint's size (a resume point is a block number). Pass a size only to pin the resume
   granularity (the T3+ warning still suggests 16, or 4 with location goals).
-- **Run it with the working directory at the SeedLab root**, or set `SEEDLAB_DATA_DIR` to
-  `data\1.0.15-59f53fb5\`; otherwise every location answer fails closed (invariant 2).
+- **Run it with the working directory at the SeedLab root**, or set `SEEDLAB_DATA_DIR` to a
+  `data\<version>-<hash>\` folder; otherwise every location answer fails closed (invariant 2). To use an
+  older build's data while a newer game is installed, set `SEEDLAB_DATA_DIR` to it and `SEEDLAB_VALHEIM_DIR` to
+  an **empty** folder: the verdict becomes "no Valheim install found" and location answers stay allowed,
+  unverified (unless `SEEDLAB_REQUIRE_GAME_MATCH` is set) - how the 1.0.15 snapshot was checked on 2026-09-26.
 - A token that parses as an int32 is read as the **int**; `--text` / `--int` force either reading.
 - Searching costs what the generator costs: **days for a biome question inside a disc, years for
   anything needing heights, islands, shore or locations**, and `--dry-run` over-projects (up to 35x on
@@ -183,19 +189,24 @@ generator and native modes), refuses to write anywhere near the game install or 
 goes to `%USERPROFILE%\AppData\valheim-dumper`), and restores every game static it borrows in a
 `finally`.
 
-**State as of 2026-09-24, evening** (checked on disk): **not installed.** Run 6 - dungeon names
-(`Teleport.m_enterText`) and Vegvisir pins, see history.md "the `axe-heads` preset, and dumper run 6
-prepared" - ran on 2026-09-24 (`LogOutput.log`: `asset dump DONE` at 16:16, `Random.state` identical at
-start and end) into `%USERPROFILE%\AppData\valheim-dumper\1.0.15-59f53fb5` (assets only: no
-`seed-input.json`, no natives or worldgen manifests - never copy it over the snapshot whole). The plugin
-(`SeedLab.Dumper.dll` `85F54A85...6103C7A`, `SeedLab.Contracts.dll` `81056CC6...DD34A42`,
-`dumper.enable` = `assets`, hashes checked) was moved the same evening to
-`_ModSource\_retired\DoomMachine-SeedLabDumper-20260924-run6`; F4 is free again. Before that install, it was not installed; the last copy to run - armed in mode `all`, in the 2026-09-23 22:31 session
-according to `BepInEx\LogOutput.log` - is in `_ModSource\_retired\DoomMachine-SeedLabDumper-20260923-run5`,
-with the earlier runs beside it. history.md records why it was retired (it zeroed `UnityEngine.Random`)
-and the fixed build. Its config, `BepInEx\config\DoomMachine.SeedLabDumper.cfg`, was left behind and still
-says `DumpKey = F4`; that binds nothing while the plugin is absent, but the user keeps **F4 reserved**
-for the dumper (decision 2026-09-24) so it can be installed again without a key conflict.
+**State as of 2026-09-26, evening** (checked on disk): **not installed.** Run 7 - the whole 1.0.16 dump,
+mode `all` - ran on 2026-09-26: natives and the generator captures of `MWd8eV6svz` and `hnBd9gJf2G` at the
+main menu, then F4 in the fresh world `Throwaway` (`asset dump DONE` at 16:33; prefab walk 186 loaded and room
+walk 358 loaded, 0 failed) into `%USERPROFILE%\AppData\valheim-dumper\1.0.16-96cfc004`, copied whole into
+`data\1.0.16-96cfc004\`. The plugin (`SeedLab.Dumper.dll` `FAEEE8D7...F6F3F7`, `SeedLab.Contracts.dll`
+`15504007...0B2F`, `dumper.enable` = `all`; hashes re-checked 2026-09-26) is in
+`_ModSource\_retired\DoomMachine-SeedLabDumper-20260926-run7`, with runs 4-6 and the build that zeroed
+`UnityEngine.Random` beside it (history.md). Its config, `BepInEx\config\DoomMachine.SeedLabDumper.cfg`, was
+left behind and still says `DumpKey = F4`; that binds nothing while the plugin is absent, but the user keeps
+**F4 reserved** for the dumper (decision 2026-09-24) so it can be installed again without a key conflict.
+**F4 is ignored while the console, chat, a map text box or any text field is open** (`Plugin.IsTypingElsewhere`),
+so close the console before pressing it. `Random.state` is identical at start and end of the menu modes; during
+the asset dump it changes (run 7, and run 6 too by its session log - corrected 2026-09-26: this said run 6's was
+identical), because the game draws from `Random` itself between frames in a live world (**Unverified**
+explanation; no state was all-zero, so it is not the 2026-09-23 defect). The dumper records whatever plugins are
+loaded: runs 6 and 7 and every ground-truth world were made with the same 16 plugins (TomTom's version aside;
+run 7's log: `17 plugins to load` with the dumper), and an IL scan found none that touches world generation or
+the tables. Agreement with a mod-free game is inferred, never observed.
 
 While it is armed it holds **F4** (asset dump) and registers `seedlab_status`, `seedlab_dump`,
 `seedlab_natives`, `seedlab_worldgen`, so F4 is not a free hotkey for another mod, and a stray F4 in a
@@ -205,20 +216,41 @@ is the user's call, not an agent's - it is recorded here so the next session kno
 
 ## After a Valheim update
 
-1. `tools\check-game-version.ps1` - exit 2 means the game moved (exit 3: game not found). The
-   valheim-modding skill's own `.claude\skills\valheim-modding\scripts\check-game-version.ps1` answers the same
-   question against its KB-STAMP.
-2. `vseed selftest`. Terrain checks still passing against the old ground truth means the generator
-   itself did not change; failing means the port must be re-verified before any number from it is
-   trusted.
-3. Re-run the dumper (`docs\dumper.md`, full manual in `tools\SeedLab.Dumper\README.md`) and copy its
-   output into a **new** `data\<game version>-<first 8 hex of the assembly sha256>\`. The dumper is
-   main-menu-only, refuses to run with peers connected, and restores every game static it borrows.
-4. Capture fresh ground truth: a world the new build generated, with its `.fwl2` / `.db2` / map cache.
-5. Re-run the acceptance suite and the location gate. They are the definition of "SeedLab still matches
-   the game".
-6. Record what changed in this skill's `references/history.md` (game facts in the valheim-worldgen /
-   valheim-modding references), and only then re-stamp anything.
+As it worked for 1.0.16 on 2026-09-26 (history.md has the detail):
+
+1. `tools\check-game-version.ps1` - exit 2 means the game moved (exit 3: game not found); the
+   valheim-modding skill's `.claude\skills\valheim-modding\scripts\check-game-version.ps1` answers the same
+   against its KB-STAMP.
+   **Before the user starts the game again, and after every game session below,** copy `Player.log`,
+   `Player-prev.log` (`%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\`) and `BepInEx\LogOutput.log` to a
+   durable, private place outside Temp: `Player.log` is gone two starts later.
+2. **Audit the code, not the self-test.** `vseed selftest` compares SeedLab with the OLD build's recordings,
+   so it passes whether or not the generator changed. Decompile the new build and compare every ported member
+   with the port, op by op (biomes and heights, rivers, placement and alt biomes, seeds and saves), and hash the
+   engine (`UnityPlayer.dll`, CoreModule, the Mono runtime). No copy of the old assemblies is kept, so it is a
+   port-vs-new-code comparison, not a diff.
+3. **Dump** (`docs\dumper.md`; `tools\SeedLab.Dumper\README.md`). Build with `-p:DeployToGame=false`, run
+   `preflight.ps1` (run 7: 464 checks, 0 failures), and install only with the user's OK, after they quit
+   Valheim to the desktop; a **new** `dumper.enable` reading `all`; check the installed hashes. The user, at the
+   main menu: `seedlab_status`, `seedlab_natives`, `seedlab_worldgen MWd8eV6svz hnBd9gJf2G`; then a new world
+   with a throwaway name and the offered seed, Start server unticked; standing in it, console closed, F4 once;
+   wait for `asset dump DONE`; quit to the desktop. Move the plugin to `_ModSource\_retired\` at once.
+4. **Fresh ground truth.** The user re-creates the three reference worlds from their seeds - `asdasdasd`
+   (`MWd8eV6svz`), `testworldclaude` (`hnBd9gJf2G`), `ClaudeTestWold2` (`ClaudeTest`) - enters each once and
+   logs out, nothing explored. Copy their saves (`_main.N.*`, Steam Cloud), map caches (`worlds_local`) and the
+   logs of both sessions read-only into a second copy outside the repository, then build
+   `groundtruth\` from it with a manifest. **Never give a worktree a junction** to `data\` or `groundtruth\`
+   (valheim-modding `pitfalls.md` section 2: `git worktree remove` deleted both through junctions).
+5. **New data folder:** copy the dumper's output folder whole into `data\<version>-<first 8 hex>\` and change
+   nothing in it. The dumper does not make `constraint-atlas.json` or `count-sample.*`, and no tool rebuilds
+   them: without them every `vseed search` is refused. On 2026-09-26 the 1.0.15 ones were re-stamped, after
+   proving the tables identical (history.md). `vseed data --verify` must pass 8/8.
+6. **Point the gates at the new worlds**: `git grep` the old fresh-world seed hex in `tests` and `tools` (two
+   gates hard-coded 1.0.15's). Rebuild every project after each commit, the CLI last. Then acceptance, the
+   location gate, natives, GoldenCheck, `selftest`, Runtime.Tests, Search.Tests and the safety proofs - they
+   are the definition of "SeedLab still matches the game". Read each PASS for its rows (proofs-and-gates.md).
+7. Only then commit `Verified.cs` (version, Steam build, hash) as its own commit, record it in
+   `references/history.md`, and re-stamp valheim-modding's KB-STAMP (in its `environment.md`).
 
 ## Reference files
 
@@ -242,6 +274,9 @@ The project's own `docs\` has one short page per subsystem (`generator`, `locati
 
 `docs\specs\` holds the eight design documents the source cites by name and section. Where a spec and
 the code disagree, **the code and the goldens are the evidence**.
+
+The agents' reports, raw measurement runs and evidence copies that these files cite as "the author's
+working notes" stay on the author's machine; they are not in this repository.
 
 ## Keeping this skill current
 

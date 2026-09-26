@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -31,13 +32,16 @@ namespace ExampleMod
             // BepInEx drops a plugin that throws in Awake, so each stage is guarded on its own.
             try
             {
-                // Vanilla does not use F4, but other mods may (SeedLab's dumper holds it while armed).
-                // Check your own install with scripts\find-key-usage.ps1 -Plugins before choosing a default.
-                ToggleKey = Config.Bind("General", "ToggleKey", KeyCode.F4, "What this key does.");
+                // Unbound until you choose: check a key against vanilla and every installed mod with
+                // scripts\find-key-usage.ps1 -Plugins first. Never F4 - SeedLab's dumper holds it while armed.
+                ToggleKey = Config.Bind("General", "ToggleKey", KeyCode.None, "What this key does.");
+                // A new choice of key is tried afresh, even one that failed before (KeyPressed).
+                ToggleKey.SettingChanged += (_, _) => _unreadableKeys.Clear();
             }
             catch (Exception e)
             {
                 Log.LogError("Configuration failed to bind: " + e);
+                enabled = false;   // stops Update, which would otherwise read the unbound entries every frame
                 return;
             }
 
@@ -67,19 +71,57 @@ namespace ExampleMod
 
         private void Update()
         {
-            // Runs every frame: nothing may escape, and a repeating error must not flood the log.
+            // Runs every frame: nothing may escape, and a repeating error must not flood the log. Keys are
+            // handled in a try block of their own, so nothing going wrong with a key can stop the per-frame
+            // work below.
             try
             {
-                if (!IsTypingElsewhere() && ZInput.GetKeyDown(ToggleKey.Value, false))   // never UnityEngine.Input
+                if (!IsTypingElsewhere() && KeyPressed(ToggleKey))
                 {
                     // ...
                 }
             }
             catch (Exception e)
             {
+                LogThrottled(ref _keyErrors, "Key handling failed", e);
+            }
+
+            try
+            {
+                // ... per-frame work that must run whatever the keys do
+            }
+            catch (Exception e)
+            {
                 LogThrottled(ref _updateErrors, "Update failed", e);
             }
         }
+
+        /// <summary>
+        /// Reads a configurable key. Valheim 1.0.16's ZInput throws ArgumentOutOfRangeException on every read of
+        /// 30 KeyCodes that BepInEx still offers as settings (Plus, Hash, Colon, F13-F15, WheelUp, WheelDown and
+        /// others missing from its KeyCode-to-Key table - pitfalls.md section 5), so a player's choice of key must
+        /// not be able to break the mod. The first failed read is logged once; after that the key reads as not
+        /// pressed, like an unbound key, until the setting changes.
+        /// </summary>
+        public static bool KeyPressed(ConfigEntry<KeyCode> setting)
+        {
+            KeyCode key = setting.Value;
+            if (key == KeyCode.None || _unreadableKeys.Contains((int)key)) return false;
+            try
+            {
+                return ZInput.GetKeyDown(key, false);   // never UnityEngine.Input
+            }
+            catch (Exception e)
+            {
+                _unreadableKeys.Add((int)key);
+                Log.LogWarning(setting.Definition.Key + " = " + key + ": Valheim cannot read this key ("
+                               + e.GetType().Name + "), so it will do nothing. Choose another key.");
+                return false;
+            }
+        }
+
+        // ints, not KeyCodes: List<int>.Contains compares without boxing, and this runs every frame.
+        private static readonly List<int> _unreadableKeys = new List<int>();
 
         /// <summary>
         /// Set this while your own window is open, if you add one. A window that takes the keyboard does so
@@ -103,6 +145,7 @@ namespace ExampleMod
             return false;
         }
 
+        private static int _keyErrors;
         private static int _updateErrors;
         private static void LogThrottled(ref int counter, string context, Exception e)
         {
@@ -119,8 +162,9 @@ namespace ExampleMod
 
     /// <summary>
     /// Example patch. Harmony reaches private methods by name, so accessibility does not matter here;
-    /// a prefix that returns false skips the original AND every later prefix from other mods - only do
-    /// it conditionally. Check who else patches the target with scripts\scan-mod-patches.ps1.
+    /// a prefix that returns false skips the original for every mod, but never another mod's prefix
+    /// (HarmonyX runs them all and ANDs the results) - only do it conditionally. Check who else patches
+    /// the target with scripts\scan-mod-patches.ps1.
     /// </summary>
     [HarmonyPatch(typeof(Hud), "Update")]
     public static class ExamplePatch

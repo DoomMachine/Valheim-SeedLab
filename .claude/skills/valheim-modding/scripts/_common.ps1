@@ -96,7 +96,9 @@ function Get-GameCodeAssemblies {
 
 function Get-GameAssemblyPath([string]$name) {
     if ($name -eq "") { return $null }
-    if (Test-Path $name) { return (Resolve-Path $name).Path }
+    # -PathType Leaf: from the game folder "BepInEx" is also the BepInEx *folder*, which used to be returned here
+    # and made ILSpy fail with "Access to the path ... is denied" (2026-09-26).
+    if (Test-Path $name -PathType Leaf) { return (Resolve-Path $name).Path }
     $n = $name
     if (-not $n.EndsWith(".dll")) { $n = $n + ".dll" }
     foreach ($dir in @($GameManaged, $BepInExCore)) {

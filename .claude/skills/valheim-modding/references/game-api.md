@@ -69,7 +69,9 @@ EventArea=13 Hildir1=14 Hildir2=15 Hildir3=16 Memorial=17. Pins travel over the 
 | `static PlayerController.SetTakeInputDelay(float)` | public | |
 
 `Player` derives Humanoid → Character → MonoBehaviour. `PlayerController` is a **separate**
-MonoBehaviour, not a base class of Player.
+MonoBehaviour, not a base class of Player. In 1.0.16 `Humanoid` and `Player` are the **only** subclasses of
+`Character`. `static List<Character> Character.GetAllCharacters()` is public and returns the live private list
+itself; `IsDead()` of a non-player is reliable only on its owner — vanilla-behaviour.md section 15.
 
 ## ZInput / ZCursor (assembly_utils — all public static)
 
@@ -77,7 +79,17 @@ MonoBehaviour, not a base class of Player.
 `false`; null-safe. `GetButton(string)`, `GetButtonDown(string)` (named buttons, e.g. "Console").
 `GetMouseButton/Down/Up(int)`. `Vector3 pointerPosition { get; }` (use instead of Input.mousePosition;
 Vector3.zero if no instance). `IsMouseActive()` (**not** null-safe), `IsGamepadActive()`,
-`IsTouchActive()`. `IsKeyCodeValid(KeyCode)` = key != 0 && key <= 349 && key not 328/329.
+`IsTouchActive()`. `IsKeyCodeValid(KeyCode)` = key != 0 && key <= 349 && key not 328/329, i.e. it rejects
+`None`, `Mouse5`, `Mouse6` and everything above `JoystickButton19` (Joystick1Button0 = 350 and up; F16-F24 are
+670-678 in UnityEngine.CoreModule's `KeyCode`, re-read 2026-09-26).
+
+Re-read on 1.0.16 (2026-09-26): `GetKeyDown(KeyCode key, bool logWarning = true)` is
+`m_instance?.TryGetKeyStateLowLevel(key, b => b.wasPressedThisFrame, logWarning) ?? false`; `logWarning`
+(default **true**) only controls logging. `TryGetKeyStateLowLevel` checks `IsKeyCodeValid`, then reads
+`Gamepad.current` (JoystickButton0-19), `Mouse.current` (Mouse0-4) or `Keyboard.current[KeyCodeToKey(key)]`,
+with **no focus, text-input or UI gating** — a key read this way fires in chat, the console and over every
+menu unless the mod checks those itself. A valid KeyCode missing from `s_keyCodeToKeyMap` throws every frame;
+no gamepad KeyCode throws, but JoystickButton15 reads D-pad up on Windows: pitfalls.md section 5.
 
 `ZCursor`: `LockState { get; set; }`, `IsVisible { get; }`, `IsRequested { get; }`, `Show()`, `Hide()`.
 Write the cursor through ZCursor, never `UnityEngine.Cursor`.
@@ -99,8 +111,9 @@ public fields `m_rootObject`, `m_crosshair`.
 Sprite icon = null, bool showDespiteHiddenHUD = false, bool log = true)` — 6 parameters, the last four
 **optional** (correction 2026-09-23: this line used to say "exactly 6 args", which is the metadata/Harmony
 argument count, not what a caller must pass; decompiled `MessageHud.ShowMessage`).
-`MessageType.TopLeft` (queued), `Center` (not). Because `showDespiteHiddenHUD` defaults to **false**, a
-mod's messages are dropped while the HUD is hidden (Ctrl+F3) unless it passes `true` — vanilla-behaviour.md §5.
+`MessageType.TopLeft` = 1 (queued), `Center` = 2 (not). Because `showDespiteHiddenHUD` defaults to **false**, a
+mod's messages are dropped while the HUD is hidden (Ctrl+F3) unless it passes `true`, and every call overwrites
+the shared `m_showDespiteHiddenHUD` flag — vanilla-behaviour.md §5 (signature and body re-read on 1.0.16, 2026-09-26).
 
 `static GameCamera.instance` — the component sits on the camera GameObject, so
 `GameCamera.instance.transform` **is** the camera transform. `static InFreeFly()`. `LateUpdate()` PRIVATE.
@@ -138,8 +151,24 @@ See the valheim-worldgen skill for biomes, seeds and location placement.
 ## ZNet
 
 `static ZNet.instance`; `long GetWorldUID()` (**throws** with no world); `string GetWorldName()`
-(null-safe); `World GetWorld()`; `bool IsServer()`; `static bool IsDedicated`-style checks — see
-multiplayer.md.
+(null-safe); `World GetWorld()`; `bool IsServer()`; `bool IsDedicated()` — an **instance** method returning a
+compiled constant (false in the client's DLL, true in the dedicated server's; there is no field), so it needs
+`ZNet.instance` (1.0.16, 2026-09-26; corrected, this said "static ... -style checks"). Roles and checks: multiplayer.md
+section 1.
+
+## Containers (chest contents)
+
+- **A chest's items are a byte array** on its ZDO (1.0.16, 2026-09-26).
+  - `Container.Save` writes `ZDO.Set(ZDOVars.s_items, zPackage.GetArray())`.
+  - `Container.Load` reads `ZDO.GetByteArray(ZDOVars.s_items)` into `new ZPackage(byte[])`, then calls
+    `Inventory.Load`.
+  - `ZDOExtraData` keeps strings and byte arrays in separate stores, and `ZDOMan.ConvertContainers` turns old
+    text-format chest data into the byte array on load. So `GetString(s_items)` is `""` for every chest.
+- **When a chest is filled:** `Container.Awake` rolls `m_defaultItems` once, on the owner, when
+  `!s_addedDefaultItems`.
+- **Reading the contents yourself:** `Inventory.Load` adds items with `skipValidPositionCheck`, so a scratch
+  8x8 inventory reads any chest. It makes and destroys an object per item, so it is not free.
+- Found by TomTom 1.2.0's review (the chest check read the string store and saw every chest as empty).
 
 ## Version / Platforms
 
@@ -161,7 +190,7 @@ installed on this machine. Related: `Version.GetPlatformPrefix(string)`, `Versio
 `Utils.WorldToScreenPointScaled(Camera, Vector3)` — public static (assembly_utils).
 
 **`Utils.GetPrefabName` is the game's identity for a GameObject** (assembly_utils, verified from IL
-2026-09-23). Two public static overloads, both taking one argument:
+2026-09-23; the same on 1.0.16, 2026-09-26). Two public static overloads, both taking one argument:
 
 ```csharp
 private static readonly char[] extraCharacters = new char[2] { '(', ' ' };

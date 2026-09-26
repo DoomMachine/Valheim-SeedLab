@@ -1,6 +1,8 @@
 # Zones, Locations, Vegetation, Dungeons (ZoneSystem & friends)
 
 > Researched 2026-09-22 against Valheim 1.0.15 by decompiling the shipped assemblies; every claim was then checked by an independent refute-by-default verifier, who corrected errors in place. Items marked **Unverified:** could not be settled from code. Re-check with `valheim-modding/scripts/decompile.ps1` after a game update.
+>
+> **Re-verified on 1.0.16 (2026-09-26)**, C# and IL compared with SeedLab's port: `GenerateLocationsTimeSliced` (both), `GetRandomZone`, `GetRandomPointInZone`, `GetZone`, `RegisterLocation`, `HaveLocationInRange`, `CountNrOfLocation`, `SetupLocations`, filters 1-11, `AltBiomeWorldData.*`, `BiomeSector.CanAddModifier`, `WorldGenerator.GetTerrainDelta` / `GetBiomeArea(Vector2s)` / `GetBiomeSector`, the genloc trigger (3.1), `ZoneLocation.Hash` and its defaults, discovery, the spawn point and dungeon names (section 5) are unchanged (seedlab `history.md`, the 1.0.16 audit). The location data was re-dumped and is identical apart from its stamp, and placement is proven on four worlds 1.0.16 created (3.7). Sections 1.3, 6 and 11 carry their own 1.0.16 notes.
 
 Verified by decompiling `assembly_valheim.dll` (Unity 6000.0.75 / BepInEx 5.4.23.3 Steam build) with the ILSpy-based
 decomp tool. Citations look like `(Type.Member / decompiled)`. Anything not provable from code is marked **Unverified:**.
@@ -59,14 +61,14 @@ public static Vector3 GetZonePos(Vector2s id) => new Vector3(id.x * 64f, 0f, id.
 - `IsZoneLoaded(Vector2s/Vector3)` (public) means the zone root exists and no ZDOs in it are still loading (`m_loadingObjectsInZones`).
 - Zone roots are destroyed when `m_ttl > m_zoneTTL` (**10 s** in the shipped prefab, not the 4f in code — see 1.1) and `ZNetScene` has no instance in that sector. At most one is destroyed per tick (ZoneSystem.UpdateTTL).
 - Radius test for the non-classic mode: `ZonesWithinRadius` compares zone-centre distance against `r*64 + (ghost ? 0.8*64 : 0.5*64)`. In classic mode the area is a square loop.
-- Simulation distance presets (SimulationDistance.GetSimulationDistance): level 0 = (near 1, far 2, classic); 1 = (2,2); 2 = `OriginalDistance` (2,2, classic); 3/4/5 = (3|4|5, 2); higher = (level, 2). Total = near + far. The server's value is synced via `ZNet.GetSyncedSimulationDistance()` (ZoneSystem.ApplySettings).
+- Simulation distance presets (SimulationDistance.GetSimulationDistance): level 0 = (near 1, far 2, classic); 1 = (2,2); 2 = `OriginalDistance` (2,2, classic); 3/4/5 = (3|4|5, 2); higher = (level, 2); a negative level is clamped to 0 (re-read on 1.0.16, 2026-09-26; the UI offers 0..6). Total = near + far. The server's value is synced via `ZNet.GetSyncedSimulationDistance()` (ZoneSystem.ApplySettings). There is no `m_activeArea` / `m_activeDistantArea` in 1.0.16. Which objects that loads, the loaded radius per level and the owned 3×3 block: valheim-modding `vanilla-behaviour.md` section 14.
 
 ---
 
 ## 2. Location data model
 
 ### 2.1 `ZoneSystem.ZoneLocation` (public nested, [Serializable]) – key fields and defaults
-`m_name`, `m_enable=true`, `m_prefabName` (set at runtime from the prefab name), `m_prefab` (`SoftReference<GameObject>`), `m_biome` (bitmask), `m_biomeArea = Everything`, `m_quantity`, `m_prioritized`, `m_centerFirst`, `m_unique`, `m_group=""`, `m_minDistanceFromSimilar`, `m_groupMax=""`, `m_maxDistanceFromSimilar`, `m_iconAlways`, `m_iconPlaced`, `m_randomRotation=true`, `m_slopeRotation`, `m_snapToWater`, `m_interiorRadius`, `m_exteriorRadius`, `m_clearArea`, `m_minTerrainDelta=0`, `m_maxTerrainDelta=2`, `m_minimumVegetation=0`, `m_maximumVegetation=1`, `m_surroundCheckVegetation`, `m_surroundCheckDistance=20`, `m_surroundCheckLayers=2`, `m_surroundBetterThanAverage`, `m_inForest`, `m_forestTresholdMin=0`, `m_forestTresholdMax=1`, `m_minDistanceFromCenter`, `m_maxDistanceFromCenter`, `m_minDistance`, `m_maxDistance`, `m_minAltitude=-1000`, `m_maxAltitude=1000`. There is also `Hash => m_prefab.Name.GetStableHashCode()` and a private `AltBiomeParent`. (ZoneSystem.ZoneLocation / decompiled)
+`m_name`, `m_enable=true`, `m_prefabName` (set at runtime from the prefab name), `m_prefab` (`SoftReference<GameObject>`), `m_biome` (bitmask), `m_biomeArea = Everything`, `m_quantity`, `m_prioritized`, `m_centerFirst`, `m_unique`, `m_group=""`, `m_minDistanceFromSimilar`, `m_groupMax=""`, `m_maxDistanceFromSimilar`, `m_iconAlways`, `m_iconPlaced`, `m_randomRotation=true`, `m_slopeRotation`, `m_snapToWater`, `m_interiorRadius`, `m_exteriorRadius`, `m_clearArea`, `m_minTerrainDelta=0`, `m_maxTerrainDelta=2`, `m_minimumVegetation=0`, `m_maximumVegetation=1`, `m_surroundCheckVegetation`, `m_surroundCheckDistance=20`, `m_surroundCheckLayers=2`, `m_surroundBetterThanAverage`, `m_inForest`, `m_forestTresholdMin=0`, `m_forestTresholdMax=1`, `m_minDistanceFromCenter`, `m_maxDistanceFromCenter`, `m_minDistance`, `m_maxDistance`, `m_minAltitude=-1000`, `m_maxAltitude=1000`. There is also `Hash => m_prefab.Name.GetStableHashCode()` (the same key as the placement stream's seed) and a private `AltBiomeParent`. (ZoneSystem.ZoneLocation / decompiled; `get_Hash` and the constructor defaults re-read in IL on 1.0.16, 2026-09-26: `m_biomeArea` 3 = Everything, `m_maxTerrainDelta` 2, `m_maximumVegetation` 1, surround 20 / 2, `m_forestTresholdMax` 1, altitude ±1000)
 
 ### 2.2 `ZoneSystem.LocationInstance` (public struct)
 `ZoneLocation m_location; Vector3 m_position; bool m_placed;`. `m_placed` = the zone has actually been generated, so the objects exist as ZDOs. **No rotation is stored here.**
@@ -97,6 +99,9 @@ public static Vector3 GetZonePos(Vector2s id) => new Vector3(id.x * 64f, 0f, id.
   = the manifest path's filename without its extension (IL of `SoftReferenceableAssets.SoftReference\`1::get_Name`
   and `Shared::GetFileName`). Only `m_assetID` is serialized. So the RNG stream key for a location type
   (`worldSeed + m_prefab.Name.GetStableHashCode()`) is fully recoverable offline from that text manifest.
+  Re-read on 1.0.16 (2026-09-26): the same chain (`get_Name` caches it; `AssetBundleLoader.GetPath` returns
+  `m_assetPathInBundle`), and the 1.0.16 dump's location table - names and hashes included - is identical to
+  1.0.15's apart from the stamp, so a renamed prefab (which would move that type's placements) did not happen.
 - **Settled 2026-09-22 (was Unverified): every per-entry flag of every entry is now recorded.** A BepInEx
   plugin read `ZoneSystem.m_locations` out of the running game after `SetupLocations`; the table lives in
   `data\1.0.15-59f53fb5\` (dumped from the running game 2026-09-22 by `tools\SeedLab.Dumper`; `vseed data --verify` re-checks it) as `locations.json`, in list order, with all 40 serialized fields, the `AssetID`, the
@@ -131,7 +136,8 @@ public static Vector3 GetZonePos(Vector2s id) => new Vector3(id.x * 64f, 0f, id.
 
 ### 3.1 When it runs (ZNet.Start → ServerLoadWorld; ZoneSystem.Load)
 - `ZNet.Start`: `if (m_isServer) ServerLoadWorld(); else ClientConnect();`
-- `ServerLoadWorld`: `LoadWorld()`/`LoadOldWorld()` → `AltBiomeWorldData.VerifyBiomeData(world)` (rebuilds the biome grid, see 3.4) → `ZoneSystem.GenerateLocationsIfNeeded()` → subscribes `OnGenerationFinished`, which runs `OpenServer()` only if `m_openServer`. **So a server only opens to players after location generation completes.**
+- `ServerLoadWorld`: `LoadWorld()`/`LoadOldWorld()` → `AltBiomeWorldData.VerifyBiomeData(world)` (rebuilds the biome grid, see 3.4) → `ZoneSystem.GenerateLocationsIfNeeded()` → subscribes `OnGenerationFinished`, which runs `OpenServer()` only if `m_openServer`. **So a server only opens to players after location generation completes**: no client can join during a world's first generation, and a later run happens only at a world load with `LocationsGenerated` false or on the server-only `genloc` (1.0.16, 2026-09-26; the dedicated server's `ZoneSystem` has the same IL, valheim-modding `multiplayer.md` 1.4).
+- **Nothing is generated before genloc, and the biome data is complete before it** (re-read on 1.0.16, 2026-09-26; SeedLab's reproduction relies on it). `VerifyBiomeData` runs `RemoveCache`, `GenerateBiomePoints` and `GenerateSectors` (which calls `GenerateAltBiomes`), synchronously. `AltBiomeWorldData.IsReady` = `PointsGenerated & SectorsCalculated`, both set by then, so `GetBiomeSector`'s empty-sector branches are unreachable during genloc. `ZoneSystem.Update` returns before `CreateLocalZones` while `IsServer && !LocationsGenerated`, so no zone exists until genloc finishes. (ZNet.ServerLoadWorld, AltBiomeWorldData.VerifyBiomeData / IsReady, ZoneSystem.Update / decompiled)
 - `GenerateLocationsIfNeeded` runs only if `!LocationsGenerated`. The flag comes from the `.db2`. It is forced false when the saved `m_locationVersion` ≠ the current `m_locationVersion` (ZoneSystem.Load). For a new world there is no `.db2`, so the flag is false.
   The shipped prefab value is **`m_locationVersion = 32`** (code default 1). Verified 2026-09-22 from the
   user's world save `asdasdasd\_main.<N>.db2`, whose stored location version — written by this build — is 32
@@ -155,6 +161,7 @@ int placed = CountNrOfLocation(location);                 // already-existing (p
 if (!location.m_unique || placed <= 0) { ... }            // unique + already exists -> skip entirely
 ```
 - `WorldGenerator.GetSeed()` returns `m_world.m_seed`, the int seed stored in `World` (WorldGenerator.GetSeed).
+- In 1.0.16 `CountNrOfLocation` logs `"Old location found <prefab> x N"` when N > 0 (decompiled 2026-09-26). **Unverified** whether 1.0.15 logged it too.
 - **The time slicing does not break determinism.** At every `yield`, the code swaps the location's `Random.state` out and restores the outside state, then swaps back after resuming. The location's stream is therefore isolated from other code.
 - Loop: `while (i < attempts && placed < m_quantity)`. Each outer iteration draws **one candidate zone**:
   - `m_centerFirst`: `GetRandomZone(maxRange)`. `maxRange` starts at `m_minDistance` and grows by **+1 m per attempt**. `GetRandomZone`: `n = (int)range/64`, zone = `(Random.Range(-n, n), Random.Range(-n, n))` (int, upper bound exclusive), retried until `|GetZonePos| < 10000`. So the search starts at the centre and expands outward.
@@ -291,6 +298,8 @@ if (!location.m_unique || placed <= 0) { ... }            // unique + already ex
 - Each location type has its own RNG stream (seed + name hash). Adding a new location type does not change the random *draws* of other types. It can still change their *outcomes*, because the zone becomes occupied and the similar/group distance checks see the new instance. Only locations processed later in the order are affected.
 - Re-running generation (`genloc` or a version bump) keeps placed instances, re-rolls all unplaced ones, and skips generated zones. New or changed locations therefore appear **only in unexplored zones**, and unplaced candidates move after exploration.
 - `m_unique` locations: every candidate registers. When the first candidate's zone is generated, `PlaceLocations` calls `RemoveUnplacedLocations(location)`, which deletes all other unplaced instances of that type (ZoneSystem.PlaceLocations / RemoveUnplacedLocations). **The surviving position depends on which candidate zone a player (or ghost zone) reaches first.**
+  - `RemoveUnplacedLocations` has exactly one caller, that line of `PlaceLocations`, right after the unique location is placed (1.0.16, 2026-09-26).
+  - On a re-run, the per-type guard `if (!m_unique || placed <= 0)` (3.3) means a **placed** unique location never gets new candidates, while an **unplaced** one (all its candidates just dropped by `ClearNonPlacedLocations`) gets a fresh set, in zones not yet generated.
 - Mid-game additions that are not seed-derived:
   - `SpawnLocationMidGame(name, pos, out spawned)`: server-only. It clamps the position inside the zone and calls `RegisterLocation(... placed:false)`. It is used by `PersistentEventSystem.RPC_RequestStartEvent`.
   - `TestSpawnLocation` (console `location`): spawns at once, disables world saving unless `SAVE` is given, and uses `Random.Range(0, 99999)` as the seed.
@@ -302,11 +311,15 @@ if (!location.m_unique || placed <= 0) { ... }            // unique + already ex
   `int nGeneratedZones, Vector2s[]` · `int m_locationVersion` · `int nKeys, string[]` (**only non-server-option global keys**) · `bool locationsGenerated` · `int nLocations`, then `{int prefabNameHash, float x, float y, float z, bool placed}` for each location.
 - The actual location objects (proxy, networked parts, dungeon rooms) are ZDOs in `.chunks`.
 
-### 3.7 Reproduced offline, bit-exactly (2026-09-23)
+### 3.7 Reproduced offline, bit-exactly (2026-09-23; on 1.0.16, 2026-09-26)
 
 `src\SeedLab.Locations` is a port of `GenerateLocationsTimeSliced`,
-`AltBiomeWorldData.GenerateSectors` and `GenerateAltBiomes`. As of 2026-09-23 it reproduces the game's
-own output exactly on three worlds. Gate: `dotnet run -c Release --project tools\SeedLab.LocationLab -- gate`.
+`AltBiomeWorldData.GenerateSectors` and `GenerateAltBiomes`. As of 2026-09-23 it reproduced the game's
+own output exactly on three 1.0.15 worlds (the table below), and on 2026-09-26 on four worlds that 1.0.16
+created (the second table). Gate: `dotnet run -c Release --project tools\SeedLab.LocationLab -- gate`.
+
+**On 1.0.15** (the two `groundtruth\` files named here, the 1.0.15 world copies and that log, were lost in
+an accidental deletion on 2026-09-26; the `goldens\` survive in `data\1.0.15-59f53fb5\`):
 
 | oracle | what it is | result |
 |---|---|---|
@@ -315,6 +328,29 @@ own output exactly on three worlds. Gate: `dotnet run -c Release --project tools
 | `goldens\locationinstances-B83592B8.json` (+ its alt-biome golden) | a second FRESH world, `throwaway` (seed text `8QHItAXH7v`, seed -1204448584), the world dumper run 6 ran in on 2026-09-24 - a new hold-out the port had never seen | **12 216 / 12 216** bit-identical, 909 sectors, **32 / 32** alt-biome assignments identical, 178/178 prefabs exact (`LocationLab fresh --seed-hex B83592B8`, 2026-09-24) |
 | `groundtruth\worlds\*\_main.0.db2` | the two PLAYED worlds | **12 314 / 12 314** (`asdasdasd`) and **12 287 / 12 287** (`testworldclaude`), and **0** engine instances the save no longer holds |
 | `groundtruth\LogOutput-20260922-worldgen.log` | the game's own log of `testworldclaude`'s creation | all **29** types that logged a `placed N out of M` line reproduced exactly (Crypt4 170/200, TarPit1 91/100, NorthVillage 53/135, MountainCave02 82/120, GoblinHut03 2/20, TarPit3_1 0/100 ...), plus the single alt-biome under-min warning (`Fortress Mountain` 0/1-2, valid sectors 0, combos 2) with the same counters |
+
+**On 1.0.16** (2026-09-26; `LocationLab gate` on SeedLab `ded6c94`, with `data\1.0.16-96cfc004`; seedlab
+`proofs-and-gates.md` has every count):
+
+| oracle | what it is | result |
+|---|---|---|
+| `goldens\locationinstances-BB9B7F96.json` (+ its alt-biome golden) | the FRESH world `Throwaway` (seed text `VRbvYNainE`, seed -1147437162), dumped by dumper run 7 straight after genloc | **12,182 / 12,182** bit-identical; 974 sectors; **32 / 32** alt-biome assignments, 100/100 sector slots; 178/178 prefabs; placement order 183/183 |
+| Throwaway's own save (`_main.1.db2`), the one oracle the dumper did not write | 101 generated zones, 52 placed (zones kept generating around the player until the quit; the dump saw 37) | **12,182 common, 0 only in the save, 0 only in SeedLab**, by prefab hash and float32 x/y/z bits |
+| `groundtruth\worlds\<world>\_main.1.db2` | the three reference worlds, re-created in 1.0.16 from their old seeds and entered once, nothing explored | **12,314 / 12,314** (`asdasdasd`), **12,287 / 12,287** (`testworldclaude`), **12,228 / 12,228** (`ClaudeTestWold2`); 0 engine-only instances |
+| `groundtruth\worldgen-testworldclaude.log` | the game's own log of the 1.0.16 re-creation of `testworldclaude` | all **27** logged types reproduced exactly (25 `Failed to place all` lines plus 2 types seen only in a `took more than` line), and the alt-biome under-min warning with the same counters |
+| Throwaway's session log | its genloc lines | the 28 `Failed to place all` lines equal SeedLab's 28 shortfalls; per-type counts agree across the log, the save, the golden and SeedLab on all 183 types |
+
+The 1.0.15 log of the same world named **29** types and the 1.0.16 one names 27, with identical placement:
+which types print a `took more than 0.5 seconds` line depends on timing (**Inferred**).
+
+**Cross-build placement identity, on four worlds** (2026-09-26). 1.0.16 places exactly what 1.0.15's table
+and code place. The 1.0.16 saves of `asdasdasd`, `testworldclaude` and `ClaudeTestWold2` equal SeedLab's
+placement computed from the **1.0.15** data (`LocationLab gate` with `data\1.0.15-59f53fb5`, all exact); the
+1.0.15 golden `locationinstances-0480A34C.json` (dumped from `ClaudeTestWold2` under 1.0.15) equals that
+world's 1.0.16 save as a multiset of (hash, x bits, z bits, placed), 12,228 = 12,228; and `vseed locations`
+gives the same output on both builds' data (timings and stamps aside) for the four 1.0.15 seeds and
+Throwaway's `VRbvYNainE`. The re-dumped tables are identical apart from the stamp (valheim-modding
+`environment.md`, "What 1.0.16 changed").
 
 **A played world needs no special handling — but the precondition is real, so state it.** An offline
 reproduction must run with an **empty generated-zone set**, and that is legitimate only because genloc
@@ -573,6 +609,8 @@ What `Random.InitState(zoneSeed)` is actually spent on, and in what order. This 
   - `CanSpawnLocationMidGame(pos)`
 
   All of these include **unplaced** candidates.
+- **A server holds every instance of the world** (1.0.16, 2026-09-26): `ZoneSystem.Load` restores every saved instance with its placed flag, and `ZNet.LoadWorld` → `ZDOMan.LoadChunks` reads every ZDO chunk up front (valheim-modding `multiplayer.md` 3.5).
+- **`GetLocationList()` returns the live `m_locationInstances.Values`** and checks nothing (on a client it is simply empty). Enumerate it within one frame and fetch it again each time: `PlaceLocations` writes placed instances back into the dictionary (`m_locationInstances[zoneID] = value`), `RemoveUnplacedLocations` removes entries, and `ClearNonPlacedLocations` replaces the dictionary itself, so a collection held across a coroutine's yield can throw or go stale.
 
 ---
 
@@ -607,18 +645,20 @@ warns when `Location.m_useCustomInteriorTransform != DungeonGenerator.m_useCusto
 ### 5.1 Location icons (always-visible map symbols such as the start temple and the trader)
 - Server: `GetLocationIcons(dict)` adds every instance with `m_iconAlways`, or with `m_iconPlaced && m_placed`, as `position → prefab name`.
 - Clients: the server sends the icon list over RPC `"LocationIcons"` when a peer joins (`OnNewPeer`) and whenever an `m_iconPlaced` location gets placed. The client stores it in the private `m_locationIcons` and returns it from the same `GetLocationIcons`. `GetLocationIcon(name, out pos)` works on both sides.
+  - **The client's keys equal the server's `m_position` bit for bit** (1.0.16, 2026-09-26): `RPC_LocationIcons` clears and rebuilds the dictionary from `ZPackage.ReadVector3`, i.e. the raw floats `SendLocationIcons` wrote. So a client can match an icon to a position the server sends elsewhere by exact equality.
+  - **Pitfall:** on a client `GetLocationIcons(dict)` copies with `icons.Add`, so it throws if the dictionary passed in already holds one of the keys; the server's branch uses the indexer and does not. Pass an empty dictionary.
 - `Minimap.UpdateLocationPins` (private, every 5 s):
   - It diffs against the private `Minimap.m_locationPins` (`Dictionary<Vector3, PinData>`).
   - It adds a pin `AddPin(pos, PinType.None, "", save:false, ...)` with `m_icon` taken from the **public** `Minimap.m_locationIcons` (`List<LocationSpriteData>`, which pairs m_name with m_icon) and sets `m_doubleSize = true`.
   - A location without a sprite entry gets no pin.
   - These pins are **not saved**; they are rebuilt from ZoneSystem.
-- The default player spawn point (used when there is no logout point to resume at and no bed spawn point) is `GetLocationIcon("StartTemple")` + 2 m up (Game.FindSpawnPoint).
+- The default player spawn point (used when there is no logout point to resume at and no bed spawn point) is `GetLocationIcon("StartTemple")` + 2 m up (Game.FindSpawnPoint). The name comes from the serialized `Game.m_StartLocation` (default `"StartTemple"`), and the instance must qualify as an icon (`m_iconAlways`, or `m_iconPlaced` and placed). Re-read on 1.0.16, 2026-09-26.
 
 ### 5.2 DiscoverClosestLocation flow (Game / Minimap / RuneStone / Vegvisir, decompiled)
 1. `RuneStone.Interact`: if `m_locationName` is set, it calls `Game.instance.DiscoverClosestLocation(m_locationName, stonePos, m_pinName, (int)m_pinType /*default Boss*/, m_showMap)`.
    `Vegvisir.Interact`: calls the same for each `VegvisrLocation {m_locationName, m_pinName, m_pinType, m_discoverAll, m_showMap=true}`, then optionally `SetGlobalKey(m_setsGlobalKey)` and `player.AddUniqueKey(m_setsPlayerKey)`.
 2. `Game.DiscoverClosestLocation` (public) sends the routed RPC `"RPC_DiscoverClosestLocation"` to the **server**. The handler is registered only when `IsServer`.
-3. The server calls `FindClosestLocation`, or `FindLocations` if `discoverAll`, over **all registered instances, placed or not**. It replies to the sender with `"RPC_DiscoverLocationResponse"(pinName, pinType, pos, showMap)`, once per instance when `discoverAll` is set.
+3. The server calls `FindClosestLocation`, or `FindLocations` if `discoverAll`, over **all registered instances, placed or not**. It replies to the sender with `"RPC_DiscoverLocationResponse"(pinName, pinType, pos, showMap)`, once per instance when `discoverAll` is set. `FindClosestLocation` matches `m_prefab.Name == locationName` and takes the nearest by 3-D `Vector3.Distance` (re-read on 1.0.16, 2026-09-26, with the whole flow above). A dungeon's player-facing name is its door's caption: `Teleport.Interact` needs `m_targetPoint` and then calls `ShowBiomeFoundMsg(m_enterText)`.
 4. The client calls `Minimap.DiscoverLocation(pos, type, name, showMap)` (public). If `HaveSimilarPin` finds a pin with the same name, type and save flag within 1 m XZ, it returns false without adding a pin; only when `showMap` is set does it also show "$msg_pin_exist" and open the map on the point. Otherwise it calls `AddPin(pos, type, name, save:true, isChecked:false, 0)` and shows "$msg_pin_added: name". `showMap` opens the map on the point (`ShowPointOnMap` → `MapMode.Large`). Afterwards `Game.RPC_DiscoverLocationResponse` turns the player toward the point (`SetLookDir`, 3.5) only if `Minimap.m_mode == MapMode.None`. In normal play the minimap sits in `Small` mode, so this happens only in a no-map world (`SetMapMode` forces `None` when `Game.m_noMap`) or while the player is dead.
 - The random runestone text is seeded with `(int)pos.x * (int)pos.z` of the stone (RuneStone.GetRandomText).
 - `Location.m_discoverLabel` is added to the player's known location names when standing inside the location (Player.UpdateBiome → AddKnownLocationName).
@@ -688,6 +728,27 @@ int tries = veg.m_forcePlacement ? count * 50 : count;
   **Unverified:** whether objects instantiated earlier in the same frame are visible to `Physics.Raycast`. That depends on Unity auto-sync-transforms settings.
 - Once generated, every resource is a ZDO in the save and is never re-rolled. A changed vegetation list only affects zones that have not been generated yet.
 - Console `vegetation <prefab>` spawns one entry in front of the player without any seeding.
+- **The wiki's "Mysterious Rock" is the pickable `Pickable_StoneRock`** (1.0.16 dump, 2026-09-26, `data\1.0.16-96cfc004\`).
+  - **Vegetation entry** `pickable_stonerock_meadows_blackforest_mountain_swamp`: biome 15 (Meadows, Swamp,
+    Mountain, Black Forest), `min` 0 and `max` 1 per zone, altitude 5 to 20, `minDistanceFromCenter` 1000,
+    `biomeArea` 6. These match the wiki's rules.
+  - **Big Rock Clearing:** the `BigRockClearing` prefab holds exactly **22** `Pickable_StoneRock` children
+    (`locationchildren.json`), also matching the wiki.
+  - **Text:** `$item_stonerock` = "Rock" and `$item_hardrock` = "Mysterious Rock".
+  - `Pickable.GetHoverName` returns `m_overrideName` or the item's name. **Unverified:** which item
+    `Pickable_StoneRock`'s `m_itemPrefab` is. The wiki names `Stonerock` as the item and `Placeable_HardRock` as the
+    structure. The dump holds no pickable prefabs.
+  - A picked one keeps `ZDOVars.s_picked` on its ZDO. Scattered rocks exist only as ZDOs of zones that have
+    already been generated.
+  - **The rules, read from `ZoneSystem.PlaceVegetation` on 1.0.16:**
+    - **Count:** `m_max` 1 is not below 1, so a zone makes `Random.Range((int)m_min, (int)m_max + 1)` = 0 or 1
+      attempts, each with group size 1. That is at most one per zone, and an attempt can still fail the tests.
+    - **Altitude:** tested as `p.y - 30`, i.e. above sea level.
+    - **Distance:** `m_minDistanceFromCenter` is tested with `Utils.LengthXZ(p)`, horizontally from the world
+      centre.
+    - **Biome:** `m_biome & biome` at the point.
+  - `HardRock` appears nowhere in the location, room or vegetation data. `Placeable_HardRock` is a piece players
+    build, so a world search cannot find it.
 
 ---
 
@@ -908,3 +969,82 @@ Layer masks (ZoneSystem.Awake):
 - To predict locations offline you need all of the following: the seed, the exact location list and order with every parameter, the world-gen code (`WorldGenerator` + `AltBiomeWorldData`), and an exact reimplementation of Unity's native `Random`. **Settled 2026-09-23 (was "Unverified: that it is Xorshift128"):** it *is* xorshift128 — `InitState(s)` seeds `s0 = s`, `s1..s3 = prev*1812433253 + 1`, the step uses shifts 11/8/19, and the range mappings are recorded in `world-generator.md` 9, replayed against the running game on 268 seeds and 1 980 draws. All of it is implemented in SeedLab (this repository, skill **seedlab**), which reproduces whole location tables bit-exactly (3.7). Even so, unique-location winners and rotations remain unpredictable, for the reasons in 3.5 and 4.
 - `Utils.GetSaveDataPath(src)` (assembly_utils) returns `""` when cloud storage is supported and enabled and `src` is Auto/Cloud. Otherwise it returns `m_saveDataOverride` if set, else `persistantDataPath`.
   `persistantDataPath` is initialised from `Application.persistentDataPath` (Utils static field / decompiled). `valheim_Data/app.info` names the company `IronGate` and the product `Valheim`, so on Windows it is `%USERPROFILE%/AppData/LocalLow/IronGate/Valheim`. That folder exists on this machine and contains `worlds`, `worlds_local` and `characters`.
+
+## 11. Location chests and their loot (Valheim 1.0.16, 2026-09-26)
+
+Read from the 1.0.16 dump in `data\1.0.16-96cfc004\` (SeedLab's dumper run 7, 2026-09-26).
+`locationchildren.json` lists every `Container` in every location prefab. For each container it records the
+`m_defaultItems` DropTable, and the `RandomSpawn` that gates the chest together with its `chanceToSpawn`.
+**That is not every chest a location can have.** A location with a `DungeonGenerator` builds rooms at run time.
+Their chests are in `roomchildren.json` (358 rooms, 189 containers). Each room has a `roomTheme`, and each
+generator a `themes` mask in `locationprefabs.json`; a generator only uses rooms of its themes. The generators with
+room themes: `Crypt2`, `Crypt3`, `Crypt4` 8; `SunkenCrypt4` 2; `MountainCave02` 4; `GoblinCamp2`, `GoblinCamp2_1`
+16; `WoodVillage1`, `WoodVillage2` 32; `WoodFarm1` 64; `Mistlands_DvergrTownEntrance1`, `_2` 128;
+`Mistlands_DvergrBossEntrance1` 256; `Hildir_crypt` 512; `Hildir_cave` 1024; `Hildir_plainsfortress` 2048;
+`AshlandRuins` 4096; `FortressRuins` 8192; `TheHole01` 16384; `NorthVillage` 65536; `MorkBorg` 131072.
+
+**When the loot exists.** `Container.Awake` rolls the chest's contents once, on the owner, if
+`!ZDOVars.s_addedDefaultItems`, and then sets that flag. So a chest has contents only after its zone has been
+generated. Before that there are only odds. Afterwards the contents sit in the container's ZDO. A server holds
+every ZDO; a client holds only those in its active area.
+
+**The odds.** `DropTable.GetDropListItems`:
+1. returns nothing if `Random.value > m_dropChance`;
+2. draws `Random.Range(dropMin, dropMax + 1)` items, weighted;
+3. without replacement when `m_oneOfEach` is set.
+
+`RandomSpawn.Randomize` keeps a chest if `Random.Range(0, 100) <= m_chanceToSpawn`. It can also refuse on
+`m_requireBiome`, the elevation span or `m_notInLava`.
+
+**Only chests enabled in the prefab spawn.** `ZoneSystem.SpawnLocation` (1.0.16) builds its lists with
+`Utils.GetEnabledComponentsInChildren<ZNetView>` / `<RandomSpawn>` / `<RandomObject>` *before* any random roll, and
+spawns only those ZNetViews still `activeSelf` afterwards. A container in a switched-off subtree
+(`enabledInHierarchy: false` in `locationchildren.json`) therefore never appears, and nothing switches it on
+later.
+- `RandomSpawn` can only switch things off. `SetSpawned(true)` activates only an object without a ZNetView, and
+  an `m_OffObject` activated after a failed roll is not in the list.
+- **Corrected 2026-09-26:** this table first gave `TrollCave02` two Wooden Spear chests. Both sit under the
+  disabled `Interior/room`, so they never spawn. The cave's live chests are `TreasureChest_trollcave`, which
+  holds no wooden weapon. Found by the 1.2.0 release audit.
+- Re-deriving every row with the enabled filter (rooms included) changed nothing else.
+
+**The table.** "Chest" is the product of the gate chain; "in chest" is exact for the drop table. The total ignores the
+biome and elevation conditions and assumes separate chests are independent.
+
+| Item (prefab) | Locations with a chest that can hold it: chest present x item in chest = total |
+| --- | --- |
+| Wooden Axe (`AxeWood`), Wooden Knife (`KnifeWood`) | `ShipSetting01` 0.8 x 10.3% = **8.2%** each |
+| Wooden Mace (`MaceWood`) | `CombatRuin01` 1.0 x 7.8% = **7.8%**. Also the Draugr villages `WoodVillage1` and `WoodVillage2`, through the room `meadowsvillage_greathall` (theme 32). |
+| Wooden Sledge (`SledgeWood`) | `Grave1` 0.5 x 24.1% = **12%**; `SwampRuin1`, `SwampRuin2` 0.251 x 24.1% = **6%** |
+| Wooden Spear (`SpearWood`) | 13.9% in any chest that exists. `Ruin1`, `Ruin2`, `StoneHouse3` **13.9%**; `StoneTowerRuins03` two chests (0.33, 0.818); `StoneTowerRuins07`/`08`/`10` 0.25; `09` 0.5; `09_sunk` 0.25; `10_sunk` 0.125; `SwampHut4` 0.75 (**10.4%**); `SwampHut1`/`2`/`3`/`5` and `1_1`/`2_1`/`3_1` 0.1 (**1.4%**) |
+| Wooden Battleaxe (`BattleaxeWood`) | 13.6% in any chest that exists. `AbandonedLogCabin03`/`04`, `StoneTowerRuins05_leet` **13.6%**; `MountainWell1` 0.75; `AbandonedLogCabin02` two chests (0.546, 0.346); `StoneTowerRuins04` two chests (0.594, 0.181); `StoneTowerRuins05` 0.5 |
+| Wooden Atgeir (`AtgeirWood`) | 25.2% in any chest that exists. `Ruin3` **25.2%**; `StoneTower1`, `StoneTower3` 0.5 (**12.6%**); `GoblinHut02`, `GoblinHut03` 0.3 (**7.6%**). Also the Fuling villages `GoblinCamp2` and `GoblinCamp2_1`, through the rooms `gobvill_crafting`, `gobvill_hut02`, `gobvill_hut03`, `gobvill_tent02` and `gobvill_tent1` (theme 16). And `Hildir_plainsfortress`, through its `plainsfortress_Hildir_*` rooms (theme 2048). |
+| Curious Axe Head (`AxeHead1`) | `WoodHouse6` 1.0 x 55.4% = **55.4%** |
+| Mysterious Axe Head (`AxeHead2`) | `WoodHouse2` 0.5 x 55.4% = **27.7%** |
+| Wooden Greatsword (`THSwordWood`) | `Mistlands_GuardTower1_ruined_new`, `_new2`, `Mistlands_GuardTower3_ruined_new`, `Mistlands_RockSpire1`; `Mistlands_DvergrTownEntrance1` and `_2`, through `dvergr_room_TREASURE` and `_TREASURE2` (theme 128) |
+
+**The unique merchants** (1.0.16 dump): `Vendor_BlackForest` (Haldor), `Hildir_camp` and `BogWitch_Camp` are
+`m_unique` with quantity 10 and `m_iconPlaced`.
+- Once one candidate is placed, the server keeps only that one, and `SendLocationIcons(0L)` gives every client its
+  icon (`ZoneSystem.GetLocationIcons`).
+- `BigRockClearing` is unique with quantity 10 but gets no icon.
+- **`ZoneLocation.m_prefabName` equals the derived `m_prefab.Name`** for all 183 running entries. It differs only
+  on 19 disabled entries with no asset ID.
+- **Exploration vs generation:** `Minimap.m_exploreRadius` ships as **50** m (code default 100;
+  `prefab-constants.json`), in 12 m pixels. Zones are generated around each player within `NearSimulationDistance`,
+  at least the 3x3 block (`ZoneSystem.CreateLocalZones`, 1.0.16).
+  - So exploring a spot almost always means its zone has been generated.
+  - Not always: disc-mode radius tests can leave out a diagonal zone, and the server uses the peer's reference
+    position, which can be up to 2 s old.
+
+**Prefabs with no chest at all:** `StoneHouse4` and `BigRockClearing` (no container, and no dungeon generator).
+**Corrected 2026-09-26:** this line first also named `WoodVillage1` and `GoblinCamp2`. Their own prefabs hold no
+container, but their dungeon generators build rooms that do (above). Read `roomchildren.json` before calling a
+location chest-less.
+
+**Where the wiki's "55%" comes from.** The axe heads' 55% is the in-chest figure (drops 2-3 of 7, one of each).
+`WoodHouse2`'s chest is itself gated at 50%.
+
+All 33 location prefabs the user named on 2026-09-26 run in 1.0.16 (`enable` and a non-zero `quantity`) in the
+biomes they expected. The query that produced this table used this dump and `DropTable`, `RandomSpawn` and
+`Container` decompiled from 1.0.16.

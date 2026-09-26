@@ -11,6 +11,49 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
 
 ## 1. Process
 
+- **An IL tripwire that checks "it branches on X" must check which way** (a TomTom review, 2026-09-26).
+  - **What happened:** preflight's first check on a server-side prefix required only that a conditional branch
+    (`FlowControl == Cond_Branch`) follow the call to `SearchRules.VanillaMayHandle`. `brtrue` and `brfalse` both
+    pass, so the inverted `if (!VanillaMayHandle(pinName)) return true;` passed 56/56. It would have sent every
+    player's vanilla Vegvisir request through the mod's own handler and waved the plugin's own requests through.
+  - **Instead:** follow the branch the way it goes when the value is true (`brtrue` -> its target, `brfalse` -> the
+    next instruction) and check what is reached (`ldc.i4.1; ret`), or check the value returned, as check 12 does.
+    Prove every new tripwire with its inverted mutant.
+- **A tripwire on the wiring is not one on the decision** (a TomTom review, 2026-09-26).
+  - **What happened:** preflight checked that the server-side handler called its permission check and its link to
+    `GetServerPeer`. Mutants making the permission or `IsAdmin` always true, letting an unknown connection through, or dropping the
+    sender comparison all passed.
+  - **Instead:** move the decision into Unity-free code the tests reach, and have
+    preflight check that the Unity side returns only that call, with no constant argument (a replaced input is a
+    constant).
+- **A C# iterator that throws out of `MoveNext` is finished: the next `MoveNext` returns false** (a TomTom
+  review, 2026-09-26; proved with a LangVersion 5 probe).
+  - **What happened:** a server-side search drove a time-sliced job from `Update`, and a catch-all further up caught a
+    throw. On the next frame `Step()` returned false, and the partial result went out as the complete answer.
+  - **Instead:** catch around each step (and the setup) where the job is driven, and drop the job on a throw.
+
+- **Read the game's writer to learn a ZDO key's type before reading it** (TomTom 1.2.0, 2026-09-26).
+  - **What happened:** the chest check read `GetString(s_items)`. On 1.0.16 chests store a byte array
+    (`Container.Save`), and strings and byte arrays live in separate stores, so every chest read as empty. The
+    check would have dropped every generated place, even ones whose chest still held the item.
+  - **Why it wasn't caught:** the Unity-free rule tests passed, because they were handed the counts; nothing
+    exercised the ZDO read. A review decompiling `Container.Save`/`Load` found it.
+  - **Instead:** find where the game writes a key, and mirror its reader.
+- **A tripwire on how a reply is handled must also check the request that produces it** (TomTom 1.2.0,
+  2026-09-26).
+  - **What happened:** preflight check 12 proved the answer side (the prefix returns
+    `SearchRules.VanillaMayHandle(pinName)`) against 14 broken builds. Yet three one-token changes to the
+    request's pin name passed 49/49 and every test. The server echoes that name, so a changed name sends every
+    answer to vanilla, which makes saved, shareable pins.
+  - **Now:** the name comes only from `SearchRules.RequestPinName`, and preflight checks that `Ask` sends
+    exactly that.
+  - **General rule:** when a guard keys on data that crosses the network and comes back, prove both legs.
+- **A container listed in a prefab dump is not necessarily a chest that spawns** (TomTom 1.2.0, 2026-09-26).
+  - **What happened:** the first Find catalogue took every container in `locationchildren.json` whose loot
+    table held the item. `TrollCave02`'s two Wooden Spear chests sit under a disabled `Interior/room`, and
+    `ZoneSystem.SpawnLocation` spawns only enabled children, so they never exist. The release audit caught it.
+  - **Instead:** filter on `enabledInHierarchy` (valheim-worldgen `zones-locations-vegetation.md` section 11).
+
 - **A session's scratchpad lives in `%LOCALAPPDATA%\Temp`, and the user clears Temp** (2026-09-24, before
   closing Claude Code). Two long sessions had left 50 critical items only there, 184 more entries were cited as
   evidence, and about 15 durable citations already pointed at files that had been overwritten or deleted.
@@ -107,6 +150,18 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   the top-level-only scan found 0, the recursive scan named
   `ModeAssets/<>c__DisplayClass7_0.<Hashes>b__0` and exited 1.
 - **A tripwire list narrower than the claim it backs is worse than no list.** The SeedLab dumper's preflight scanned for 6 destructive and 6 write file APIs while its README said it proved "no method anywhere calls a file-deleting API" and "every file write is inside DumpWriter". `File.Copy` (overwrites its destination), `Directory.CreateDirectory`, and the whole `FileInfo`/`DirectoryInfo` surface were unlisted, so a violation using them would have passed while reading as proven. Fixed 2026-09-23 to 18 destructive + 20 write APIs, and proved twice: a scratch copy with five planted calls (`File.Copy`, `File.Delete`, `Directory.CreateDirectory`, a `StreamWriter` ctor, a `FileStream` ctor outside DumpWriter) was named call-by-call and exited 1, and `-SelfTest` now runs the same signature strings over `assembly_valheim.dll` - which really does delete, move and create files - so a typo in a signature cannot masquerade as a clean scan. Either widen the check to the claim or narrow the claim to the check.
+- **An IL tripwire that says "inside a try/catch" must mean "caught and not rethrown", and a stack replay must
+  know where handlers start.** TomTom 1.1.2's first key checks (2026-09-26) accepted any `catch (Exception)`
+  whose try range held the call, so a `throw;` added to the catch - which recreates the very failure the check
+  guards - passed 44/44. And its shared `Get-ArgumentSources`, which replays the evaluation stack in a straight
+  line, returned null for any call after a catch block (the handler's first `stloc`/`pop` consumes an exception
+  object the replay never pushed), so a legitimate literal read there false-FAILed. Two more from the same review:
+  a literal exemption ("constant keys are fine") let a constant that is itself broken through, so check literals
+  against data derived from the game; and a check with an `if/elseif` chain reported the first reason, not the
+  real one, on the actual defective build, so print every reason. Fixes: ignore handlers whose body holds
+  `throw`/`rethrow`; at a Catch or Filter handler's first instruction, clear the replayed stack and push a
+  placeholder; plant each shape (rethrow, after-catch literal, unrelated call in the block) and watch it FAIL
+  or PASS as it should (the TomTom project's own history, 2026-09-26).
 - **Moving beats deleting** for superseded installs and user data — `_ModSource\_retired\` exists for that.
 - **A commit trailer can make an assistant a public contributor, and removing it rewrites history.**
   `Co-Authored-By: Claude <noreply@anthropic.com>` on three commits listed Claude as a contributor on the
@@ -157,7 +212,11 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   the decompiled initialiser is what you see. Three caught in one session: `Minimap.m_textureSize` is
   `256` in code and **2048** in the prefab, `m_pixelSize` `64f` vs **12.0**, `ZoneSystem.m_locationVersion`
   `1` vs **32**. Never ship a code default as a fact; settle it from game-written data (save files, the
-  minimap cache), from the asset bundles, or from a runtime dump, and cite which.
+  minimap cache), from the asset bundles, or from a runtime dump, and cite which. Three more, in the
+  `Pathfinding` object of `main.unity` (1.0.16, read from the scene's type tree on 2026-09-26):
+  `m_updateInterval` `5` vs **10**, `m_tileTimeout` `30` vs **60**, `m_waterCost` `4` vs **100**
+  (vanilla-behaviour.md section 16) - so a navmesh tile rebuilds after 10 s of pokes and expires after 60 s,
+  twice what the code suggests.
 - **Asset data is reachable without launching the game.** `valheim_Data\StreamingAssets\SoftRef\manifest`
   is plain UTF-8 text mapping every `AssetID` to `Assets/world/.../<Name>.prefab`, and the `UnityFS`
   bundles next to it still carry **type trees**, so MonoBehaviour fields can be read offline. Reach for
@@ -189,6 +248,31 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   `Stopwatch` spin-wait spread across the sequence's measured duration; `Thread.Sleep`'s granularity steps
   right over it. The re-check's 200 spin-timed kills per runtime reached every intermediate state
   (the TomTom project's own history, v1.1.1 entry).
+- **A workflow's writer agent may not be allowed to write its file - have it return the document.** In
+  the 2026-09-26 MobTracker review the final writer's `Write` was refused by the harness; it returned the
+  whole 1,500-line specification as its result instead, and that was recovered from the workflow's own
+  record of every agent's return value. So make a workflow's writer RETURN its document (or verify its
+  write before the workflow ends), and look for that record before re-running anything whose output
+  seems lost.
+- **Keep a local copy of the game assemblies of every verified build, or an update can only be audited
+  indirectly** (the 1.0.16 audit, 2026-09-26). No copy of 1.0.15's `assembly_valheim.dll` or
+  `assembly_utils.dll` was kept, so "did 1.0.16 change what SeedLab copies?" could not be a diff: it was
+  rebuilt from the port's citations and compared instruction by instruction, which is slower and misses what
+  the port does not cite. Whether to keep such copies is the user's decision (Iron Gate's code; local only,
+  never in a published tree). Two tooling gaps found the same day, **not fixed yet**:
+  `check-game-version.ps1` hashes only `assembly_valheim.dll`, so an engine change (`UnityPlayer.dll`,
+  CoreModule, the Mono runtime, mscorlib) would pass unseen - hash those too; and `decompile.ps1` has no IL
+  mode (use `decompile-module.ps1`, which writes the IL of a whole assembly).
+- **A "read-only" investigation must not archive anything without a go-ahead.** In the same audit one
+  investigator copied the 1.0.16 game DLLs into a new folder under `_ModSource\_retired\` unasked
+  (found by the critic from the folder's creation time). Useful, but `_retired` is the user's archive; say
+  "read-only" in the brief and have the critic list every file written in the task's window.
+- **A privacy scan must find names with spaces and paths without a leading slash** (SeedLab's 2026-09-26
+  ground-truth review). The first scan extracted world names from the play-session logs with patterns that
+  stopped at a space and wanted `/worlds/`, so it found 3 of the 4 private names; Valheim world names may
+  contain spaces, and the startup cloud-file listing writes `worlds/<name>/` with no leading `/`. Extract with
+  `(?:^|[\s/])worlds(?:_local)?/([^/\r\n]+)/` and `ZNet\.LoadWorld: (.+?) \(`, match as byte strings
+  case-insensitively, and print counts only, never the names.
 
 ## 2. Shell and file tooling
 
@@ -206,6 +290,11 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   emitted a `SyntaxWarning: invalid escape sequence`, which is easy to scroll past. **Write the script
   to a file with the Write tool and run `python <file>`**, or avoid backslashes entirely (forward
   slashes work in every path the KB quotes). Always print a slice of the result back and eyeball it.
+- **A PowerShell function returns everything it writes, not just its `return` value.** MobTracker's mutant
+  runner printed preflight's FAIL lines with `Write-Output` inside a helper and then `return $code`; the caller
+  got an array, and `$array -ne 0` filters rather than compares, so it was truthy and the clean build "failed".
+  And **`-match` ignores case**: `"fails to resolve" -match "FAIL"` is true. Return an object
+  (`[pscustomobject]@{ Code = $code; Lines = $lines }`), print in the caller, and use `-cmatch` (2026-09-26).
 - **Git Bash mangles Windows arguments.** `/nologo`-style switches become paths, and MSYS paths
   (`/c/Users/...`) inside a csc response file are read as option flags. Pass switches as `-flag`, convert
   paths with `cygpath -w`, or call from PowerShell.
@@ -273,6 +362,11 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
 - **`ProcessStartInfo.ArgumentList` does not exist in Windows PowerShell 5.1** - it sits on .NET
   Framework, not .NET Core - and neither does `Process.Kill($true)`. Build `.Arguments` as a quoted
   string, or use `Start-Process -ArgumentList`.
+- **`powershell -File script.ps1 -Names a,b,c` passes ONE string, not an array** (2026-09-26, TomTom 1.1.2's
+  mutant runner): with `-File`, arguments are not parsed as PowerShell, so a `[string[]]$Names` parameter gets
+  the single element `"a,b,c"`, and a lookup by name then fails for all of them at once. Call the script with
+  `& script.ps1 -Names @("a","b","c")` from a PowerShell session (the PowerShell tool already is one), or use
+  `-Command`.
 - **Do not trust `\Processor(_Total)\% Processor Time` on this machine.** While measuring "is the box
   quiet", it read a steady ~50 % while `Win32_PerfFormattedData_PerfOS_Processor` said 97 % idle and
   the per-process deltas said ~3 %. The 50 % was real work - one foreign process burning 6.5 cores -
@@ -301,6 +395,57 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   MediaWiki API answers a plain `curl`:
   `https://valheim.fandom.com/api.php?action=parse&page=<Title>&prop=wikitext&format=json` returns the
   page source, whose `{{Infobox_location}}` carries the `id=` a prefab can be matched on.
+- **`git worktree remove` DELETES THROUGH JUNCTIONS - remove every junction first** (2026-09-26, the worst
+  mistake of the SeedLab sessions). SeedLab worktrees get `data\` and `groundtruth\` as `mklink /J` junctions to the
+  main checkout's git-ignored folders. `git worktree remove <worktree>` then deleted, permanently
+  (no Recycle Bin), everything inside the junction TARGETS: the main checkout's `data\1.0.15-59f53fb5` and every file
+  in `groundtruth\` (the natives recordings, decoded map caches, test-world copies, location lists, 1.0.15 game
+  logs). The perf-track agent had done it right on 2026-09-25 ("the groundtruth junction is removed (target
+  intact)"); the main session did not. What to do: before removing ANY worktree, list its reparse points
+  (`cmd /c dir /AL /S <worktree>`) and delete each junction itself with `cmd /c rmdir <junction>` (never `rmdir /s`,
+  never `Remove-Item -Recurse`), check the targets are intact, and only then `git worktree remove`. Better still,
+  give worktrees read-only COPIES of what they need, or point tools at the main folders by an environment
+  variable, instead of junctions. Also keep irreplaceable evidence (game logs, world copies) out of any folder a
+  junction points at, with a second copy elsewhere.
+- **Do not SendMessage to an agent a Workflow started** (2026-09-26, SeedLab web fixes). A message resumes the agent
+  as a separate background run; its final answer then reaches the main session as a task notification and the
+  workflow's own `agent()` call never receives it, so the workflow waits forever (the journal shows `started` and
+  no `result`). Instead: put late context in a file the next stage reads, or stop the workflow once the agents you
+  need have written their reports and start a continuation script that reads them from disk. Also: stopping a
+  workflow (TaskStop) does NOT stop an agent that is mid-task - a stopped run's designer went on and wrote a second
+  plan beside the real one; check for such stray output before a continuation starts.
+- **Tools started from an app-packaged desktop host can see `%LOCALAPPDATA%` through a shadow copy** (found
+  2026-09-26, SeedLab web diagnosis). The desktop app these sessions ran in is an app package; every process it
+  starts - shells, agents, the vseed they run - reads the user's `%LOCALAPPDATA%\...` merged with
+  `%LOCALAPPDATA%\Packages\<package>\LocalCache\Local\...`: a file in the shadow copy HIDES the real file
+  of the same name, files only in the real folder show through, folder timestamps are the shadow copy's, and
+  writes land in the shadow copy, where the user never sees them. `%TEMP%` is not redirected. So a session read
+  the shadow `SeedLab\logs\vseed.log` (a profile run of 03:47) and told the user their web server wrote no log,
+  when the real folder held its full 5,587-byte log. What to do: treat anything read from the user's
+  `%LOCALAPPDATA%` as possibly shadowed; give every agent run of a tool an explicit cache folder in `%TEMP%`
+  (`--cache-dir` / `SEEDLAB_CACHE_DIR`); to read the real folder as evidence, have a process started outside the
+  app (a WMI `Win32_Process.Create` of `cmd /c dir|type ... > %TEMP%\file`) copy it into `%TEMP%`. That route
+  also bypasses the container for writes - use it only to read evidence, never to write the user's files.
+  **Unverified:** the mechanism (package AppData redirection); the effect is proved by reading both sides at once.
+- **Windows PowerShell 5.1 with `$ErrorActionPreference = "Stop"` stops at a native program's first stderr
+  line when its output is redirected with `*>` or `2>&1`** (the line becomes a `NativeCommandError`), leaving an
+  empty output file and a script that exits 1 - SeedLab's quiet-machine run, 2026-09-25, where `vseed profile`
+  prints progress on stderr. Redirect through `cmd.exe /c "prog args > file 2>&1"` (which also avoids 5.1's
+  UTF-16 `*>`), or relax the preference around the call.
+- **Calling plugin or BepInEx code by reflection from Windows PowerShell 5.1** (2026-09-26, a MobTracker config
+  probe): `New-Object` wraps its result in a `PSObject`, so passing it to `MethodInfo.Invoke` fails with "cannot be
+  converted to type ..." - pass `$x.psobject.BaseObject`; `@($x)` unrolls anything enumerable, such as BepInEx's
+  `ConfigFile`, so an argument array built that way fails with "Parameter count mismatch" - build the `object[]`
+  by hand; and `powershell -File s.ps1 -P ""` fails with "Missing an argument for parameter".
+- **`decompile.ps1 -Assembly BepInEx` failed from the game folder** until 2026-09-26: `Get-GameAssemblyPath` took
+  any existing path, and `BepInEx` there is the folder, so ILSpy threw "Access to the path ... is denied". It now
+  accepts only a file (`Test-Path -PathType Leaf`). Generic types still need their backtick name
+  (`AcceptableValueList`1`) and may report "type not found".
+- **Three Windows PowerShell 5.1 parser and binder traps** (SeedLab's `tests\bench-search.ps1`, 2026-09-25/26):
+  a large `[ordered]@{...}` literal with values of mixed types can fail with "Argument types do not match" -
+  build it key by key; `[DateTimeOffset]::TryParseExact(s, fmt, culture, styles, [ref]$ts)` fails with "Cannot
+  find an overload ... 5" unless `$ts` is typed first (`[DateTimeOffset]$ts = [DateTimeOffset]::MinValue`), not
+  `$ts = $null`; and a line inside `( ... )` cannot start with `+` - end the previous line with the operator.
 
 ## 3. Build
 
@@ -311,6 +456,10 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   the legacy build stays the gate for the older mscorlib API surface.
 - **MSB3277 warnings are expected** for Unity mods (System.* version unification). Demote them:
   `<MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>`.
+- **An incremental build of a copied source tree can ship the previous build.** `Copy-Item` keeps each
+  file's LastWriteTime, so a pristine copy laid over a tree whose `obj\` was built from a mutated (newer)
+  file looks older than its output, and MSBuild skips the compile: MobTracker's mutant runner got a "clean"
+  DLL that still held the last mutant. Build copies with `--no-incremental`, or delete `obj\` (2026-09-26).
 - **`MSB3027`/`MSB3021` is a lock, not a build error: a long-running tool you (or another agent)
   started earlier is holding its own Release output.** Leftover `vseed serve` and `vseed search`
   processes held the SeedLab CLI's `bin\Release\net10.0\vseed.exe` open, and every later build of
@@ -394,7 +543,23 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   `SeedLab.WorldGen.dll` reads `ProductVersion 0.1.0+25f2a9f4f6a9f8ff2419ba15a3c411e6f8972ee0` (read
   2026-09-25) - and into the PDB it points to, so every commit changes every DLL's hash even when its source
   did not change. Across commits compare behaviour instead: world fingerprints, results files byte for byte,
-  test digests (SeedLab's profiler and CPU work, `7d433d1`).
+  test digests (SeedLab's profiler and CPU work, `7d433d1`). **The same stamp breaks a test that compares two
+  builds' copies of one library:** `SeedLab.Search.Tests` section 14 checks that the built `vseed` carries the
+  same `SeedLab.Search.dll` as the tests, so after a commit, or when `tests\SeedLab.Tests` was built after the
+  CLI, 3 checks fail as "SKIPPED, not passed" (seen 2026-09-25 and 2026-09-26). Rebuild every project after a
+  commit, the CLI last. SeedLab has no `.sln` at its root (`dotnet build` there stops with MSB1003), so build
+  project by project.
+- **A plugin that reaches private game members needs a publicized reference, and the usual NuGet publicizer does
+  not restore here** (the only package source is the offline Visual Studio one; MobTracker's original source used
+  `BepInEx.AssemblyPublicizer.MSBuild` 0.4.2, 2026-09-26). The offline equivalent is a few lines of Mono.Cecil
+  (MobTracker's `tools/publicize.ps1`, in its public repository): set every type, method and field public and write the copy to a
+  git-ignored `lib\` - it is game code, never committed or shipped - rebuilding only when the game DLL's hash
+  changes, and run it from an MSBuild target before `ResolveAssemblyReferences`. **Skip compiler-generated
+  fields and any field named like an event**: a field-like event's backing field has the event's own name, and
+  publishing it makes every use of the event ambiguous. At run time the plugin still needs what the package
+  provided: an assembly-level `[IgnoresAccessChecksTo("assembly_valheim")]` (the attribute class declared in the
+  plugin itself) and `AllowUnsafeBlocks` (which emits `SkipVerification`). Proven: the original source built this
+  way compiles to exactly the original DLL (MobTracker's `tools/compare-il.ps1`, 23 types, 3619 IL instructions).
 
 ## 4. Game code and Harmony
 
@@ -403,6 +568,28 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   `AccessTools.MethodDelegate<Func<T,...>>(methodInfo)` (open-instance delegate).
 - **Patch each class separately.** `harmony.PatchAll(assembly)` aborts on the first unresolved target,
   so one renamed method disables every patch. `PatchAll(typeof(OnePatchClass))` in its own try/catch.
+  Then a patch class nobody lists is never applied: have preflight check that `Awake` names (`ldtoken`) every
+  `[HarmonyPatch]` class, and that every patch parameter is either a Harmony injection or named and typed
+  like a parameter of the target overload (MobTracker `tools/preflight.ps1`, 2026-09-26) - a misspelt
+  `__runOriginal` compiles and only fails when the game starts.
+- **A `[HarmonyPriority]` on the patch CLASS is silently ignored by `PatchAll(Type)`** in HarmonyX 2.9:
+  `HarmonyMethodExtensions.Merge` copies every field from the method's attribute info over the class's except
+  that it skips `priority` when the method's value is -1 - and then the result keeps -1, which the `Patch`
+  constructor turns into 400 (Normal). Put it on the Prefix/Postfix method. It matters because **BepInEx loads
+  plugins in case-insensitive GUID order**, and at equal priority the first registered runs first:
+  `com.mobtracker.plugin` patches before `DoomMachine.TomTom`, so MobTracker's "Low" delete prefix ran before
+  TomTom's and one click removed two pins. Proved 2026-09-26 by a probe on Unity's Mono with the shipped
+  `0Harmony.dll`, `MobTracker.dll` and `TomTom.dll`.
+  TomTom puts its priorities on methods (checked); Server Devcommands' class-level `[HarmonyPriority(500)]` on
+  its `Terminal.InitTerminal` patch is ignored the same way. A preflight can fail on any `HarmonyPriority`
+  attribute on a `[HarmonyPatch]` class (MobTracker does).
+- **A world-spawn rule's `m_biome` is not where the creature spawns now.** Many rules wait for a global key
+  ("<creature> other biomes when <boss> defeated", with a broad `m_biome`) or run only inside a persistent
+  event's area; sub-biomes add rules of their own and block others by rule name. MobTracker's Find area
+  ignored the key, so for Charred Archers, Seekers, Greydwarfs, Draugr and Skeletons it pinned the Meadows
+  around the start temple and described a different rule (2026-09-26 review, with a harness running the real
+  `SpawnFinder.cs` on SeedLab's world generator). Filter as `SpawnSystem.UpdateSpawnList` does
+  (vanilla-behaviour.md section 19).
 - **A prefix returning false skips the original, never another prefix — and you cannot stop a
   co-patcher's prefix with your own.** (Corrected 2026-09-24: this entry said a false prefix also skips
   every later prefix.) HarmonyX 2.9's `HarmonyManipulator.WritePrefixes` (decompiled from
@@ -466,6 +653,24 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   `Failed to resolve assembly: 'UnityEngine.CoreModule'`.
 - **`Vector2s` and `Vector2i` are in `assembly_utils.dll`, not `assembly_valheim.dll`** — decompiling
   them from the wrong assembly gives "type not found". `Vector2s` holds two `Int16`.
+- **assembly_valheim's global-namespace types silently win a bare name.** Vanilla has a **public, global**
+  `Tracker` MonoBehaviour (it writes `ZNet.SetReferencePosition`; multiplayer.md section 5.2). Code that means
+  another plugin's `Tracker` (MobTracker's `MobTracker.Tracker`) gets no CS0104 ambiguity error: with
+  `using MobTracker;` at file level, a bare `Tracker` binds to the vanilla type, because global-namespace types
+  are found before namespaces imported by a compilation-unit `using`; against the real MobTracker.dll, where
+  the class is internal, it binds to vanilla even with a namespace-level `using`. So `GetComponent<Tracker>()`
+  compiles and returns the wrong type. Write `global::Tracker` for vanilla, or reach the plugin's type by
+  reflection on its full name (`"MobTracker.Tracker"`), and never name your own type after a vanilla global
+  (2026-09-26 MobTracker review, compile-probed with Roslyn against the installed DLLs).
+- **Do not infer `Achievements.IsCheatedAtAll()` from `Game.isModded` alone** (2026-09-26, TomTom 1.2.0
+  multiplayer investigation).
+  - **What happened:** an investigator reasoned from vanilla that `IsCheatedAtAll()` is already true when
+    Unshamed is installed, because it sets `Game.isModded = true`. On that basis it said the host's console
+    `setkey` would accept a custom key. The critic found Unshamed's `Achievements_IsCheatedAtAll_Patch` postfix,
+    which puts the result back to false for a clean character in a clean world.
+  - **Instead:** before reasoning from a vanilla method's result, check whether an installed mod patches it.
+    `scan-mod-patches.ps1` lists this one as `Achievements . IsCheatedAtAll <- Achievements_IsCheatedAtAll_Patch`.
+    The general rule: in a modded install, vanilla code alone does not settle what a patched method returns.
 
 ## 5. Input, cursor, UI
 
@@ -473,9 +678,12 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   (two arguments), `ZInput.pointerPosition`.
 - **To take the keyboard and release the cursor, postfix `TextInput.IsVisible` to return true while
   your window is open** (only then — never clear someone else's true). That one flag is read by
-  `Player.TakeInput` (hotbar, Use, attack, map, inventory keys), `PlayerController.TakeInput`
-  (movement/look), `GameCamera.UpdateMouseCapture` (cursor lock), `Chat.Update`, `Menu.Update` and
-  `Minimap.Update`. ConfigurationManager uses exactly this. Patching only
+  `Player.TakeInput` (Use, hotbar, Hide, walk toggle, emotes, Guardian power, AutoPickup),
+  `PlayerController.TakeInput` (movement, attack, block, dodge, look), `GameCamera.UpdateMouseCapture`
+  (cursor lock), `Chat.Update` (opening chat), `Menu.Update` (Escape opens the menu) and `Minimap.Update`
+  (Map key, map close, map zoom) — the same six in 1.0.16 (vanilla-behaviour.md section 4). (Corrected
+  2026-09-26: this said `Player.TakeInput` covers "attack, map, inventory keys"; `Player.Update` reads no map
+  or inventory key, attacks go through `PlayerController`, and Tab is not gated at all - next entry.) ConfigurationManager uses exactly this. Patching only
   `PlayerController.TakeInput` left the window unclickable (cursor re-locked every LateUpdate) and let
   typing fire hotbar slots.
 - **Known gaps even then:** `InventoryGui.Update` (Tab, gamepad Y), `GameCamera.UpdateCamera` (wheel and
@@ -496,7 +704,11 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
 - **An IMGUI window does not block uGUI.** The large map image's `UIInputHandler` (EventSystem-driven,
   wired in `Minimap.Start`: right click → `RemovePinUnderPointer`, middle click → `OnMapMiddleClick`,
   left down/up) fires for clicks on any IMGUI window drawn over it, so a double-click on your window can
-  place a saved pin and a middle-click pings every player. ConfigurationManager 1.1.18 prefixes
+  place a saved pin, a middle-click pings every player, a right-click deletes the pin under the cursor and
+  dragging your window pans the map (the drag branch of `UpdateMap` is outside `takeInput`). IMGUI buttons
+  react to any mouse button (`GUI.DoControl` has no button test), so a right-click on one of your buttons
+  both presses it and deletes the pin beneath (re-confirmed on 1.0.16 by the 2026-09-26 MobTracker review:
+  `UnityEngine.UI` never reads `GUIUtility.hotControl` or window rects). ConfigurationManager 1.1.18 prefixes
   `UIInputHandler.OnPointerDown/Click/Up` for this reason. Block per handler — for the map, its image's
   `UIInputHandler.OnPointerClick` plus `Minimap.OnMapLeftDown`/`OnMapDblClick` — while the pointer is over
   your window (2026-09-24 review, decompiled).
@@ -525,14 +737,65 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
 - **uGUI `GuiScaler.Awake` overwrites a game-wide static** (`m_largeGuiScale`) — adding one to your own
   canvas changes the whole game's GUI scale unless you save and restore it.
 - **`MessageHud` Center messages are not queued** (a second one in the same frame overwrites the first);
-  TopLeft messages are queued.
+  TopLeft messages are queued. Two more traps in `MessageHud.ShowMessage` (1.0.16, 2026-09-26): **every call
+  overwrites the shared `m_showDespiteHiddenHUD`**, so a mod calling with the default `false` can make
+  `MessageHud.Update` hide a vanilla message meant to show despite a hidden HUD; and while the HUD is
+  user-hidden (Ctrl+F3) a default call is **dropped silently** - not shown, not logged. A repeated TopLeft
+  text within 4 s merges into the one on screen. Mechanism: vanilla-behaviour.md section 5.
+- **A `ConfigEntry<KeyCode>` accepts keys that make `ZInput.GetKeyDown` throw every frame.** `IsKeyCodeValid`
+  passes these KeyCodes, but `ZInput.s_keyCodeToKeyMap` has no entry for them: Clear, Exclaim, DoubleQuote,
+  Hash, Dollar, Percent, Ampersand, LeftParen, RightParen, Asterisk, Plus, Colon, Less, Greater, Question, At,
+  Caret, Underscore, LeftCurlyBracket, Pipe, RightCurlyBracket, Tilde, F13, F14, F15, Help, SysReq, Break,
+  WheelUp, WheelDown. `KeyCodeToKey` then returns `Key.None` (logging a warning only if `logWarning`), and
+  Unity.InputSystem's `Keyboard.this[Key]` throws `ArgumentOutOfRangeException` for index `key - 1 < 0` -
+  **whatever `logWarning` says**. BepInEx lists all of them as acceptable values. Keys `IsKeyCodeValid`
+  rejects silently never fire: None, Mouse5 (328), Mouse6 (329), and anything above JoystickButton19 (349), such
+  as F16-F24 (670-678).
+  **No gamepad KeyCode (JoystickButton0-19) throws.** `s_keyCodeToGamepadButtonMap` maps 19 of the 20 (all but
+  JoystickButton15) to face, shoulder, stick, Start and Select buttons. `Gamepad.this[GamepadButton]` handles
+  those and the four D-pad values; it throws only for other values.
+  JoystickButton15 is the missing one. Each poll with `logWarning` true logs "... Returning South Button", but on
+  Windows it reads **D-pad up**: `TryKeyCodeToGamepadButton` presets `South`, then calls
+  `TryGetValue(keyCode, out result)`, which writes `default` (`GamepadButton.DpadUp` = 0) on a miss (the game's
+  mscorlib IL: `initobj TValue`). On macOS a switch maps only JoystickButton5-9 (the D-pad and Start), and every
+  other button reads the preset `South`.
+  Validate a configured key before polling it, or catch per frame (decompiled 1.0.16, 2026-09-26:
+  `ZInput.TryGetKeyStateLowLevel`, `KeyCodeToKey`, `KeyCodeToGamepadButton`, `TryKeyCodeToGamepadButton`,
+  `ZInput..cctor`, `Keyboard.this[Key]`, `Gamepad.this[GamepadButton]`, the `GamepadButton` and `KeyCode` enums).
+  The MobTracker review found it with `ListKey`. TomTom v1.1.2's release audit found that no gamepad KeyCode
+  throws, and the code was re-read the same day.
+  **`GetKey` throws the same way** (same path), and **a throwing read takes down whatever shares its `try`**:
+  TomTom 1.1.1 read its keys in the same `try` as its per-frame tick, so one such key choice stopped route
+  loading, arrival and saving (the TomTom project's own history, 2026-09-26). **The pattern** (TomTom 1.1.2
+  `Hotkeys`, the plugin template's `KeyPressed`): read every configurable key through one helper that passes
+  `logWarning: false`, catches `Exception` per read, remembers the KeyCode as unreadable (a `List<int>`, no
+  boxing), warns once naming the setting and then reads it as unbound until the setting changes; and keep the key
+  handling and the per-frame work in separate `try` blocks. TomTom's preflight derives the 30 from
+  `ZInput..cctor` (its `Dictionary<KeyCode, Key>` `Add` calls against the `KeyCode` enum) so a game update that
+  changes the set is reported.
 - **`Minimap.ShowPointOnMap` forces the large map open** and swallows input for 0.5 s.
+- **A button that cycles through choices applies every choice on the way to a live consumer.** MobTracker
+  0.2.0's first alert star filter was one button cycling All -> No star -> 1 star -> 2 stars -> 2+ stars, read
+  by a once-a-second alert poll that alerts each creature only once. Going from "2 stars" to "1 star" passes
+  All and No star: a poll landing there dinged for (and auto-tracked) creatures the player was excluding and
+  used up the single alert of the creature they wanted - caught by review with a probe driving the real alert
+  gate (2026-09-26). For a setting a live, once-only consumer reads, let the player pick the value directly
+  (`GUILayout.Toolbar` with a cached `GUIContent[]`, which allocates nothing per call), or make the consumer
+  ignore changes for a moment after the setting changes.
 
 ## 6. Map and pins
 
 - **`save:false` pins are invisible to every vanilla pin lookup**: `GetClosestPin`, `GetClosestPinToCursor`,
   `HavePinInRange`, `RemovePin(Vector3, float)` and the right-click delete all skip them. They still
   render. Find your own markers by walking `m_pins` (private field) yourself.
+- **So a right click on a mod's marker deletes the player's nearest SAVED pin in reach instead** — and
+  the marker stays. MobTracker's Find area pins did this until 0.2.0 (2026-09-26 review). Take the gesture
+  with a prefix on `Minimap.RemovePin(Vector3, float)`, which every delete gesture reaches
+  (vanilla-behaviour.md section 1): remove your own marker in reach, set `__result = true`, return false.
+  With more than one such mod, put `[HarmonyPriority(Priority.Low)]` **on the Prefix method** (on the class
+  it is ignored - section 4) and return false at once when `bool __runOriginal` is already false, so one
+  click never removes two markers (TomTom's prefix runs at the default priority). **Corrected** 2026-09-26:
+  this entry did not say where the attribute goes, and MobTracker's first try put it on the class.
 - **`save:false` is also what keeps a pin local** — `GetSharedMapData` (Cartography Table) and
   `GetMapData` (profile) export only `m_save` pins. Keep mod markers `save:false`, `m_ownerID = 0`.
 - **Pins with `m_ownerID != 0` belong to someone else** and are deleted on the next map sync
@@ -562,6 +825,33 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
 - See multiplayer.md. Short version: map sharing only ever carries `m_save` pins; a client-only mod
   cannot put anything on another player's map through the Cartography Table unless it creates
   `save:true` pins.
+- **A routed RPC's `sender` is whatever the client wrote** (found designing a mod's server side, 2026-09-26).
+  - **Why:** `ZRoutedRpc.RPC_RoutedRPC` deserializes `m_senderPeerID` from the packet and never replaces it; the
+    server relays it unchanged. A permission check on `sender` (host? admin?) can be passed by claiming another uid.
+  - **Instead:** identify the caller by the `ZRpc` connection the call arrived on - a prefix on
+    `ZRoutedRpc.RPC_RoutedRPC` that stores `rpc`, cleared by a Finalizer (multiplayer.md section 4.2). Do not reuse
+    ServerSync's `SnatchCurrentlyHandlingRPC` value: it is never cleared.
+- **A dedicated server started on this machine overwrites the client's `Player.log`** (2026-09-25; seen
+  2026-09-26). Both processes write Unity's log to `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\Player.log`
+  by default, so the 2026-09-25 server run replaced the client's log.
+  - **Instead:** start the server with `-logFile <path>` (and `-savedir <folder>`), and copy the client's logs
+    first (section 9, the log-rotation entry). How to run the server: environment.md, "The dedicated server".
+- **The headless server's Unity errors are not a mod fault.** `AsyncResourceUpload failed.`, `This custom render
+  path shader needs to have at least 1 passes.`, the `Hidden/VideoDecode` / `VideoComposite` / video decode shader
+  pass lines and `Failed to play intro cinematic` appear with and without BepInEx (2026-09-26, both logs compared).
+  Do not chase them when a server-side plugin misbehaves; read the lines around the plugin's own output.
+- **Traps in the routed-RPC and location APIs a server-side feature meets** (decompiled 1.0.16, 2026-09-26):
+  - `ZNet.RemoteCommand` called on the server throws a NullReferenceException (multiplayer.md section 6.1).
+  - `ZRoutedRpc.instance` is stale after logout (never cleared), and registering one name twice throws
+    (multiplayer.md section 4.4).
+  - `InvokeRoutedRPC(name, ...)` before the handshake targets 0 and runs the handler locally (multiplayer.md 4.2).
+  - A global call to a name the receiver never registered vanishes without a log, and a server-side
+    "failed to find" answers nothing at all (`RPC_DiscoverClosestLocation`, multiplayer.md 1.2): a protocol must not
+    wait for a reply that may never come.
+  - On a client, `ZoneSystem.GetLocationIcons(dict)` fills the dictionary with `Add`, so a dictionary that already
+    holds one of the keys throws; pass an empty one (valheim-worldgen `zones-locations-vegetation.md` 5.1).
+  - `ZoneSystem.GetLocationList()` returns the live `m_locationInstances.Values`: enumerate it within one frame,
+    never across a coroutine's yields (same file, section 4).
 
 ## 8. Game lifecycle
 
@@ -679,7 +969,13 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   `LogOutput.log` is not absence of the thing.
 - **`BepInEx\LogOutput.log` is overwritten on every launch.** A spec cited measurements from a world
   (`test1`) whose log no longer existed. Copy the log into the scratchpad the moment you take numbers
-  from it, and name the world and timestamp beside every figure.
+  from it, and name the world and timestamp beside every figure. **Unity's own log rotates too:**
+  `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\Player.log` becomes `Player-prev.log` at the next start
+  and is gone after the one after. So before the user starts the game again, copy `Player.log`,
+  `Player-prev.log` **and** `LogOutput.log` somewhere durable and outside Temp (not into a folder a junction
+  points at). 2026-09-26: dumper run 6's session survived only as `Player-prev.log` - its plugin list and
+  genloc counters - and it was lost for good in that day's deletion; the Temp scratchpad copy of the
+  1.0.16 play session's `LogOutput.log` was not durable either.
 - **"Every output is valid" is not "the output is right".** Inverting `GetStableHashCode` by greedily
   taking the first branch of the lane backtracking returns a seed text that always re-hashes to the
   target — so no correctness test fails — yet its even-indexed characters are wildly non-uniform
@@ -738,6 +1034,21 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   binary16) — which is exactly why a minimap-only acceptance gate passes a port that has them.
   Rule: when porting IL, narrow where the *IL* narrows, and treat `conv.r8` applied to the result of a
   float `add`/`mul` as a marker that Mono never rounded that value to float at all.
+  **The same holds for `conv.i4` (the 1.0.16 audit, 2026-09-26).** `UnityPlayer.dll` passes Mono the option
+  `-O=-float32` (the string sits in `UnityPlayer.dll` beside `Mono path[%d]`); the game's x64
+  `mono-2.0-bdwgc.dll` computes in float32 with default options and in double with that option. So in the
+  game a `conv.i4` straight after float arithmetic truncates the unrounded double: `Utils.FloorToInt`
+  (`ldarg.0; ldc.r4 64000; add; conv.i4; ...`) and `Utils.RoundToInt` are exact, and
+  `AltBiomeWorldData.WorldSpaceToMapSpace` (`sub; div; add; conv.i4`) is a double chain. Examples:
+  `FloorToInt(-0.0001f)` gives -1 in the game and 0 on .NET; `RoundToInt(0.4999f)` gives 0 and 1;
+  `WorldSpaceToMapSpace(-8190.00048828125)` gives 340 and 341. **Inferred** for these three functions, from
+  the IL, a probe on the game's own runtime with that option, the option string, and the sister function
+  `MapSpaceToWorldSpace` (same IL shape), which SeedLab measured in the game (57 of 938 sector centres wrong
+  with float rounding, 0 with double); not yet observed live on the three themselves. SeedLab's port rounds
+  them to float first - a comment in its `ZoneMath.cs` said "the bias is added in float" - so it can be wrong
+  for a point a hair from a zone edge or a 12 m sector line (seedlab `history.md`, 2026-09-26). **Lesson:**
+  when one member of a family of functions is proven to keep double precision, audit its siblings with the
+  same IL shape at once.
 - **ILSpy's C# silently invents a float local for a value that only ever lives on the IL evaluation
   stack, and that hides the bug above.** `GetDeepNorthHeight` keeps `GetBaseHeight(..) + 0.1f` on the
   stack across the whole Perlin block and `dup`s it; ILSpy prints one ordinary float local `num` used
@@ -747,6 +1058,17 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   expression sits near a precision boundary, read the IL for `dup`, for a missing `stloc`, and for
   `conv.r8` on a float result — the decompiler cannot show any of the three.
   *(SeedLab adversarial numerics review, 2026-09-22; worlds `asdasdasd` and hold-out `testworldclaude`.)*
+- **Matching IL offsets and code sizes does not prove a method unchanged** (the 1.0.16 audit, 2026-09-26).
+  A same-size change - a different constant, a swapped operand - keeps every offset, so compare the IL op by op
+  with its operands. And a cited IL range is not always a method's end: SeedLab's spec cites
+  `AddRiverPoint` as "IL_0000-IL_005e", but IL_005e is a branch target, and `GetBiome`'s "IL_0103" is the
+  `conv.r8` after the load. Read what the citation points at before calling a mismatch.
+- **A Unity component property read at runtime does not prove what the component does** (2026-09-26). The
+  create-world input boxes report `characterValidation = Alphanumeric`, and this knowledge base recorded
+  that as the rule for typed seeds for four days. The game adds its own `onValidateInput` hook, and TextMesh
+  Pro's `Append` uses the hook **instead of** the property, so a world name with a punctuation mark and a space was
+  accepted. Before recording a property as behaviour, read the code that consumes it (valheim-worldgen
+  `seeds-and-world-files.md` 2.2).
 
 
 - **`UnityEngine.Color.black` is `(0, 0, 0, 1)`, and forgetting the alpha inverted a documented game
@@ -843,6 +1165,18 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
   ("The Prison") would have renamed the place - but the door is inactive in the prefab, and nothing in the
   dump says what enables it. A naming rule counts only a door that is active in the hierarchy, has a
   `m_targetPoint` and a non-empty caption (2026-09-24).
+- **Source recovered from a decompiled DLL is a reading aid until it compiles back to the same IL - and the
+  decompiler's rewrites are what stop it.** MobTracker 0.1.0 (2026-09-26, before the original source turned up)
+  recompiled cleanly from ILSpy's output, yet 10 of 64 methods differed from the DLL. Each was an ILSpy
+  rendering, not a code change: early returns shown as `if/else` (`if (!IsOpen) return;` became `if (IsOpen) {...}`),
+  a loop condition shown as a `break` (`k < n - 1 && _points.Count < 512`), `-half` shown as `0f - half` (IL `neg`
+  vs `sub`), `a.x = b.x = c` shown with an extra temporary, a lambda's parameter names lost (`delegate` with no
+  parameters), and a method-level local shown inside an `else` (it changes the locals' order). Also two
+  constructs that do not compile for net48: `MathF.PI` (use `Mathf.PI`; the product folds to the same float) and
+  `corners[^1]` (needs `System.Index`). Undo those, then prove it: a member-by-member, instruction-by-instruction
+  comparison (float operands by their bits, branch targets as instruction indices) against the original DLL. That
+  comparer is MobTracker's `tools/compare-il.ps1` (in its public repository); the same check later showed
+  the original source was that of a later build, not the installed one.
 
 ## 10. Offline tools, CLIs and the local web UI
 
@@ -1349,6 +1683,8 @@ may hand to more than one agent. Create a private subdirectory of it, copy the f
 re-hash the mutated file *after* the run and compare it with the hash taken *before* - treat any
 difference as "this run proves nothing" rather than as a result. `ls -la --time-style=full-iso` on the
 fixture directory shows a foreign restore at a glance (one common mtime across every file).
+**It happened again on 2026-09-26** (the 1.0.16 audit): parallel investigators shared the session
+scratchpad and one of them lost a file from it mid-task. Give every parallel agent its own subfolder.
 
 ## Testing Ctrl-C: the "ignore Ctrl-C" flag is inherited, so the test silently does nothing (2026-09-23)
 
@@ -1546,3 +1882,44 @@ exists; start again from the first seed?" - and reusing `confirmed` for it would
 always already said yes. The fix is a field of its own, `replaceCheckpoint`, sent only by the "Start again"
 button; without it the server answers 400 `checkpoint-exists` with the checkpoint's path and resume command
 (`EngineSearchEngine.cs`). Before treating a flag as consent, find every place that sets it.
+
+## A throughput figure measured under another GC mode is not the product's figure (2026-09-25, SeedLab)
+
+SeedLab's machine-report package, a standalone program with a default `runtimeconfig.json`, measured
+pre-generation at 21.3 seeds/s on an i7-12700K (20 threads) and 22.8 on the Ryzen 7 9800X3D (16). The same
+ceiling on two different CPUs was read as "a limit in the code" and nearly sent the performance work after a
+shared resource. The quiet-machine profile showed the cause: the package runs .NET's default workstation GC,
+while `vseed` ships `System.GC.Server: true`. `vseed profile --tier t4` reached 55.6 seeds/s at 16 workers under
+server GC, and 22.2 with `DOTNET_gcServer=0 DOTNET_gcConcurrent=1` (GC 51 % of wall) - the package's ceiling,
+reproduced. Pre-generation allocates about 49 MiB per seed, so the collector decides its scaling.
+
+What to do: a benchmark harness that is not the product must copy the product's GC settings (server,
+concurrent, heap count) from its `runtimeconfig.json`, and print the GC mode beside every throughput figure
+(`vseed profile` does: "server GC" / "workstation GC"). Before attributing a ceiling to code or hardware, run
+the product itself at 1 and N workers and read the GC share of wall time.
+
+**`HeapCount` is not the number of heaps in use** (2026-09-26, the review of the profiler's resource block).
+Under server GC with DATAS on (`GCDynamicAdaptationMode: 1`), `GC.GetConfigurationVariables()["HeapCount"]`
+read 16 at the end of every section; that is the configured maximum, not how many heaps DATAS was using, which
+this API does not report. `vseed profile` now prints it as `heap_count_max` ("up to 16 collector heaps").
+
+## A gate that passes when its input is missing is a gate that proves nothing (2026-09-26, SeedLab)
+
+**What happened.** After `groundtruth\` was lost and rebuilt, SeedLab's review planted missing files in a copy
+of it. `LocationLab gate` printed `GATE: PASS` with `worldgen-testworldclaude.log` absent (it printed
+`(no worldgen log at ...)` and returned 0, dropping 27 of the game's own counters and the alt-biome check);
+`vseed selftest` passed with a natives file missing (the natives suite is then not registered, and
+`vseed.log` shows `289 recorded values` instead of `264069`) and with a world's `.fwl2` missing (13 rows
+instead of 14). `selftest --report` then said the natives were "not beside this build" although they were,
+incomplete. A restore from an older copy, where the log had another name, would have passed silently.
+
+**What to do.** Read a PASS for its rows, not its last line: for SeedLab, `game log 27 types`, `alt-biomes ...
+all counters equal`, `V1c/<world>` twice, and `Passed with the generator goldens from ...\groundtruth\natives:
+264069 recorded values` in `vseed.log`. Make a missing input fail: `LocationLab` does since `ded6c94`
+(`MISSING <path>`, exit 1); `vseed selftest` still does not (seedlab `proofs-and-gates.md`).
+
+**Mutation tests on a copy need the binaries beside the copy.** SeedLab's natives finders fall back to a
+walk-up **from the binary's own folder** when the `groundtruth\natives` they found first is incomplete
+(`NativesSuite.cs:64-72`, `tests\SeedLab.Tests\NativesGoldens.cs:774-782`), so a binary built inside a SeedLab
+tree and run against a mutated copy silently reads the tree's intact files and passes. Copy the binaries
+beside the copy (or build from `git archive` elsewhere) and confirm from the log which path was read.

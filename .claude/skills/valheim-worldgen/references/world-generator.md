@@ -1,11 +1,11 @@
 # WorldGenerator: seed → biomes, terrain height, rivers
 
-> Researched 2026-09-22 against Valheim 1.0.15 by decompiling the shipped assemblies; every claim was then checked by an independent refute-by-default verifier, who corrected errors in place. Items marked **Unverified:** could not be settled from code. Re-check with `valheim-modding/scripts/decompile.ps1` after a game update.
+> Researched 2026-09-22 against Valheim 1.0.15 by decompiling the shipped assemblies; every claim was then checked by an independent refute-by-default verifier, who corrected errors in place. Items marked **Unverified:** could not be settled from code. Re-check with `valheim-modding/scripts/decompile.ps1` after a game update. **Re-verified unchanged on 1.0.16 on 2026-09-26** (section 9.1).
 
 Contents: 1. Lifecycle and threads · 2. The seed · 3. Initialization · 4. Base height ·
 5. Biome determination (5.1 straight biome edges) · 6. Terrain height · 7. Lakes, rivers, streams ·
 8. How the game uses it · 9. Determinism, the native functions, and everything measured against the
-game · 10. Modder notes and pitfalls · Unverified (and why)
+game (9.1 re-verified on 1.0.16) · 10. Modder notes and pitfalls · Unverified (and why)
 
 Build this was checked against: Valheim Steam build on Unity 6000.0.75. `WorldGenerator`, `World`, `AltBiomeWorldData`, `BiomeSector` and `HeightmapBuilder` are in `assembly_valheim.dll`. `DUtils`, `FastNoise`, `Utils` and `StringExtensionMethods` are in `assembly_utils.dll`. All of it was decompiled with ILSpy, and the key float and double points were checked against the raw IL with Mono.Cecil.
 
@@ -69,10 +69,12 @@ Sample outputs, computed by running the decompiled code under .NET: `"a"` → 37
   A-Z a-z 0-9 text space is sum(62^1..62^10) = 853,058,371,866,181,866 texts, which is 198,618,129.8
   texts per world and 198.6 million times more work for the same answer. Seven characters are enough to
   reach every int32; six reach 77.08 % of them, leaving **984,542,424** ints with no text of six
-  characters or fewer - seed 0, the menu world, among them. The create-world seed box takes **1-10
-  characters, `characterValidation` Alphanumeric** (measured from the live UI component, see
-  `references/seeds-and-world-files.md` 2.2), so every int32 SeedLab names can be typed back into the
-  game.
+  characters or fewer - seed 0, the menu world, among them. The create-world seed box takes **at most 10
+  characters**; its component reports `characterValidation` Alphanumeric, but the game's own
+  `onValidateInput` hook overrides that, so **which characters it accepts is Unverified** (the world-name box
+  provably accepts any printable character; `references/seeds-and-world-files.md` 2.2, corrected
+  2026-09-26). Every alphanumeric text is accepted either way, so every int32 SeedLab names can still be
+  typed back into the game; only the count of typeable texts may be larger than the A-Z a-z 0-9 figure.
 
 ## 3. Initialization from a World
 
@@ -272,7 +274,7 @@ Shared pieces. `U = (float)(x + 100000 + off3)` and `V = (float)(z + 100000 + of
 - The edge fade is `1 − clamp01((dist − 10150)/600)`. The pre-multiplier height is lerped towards −1 there, and a simplex factor in [0,1] multiplies it afterwards. Beyond 10500 m, `GetBiomeHeight` returns −400 regardless.
 - FastNoise cellular fBm: 5 octaves (2 if `cheap`) starting at 0.33, plus 3 octaves (2 if `cheap`) starting at 8.0 for lava. FastNoise simplex fractal at 0.075, raised to the power 1.4.
 - The lava mask is `lava = BlendOverlay(LerpStep(0.7, 1, Fbm(x'*.01, z'*.01, 3, 2, 0.5) × clamp01(Remap(ridge,0,0.5,0.5,1)))², lavaCellular) × clamp01((h − 0.15 − 0.02)/0.01)`, where x', z' are the untruncated Ashlands coordinates above, `Fbm` is the Perlin-based `DUtils.Fbm`, and `lavaCellular = clamp01(Remap(cellular8, −1,1, 0,1)^4 × 2)` from the 8.0-start cellular octaves. The dip is `Remap(P(x'*.05+5124, z'*.05+5000)², 0,1, 0.01,0.055)`. Then `h = Lerp(h, clamp(h − dip, 0.16, 5000), lava)`, and `mask.a = lava`.
-- `ZoneSystem.IsLavaPreHeightmap` uses `mask.a > 0.6`.
+- `ZoneSystem.IsLavaPreHeightmap` uses `mask.a > 0.6`. It reaches it through `GetBiomeHeight` with `cheap: false`, and its only callers are `RandomObject.Randomize` and `RandomSpawn.Randomize` - not location placement. `Minimap.GetMaskColor` passes `cheap: true` (1.0.16, 2026-09-26).
 (WorldGenerator.GetAshlandsHeight, ZoneSystem.IsLavaPreHeightmap / decompiled)
 
 **Pre-generation variants** are used only while rivers and streams are being placed, through `GetPregenerationHeight`:
@@ -295,7 +297,7 @@ Rivers only ever **lower** terrain, pulling the bed to 24–28 m, which is below
 
 Order: `FindLakes()` → `m_rivers = PlaceRivers()` → `m_streams = PlaceStreams(false)` → `PlaceStreams(true)`, whose return value is discarded (WorldGenerator.Pregenerate / decompiled). Only the seed-derived fields and `m_worldGenVersion` go in, so **rivers are deterministic from the seed and are not stored in the save.**
 
-- **Pre-generation is ~99.5 % of the cost of building a world, and nothing but height reads it.** Measured 2026-09-23 on the SeedLab port (AMD Ryzen 7 9800X3D): building a world and sampling its biomes on a 56×56 grid cost **299.3 ms per seed** with pre-generation and **1.5 ms per seed** without it. The only readers of `m_rivers` / `m_streams` / `m_riverPoints` / `m_lakes` are `GetRiverWeight` (i.e. `AddRivers`, reached from `GetHeight` / `GetBiomeHeight`) and the four public accessors `GetLakes/GetRivers/GetStreams/GetRiverPoints`; `GetBaseHeight` and `GetBiome` at its default arguments never touch them (`GetBiome` tests `GetBaseHeight`, not `GetHeight`, unless `waterAlwaysOcean: true` is passed). The seven RNG draws all happen **before** `Pregenerate()` and pre-generation is the last thing the constructor does, so running it lazily on first use changes nothing observable - proven bit-exact (rivers, streams, lakes, river-point grid and 64,512 `GetHeight` samples) in `SeedLab.Search.Tests`. This matters for any tool that asks a biome-only question about many seeds. (WorldGenerator..ctor, WorldGenerator.GetBiome, WorldGenerator.GetRiverWeight / decompiled; measured)
+- **Pre-generation is ~99.5 % of the cost of building a world, and nothing but height reads it.** Measured 2026-09-23 on the SeedLab port (AMD Ryzen 7 9800X3D): building a world and sampling its biomes on a 56×56 grid cost **299.3 ms per seed** with pre-generation and **1.5 ms per seed** without it. The only readers of `m_rivers` / `m_streams` / `m_riverPoints` / `m_lakes` are `GetRiverWeight` (i.e. `AddRivers`, reached from `GetHeight` / `GetBiomeHeight`) and the **three** public accessors `GetLakes/GetRivers/GetStreams` (`m_riverPoints` is private and has no accessor; `GetRiverPoints` is SeedLab's own accessor, not a game member - corrected 2026-09-26, this said "four public accessors", checked with Cecil on 1.0.16); `GetBaseHeight` and `GetBiome` at its default arguments never touch them (`GetBiome` tests `GetBaseHeight`, not `GetHeight`, unless `waterAlwaysOcean: true` is passed). The seven RNG draws all happen **before** `Pregenerate()` and pre-generation is the last thing the constructor does, so running it lazily on first use changes nothing observable - proven bit-exact (rivers, streams, lakes, river-point grid and 64,512 `GetHeight` samples) in `SeedLab.Search.Tests`. This matters for any tool that asks a biome-only question about many seeds. (WorldGenerator..ctor, WorldGenerator.GetBiome, WorldGenerator.GetRiverWeight / decompiled; measured)
 - **FindLakes:** samples a 128 m grid from −10000 to 10000 on both axes (157×157), inside radius 10000, and keeps points where `GetBaseHeight < 0.05` (≈10 m). Those points are merged with `MergePoints(range 800)`. MergePoints repeatedly averages the current point with its closest neighbour within 800 m: `(v+p)*0.5`, which is not a true centroid, and the list order changes through swap-removes. "Lakes" here are simply low basins, **including open sea**. (FindLakes, MergePoints / decompiled)
 - **PlaceRivers:** `Random.InitState(m_riverSeed)`. It works through a copy of the lake list. On each iteration it takes the first remaining lake and links it to a random valid lake within **2000 m**. If there is none *and* that lake has no river yet (as either end), it tries **5000 m** instead. When no link is found, the lake is removed from the list. Candidate ends are searched in the full `m_lakes` list (including lakes already removed from the working copy), and the loop runs only `while (count > 1)`, so the last remaining lake is never processed as a start. The result is that almost every pair of lakes within 2000 m with a valid line gets a river (validity is tested from the starting lake's side, and the 128 m sampling is not exactly symmetric), with at most one 5000 m fallback link started by each lake.
   - A link is valid if it is not a duplicate and `IsRiverAllowed` holds: sampling the base height every 128 m along the straight line, **no sample may exceed 0.4** and **at least one sample must exceed 0.05** (the line has to cross land).
@@ -470,6 +472,57 @@ output, and the two earlier oracles (minimap colours, binary16 heights) could no
   that sit in a river or stream. A fresh world is the better oracle: nothing has been pruned by
   exploration, so the unplaced candidates are there too.
 
+### 9.1 Re-verified on Valheim 1.0.16 (2026-09-26)
+
+**Unchanged from 1.0.15**: every member this document describes for biomes, heights, rivers, lakes and
+streams (1.0.16 = Steam build 25527674, `assembly_valheim` `96cfc004...`, `assembly_utils` `95810ce3...`).
+Method: the 1.0.16 IL and decompile compared with SeedLab's port statement by statement; every IL code size
+equals the extent SeedLab's spec 01 recorded for 1.0.15; about 100 cited IL offsets still carry the cited
+opcode and operand; the literal and call sequences are equal; FastNoise's `CELL_2D`/`GRAD_2D` tables are
+bit-identical; all 55 of the port's citations land on the same members; the river code was read op by op,
+every `Random` draw in order. New worlds still get world-gen version 2, and no game data file feeds any of
+it. Then proven on output: SeedLab's terrain gates pass on 1.0.16 worlds (seedlab `proofs-and-gates.md`),
+and the menu-seed generator captures of dumper run 7 (`MWd8eV6svz`, `hnBd9gJf2G`) are identical to 1.0.15's
+apart from the stamp, their river-point files byte-identical. Sources: the audit's reports
+(seedlab `history.md`, the 1.0.16 audit). **Record next time:** matching sizes
+and offsets cannot catch a same-size change such as a new constant, so the IL was also read op by op
+(valheim-modding `pitfalls.md` section 9).
+
+IL code sizes in 1.0.16 (bytes; two figures = two overloads):
+- `WorldGenerator`: `.ctor` 452, `VersionSetup` 64, `Pregenerate` 40, `WorldAngle` 30, `IsAshlands` 47,
+  `IsDeepnorth` 63, `GetAshlandsOceanGradient(f,f)` 60, `GetBiome(f,f,f,b)` 503, `GetBiome(Vector2s)` 58,
+  `GetBiomeArea(Vector2s)` 281, `GetBaseHeight` 1347, `AddRivers` 125, `GetHeight(f,f)` 29,
+  `GetPregenerationHeight` 29, `GetBiomeHeight` 471, `GetMarshHeight` 227, `GetMeadowsHeight` 410,
+  `GetForestHeight` 327, `GetMistlandsHeight` 652, `GetPlainsHeight` 407, `GetMenuHeight` 290,
+  `GetAshlandsHeightPregenerate` 341, `GetAshlandsHeight` 1395, `GetOceanHeight` 10, `BaseHeightTilt` 113,
+  `GetSnowMountainHeight` 414, `GetDeepNorthHeightPregenerate` 367, `GetDeepNorthHeight` 533,
+  `CreateAshlandsGap` 94, `CreateDeepNorthGap` 97, `DeepNorthWaveFade` 61, `GetForestFactor` 40, `.cctor` 182.
+- Rivers: `FindLakes` 155, `MergePoints` 125, `FindClosest` 68, `PlaceStreams` 367, `FindStreamEndPoint` 141,
+  `FindStreamStartPoint` 105, `PlaceRivers` 358, `FindRandomRiverEnd` 128, `IsRiverAllowed` 115,
+  `RenderRivers` 515, `AddRiverPoint` 125 / 55, `InsideRiverGrid` 106, `GetRiverGrid` 64, `GetRiverWeight` 226,
+  `GetWeight` 182.
+- `DUtils`: `Length` 18 / 13, `BlendOverlay` 74, `Lerp` 43 / 46, `LerpStep` 18 / 13, `SmoothStep` 48,
+  `MathfLikeSmoothStep` 59, `Clamp01` 46, `Fbm` 26 / 69 / 79, `Remap` 17, `InverseLerp` 27, `PerlinNoise` 10 / 8.
+  `Utils`: `LerpStep(float)` 13, `Clamp01(float)` 30.
+- `FastNoise`: `.ctor(int)` 130, `SetSeed` 8, `SetFractalOctaves` 14, `CalculateFractalBounding` 65,
+  `FastFloor` 20, `FastRound` 38, `Hash2D` 43, `GradCoord2D` 74, `GetSimplexFractal(d,d)` 84,
+  `SingleSimplexFractalFBM(d,d)` 100, `SingleSimplex(int,d,d)` 409, `GetCellular(d,d)` 49,
+  `SingleCellular(d,d)` 679.
+
+IL facts read on 1.0.16 (they hold for 1.0.15 too, since the code is unchanged):
+- `.ctor` clears the **static** `s_cachedBiomes` and `s_cachedBiomeAreas` on every construction
+  (IL_007a-0089). The static `m_noiseGen` is configured only in `.ctor`: `SetFractalOctaves` and `SetSeed` have
+  one caller each (`.ctor`), and `SetFrequency`, `SetFractalGain`, `SetFractalLacunarity` and
+  `SetCellularJitter` have none, so no call order can change the noise state.
+- `WorldGenerator.RiverAdd`: `All` = 0, `SkipDeepNorth` = 1, `OnlyDeepNorth` = 2 (RenderRivers' rule depends on them).
+- `GetMeadowsHeight` and `GetPlainsHeight` keep the raw `GetBaseHeight` return on the IL stack (IL_0008) and
+  `dup` it at IL_00cb. Because it is a raw call return, `k` computed from it equals `(double)baseHeight` -
+  unlike DeepNorth's `+0.1f` stack copy (valheim-modding `pitfalls.md` section 9).
+- `GetBaseHeight` and `GetBiomeHeight` declare `AltBiome`/`HeightmapExtras` locals that no instruction uses.
+  Whether 1.0.15 declared them too is unknown; the code sizes are equal.
+- `RenderRivers` still never invalidates the single-entry river cache. The cache's only writers are `.ctor`,
+  `CleanCachedRiverData` (points only) and `GetRiverWeight` (the stale-cache note in section 10 stands).
+
 ## 10. Modder notes and pitfalls
 
 - **Accessibility:**
@@ -486,7 +539,7 @@ output, and the two earlier oracles (minimap colours, binary16 heights) could no
   - The `waterAlwaysOcean` path compares `GetHeight` (metres) against `oceanLevel` (0.02 by default). No vanilla caller passes `true`.
   - `GenerateBiomes()` is dead code that would throw; `GetEdgeHeight` and `FindClosestRiverEnd` are dead code.
   - (Related, in `AltBiomeWorldData.RandomBiomeFromBiomes`: Plains maps to BlackForest, the Ocean branch tests the Meadows flag, and `Range(0, num-1)` never picks the last flag.)
-- **Stale river cache (analysis, refined 2026-09-22):** the single-entry cache (`m_cachedRiverGrid`/`m_cachedRiverPoints`) is not invalidated when `RenderRivers` replaces a cell's `RiverPoint[]` (it always allocates a *new* array) or adds a new key. `FindLakes` and `PlaceRivers` never call `AddRivers`, so the cache is first filled during `PlaceStreams(false)`; it can therefore go stale at exactly two points — the first `GetRiverWeight` of `PlaceStreams(true)`, and the first `GetHeight` after pre-generation finishes — and only when that query lands in the one cached 64 m cell (≈1e-5 per world). It self-heals on the next query elsewhere. Negligible in play, but an external port that wants bit-exact agreement must replicate the cache, not "fix" it.
+- **Stale river cache (analysis, refined 2026-09-22):** the single-entry cache (`m_cachedRiverGrid`/`m_cachedRiverPoints`) is not invalidated when `RenderRivers` replaces a cell's `RiverPoint[]` (it always allocates a *new* array) or adds a new key. `FindLakes` and `PlaceRivers` never call `AddRivers`, so the cache is first filled during `PlaceStreams(false)`; it can therefore go stale at exactly two points — the first `GetRiverWeight` of `PlaceStreams(true)`, and the first `GetHeight` after pre-generation finishes — and only when that query lands in the one cached 64 m cell (≈1e-5 per world). It self-heals on the next query elsewhere. **The stale state itself is common** (measured 2026-09-26 in SeedLab's bit-exact port, `river-golden`): 2 of the first 64 pilot-order worlds (#18 and #41, key `0xA17A25EED10C5117`) end pre-generation with a stale cache, and the stale points do answer the first query at that cell's centre. So "≈1e-5 per world" is not how often the state occurs; SeedLab's 2026-09-25 profiling report reads it as the size of the effect on heights (not re-derived here). Negligible in play, but an external port that wants bit-exact agreement must replicate the cache, not "fix" it.
 
 ## Unverified (and why)
 

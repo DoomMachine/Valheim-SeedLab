@@ -7,7 +7,11 @@ description: Verified knowledge of how Valheim builds and stores worlds - how th
 
 Researched 2026-09-22 against **Valheim 1.0.15** by decompiling the shipped assemblies; every claim was
 then checked by an independent refute-by-default verifier (442 claims checked across the five
-research documents, 66 corrected in place). For how to read game code, the toolchain and pitfalls, use
+research documents, 66 corrected in place). **Re-verified on Valheim 1.0.16 on 2026-09-26** for
+everything SeedLab reproduces (biomes, heights, rivers, location placement, seeds, save layouts): the code is
+unchanged and SeedLab matches four worlds 1.0.16 created; each reference file says what it re-checked. The
+create-world seed box's accepted characters are **Unverified** (`references/seeds-and-world-files.md`
+2.2). For how to read game code, the toolchain and pitfalls, use
 the **valheim-modding** skill; run `valheim-modding/scripts/check-game-version.ps1` first —
 world-generation details are exactly the kind of thing a game update changes.
 

@@ -252,6 +252,18 @@ start). A vseed started while another runs writes `vseed.log.1` (to `.4`), remov
 **Built 2026-09-25** (`25f2a9f`), replacing `95bba24`'s single log; the size cap and the append when
 `vseed-prev.log` is held are the implementer's choices, recorded in history.md.
 
+**Amended by the user on 2026-09-26** (after reporting "There is no log being saved for an operation"; the
+session log existed but held one line for a whole web search): the two session logs stay exactly as above,
+**and every search also records itself in them** (asked for, refused, started with its settings and the
+workers really used, progress at a bounded rate, a stop and who asked, how it ended, the results file, the
+checkpoint and the resume command) - web and CLI alike - **and keeps its own small log file beside its
+checkpoint** (`<checkpoint>.log`, the same lines). The page shows where both logs are and reports log
+problems itself, not only in the server window. Asked as a choice; the user picked the per-search file over
+"session log only". **What happens to that file was settled the same day (D3, section 17):** a resume appends
+to it; when the search finishes it moves beside its results file, or is removed if there is none; it is not
+kept indefinitely. (Corrected 2026-09-26: this said it is "kept as long as the checkpoint and removed with it",
+which would delete it the moment a search finishes.) **Not built yet** (paused, unmerged work in progress).
+
 ## 15. Performance direction (discussed 2026-09-24)
 
 Measured, not assumed (`docs\measurements.md`): the wall-clock limit is the per-seed work the game's own
@@ -318,10 +330,12 @@ records, non-FMA3 CPUs stay fail-closed, and the profile decides whether scalar 
   10.0.26100.9444): **93/93 checks PASS at four levels** - numerics 271/271, natives 263,778/263,778, 7 world
   fingerprints equal to the 9800X3D's. So SeedLab is bit-identical across Intel/AMD and Windows 10/11 C runtimes for
   everything the report compares. Still open: CPUs without FMA3, `libm-dense` on Windows 11 (the package predates
-  it), hybrid per-core-type timing. **Performance lead:** its pre-generation stops at 21.3 seeds/s on 20 threads -
-  the 9800X3D stops near 21-22 from 8 threads up. **Unverified:** that one ceiling on two CPUs points at the code
-  (allocation / GC / a shared resource) rather than the hardware - nothing has profiled it yet; the quiet-machine
-  profile's P2 step is there to find it. The report is kept with the author's working notes;
+  it), hybrid per-core-type timing. **Performance lead, resolved 2026-09-25 (quiet-machine profile):** the package's
+  pre-generation stops at 21.3 seeds/s on 20 threads and 22.8 on the 9800X3D's 16 because the package runs .NET's
+  default *workstation* GC; `vseed` runs the server GC and reaches 55.6 seeds/s at 16 workers (7.8x), and forcing
+  workstation GC on `vseed` reproduces the 22.2 stall (GC 51 % of wall). What remains is allocation: 48.8 MiB per
+  seed (river render 21.9, stream render 25.9), GC 36 % of wall at 16 workers under server GC - reusing those
+  buffers per worker is the lever (history.md, "the quiet-machine CPU comparison"). The report is kept with the author's working notes;
   `docs\cpu-compatibility.md` records it (`ab45aa2`, merged into main as `81e3f97` on 2026-09-25). The package
   itself: https://github.com/DoomMachine/Valheim-SeedLab-IntelTest, release v1.0.0 (history.md).
 - **Intel SDE (Software Development Emulator) - APPROVED by the user, deferred** (*"Log the SDE for Intel as a
@@ -335,3 +349,95 @@ records, non-FMA3 CPUs stay fail-closed, and the profile decides whether scalar 
   run - hardware and OS version only, nothing personal - and no game data in it (Iron Gate's content).
   **Built and released 2026-09-25** as `Valheim-SeedLab-IntelTest` v1.0.0 (history.md), a separate program built
   from SeedLab `11aeb8f`; since `e4b9079`, `vseed selftest --report` gives a comparable report from SeedLab itself.
+- **Boss spawns per world - a claim to test, noted by the user 2026-09-25 ("just a note, not a prompt to start"):**
+  the number of places each boss can spawn in one world, possibly the maximum:
+
+  | boss | claimed spawns |
+  |---|---|
+  | Eikthyr, Moder | 3 |
+  | The Elder, Yagluth | 4 |
+  | Bonemass, The Queen, Fader | 5 |
+
+  **Checked for 1.0.15 on 2026-09-26 (in passing, by the web-page diagnosis):** SeedLab's 5,000-seed count
+  sample (`data\1.0.15-59f53fb5\count-sample.bin`, placement proven bit-exact against the game) places exactly
+  Eikthyr 3, the Elder 4, Bonemass 5, Moder 3, Yagluth 4, the Queen 5 and **Fader 3** in every one of the
+  5,000 worlds (min = max, no world short), matching each location's `m_quantity` in the dump
+  (`FaderLocation` quantity 3) - 27 altars per world. So the claim holds for six bosses and is **wrong for
+  Fader (3, not 5)**. Not yet checked on Valheim 1.0.16 (installed 2026-09-25), whose data needs a new dump.
+  Why it matters: it bounds which boss goals are legal. A goal asking for more of a boss than a
+  world can hold must be refused before a scan, like every impossible goal (section 9's refusal rule and the
+  feasibility checker). When it is taken up, check: each boss location's quantity in the `data\` snapshot (the
+  game's placement tries to place that many and may place fewer, so the number is a ceiling and a world can
+  have less); the counts SeedLab places across a large sample of seeds (the smallest and largest seen, how often
+  a world falls short); the three reference worlds against the game's own placement; which location prefab each
+  boss's altar or summoning spot is; and whether the goals and presets already cap these counts.
+
+## 17. No administrator rights, and limits checked locally (decided 2026-09-26)
+
+The user, after choosing 20 threads in the web page on a 16-thread machine and seeing nothing check it:
+*"a check must be made locally whether the number of threads requested is possible. This check must be made
+gracefully, as much as possible, without requiring explicit admin access. This should be a priority for the
+entire application - while I am the admin user of the machine and OS, some users might not be, or may be
+using restricted environments for additional security."*
+
+- **Everything works without administrator rights** and in restricted environments: limited accounts, CPU
+  affinity masks, job objects, containers, group policy, redirected or read-only folders. Nothing asks for or
+  relies on elevation (the one-click scripts already refuse to run elevated; only installing the .NET SDK
+  asks, through Windows itself).
+- **A limit the user can ask past is checked before the work starts** - a thread count above what this
+  process may use, a folder that cannot be written - and handled gracefully: a plain-English note saying
+  what is used instead and why, the same in the page, the CLI and query files; never a crash, never silent
+  oversubscription.
+- **Read only what a normal user may read**: `Environment.ProcessorCount`, the process affinity mask, job or
+  cgroup limits where readable; when something cannot be read, say so and fall back safely.
+- Same day, the user on the web page's goal options: a goal on a group must say unmistakably whether it means
+  any ONE member, EVERY type (one place each) or EVERY candidate place; the feasibility check refuses only
+  what is impossible for that meaning, and every option in the page's drop-downs gets a plain-English
+  explanation (section 9's refusal rule; the fixes are in history.md once built).
+- **The user's answers of 2026-09-26** (asked after the web diagnoses; they settle the web fix):
+  1. **"Every single place" (`all_candidates_distance`) on a group:** a member that can place but has no place
+     in a world makes the goal fail (as "one of each kind" already does), so "every boss altar within 2,500 m"
+     is provably impossible and refused, naming Yagluth (2,900 m), the Queen (5,900 m) and Fader (7,900 m). A
+     deliberate definition change: the value differs only in worlds where a member places zero. Members that can
+     never place (e.g. `GoblinCamp2_1`) are left out of the group for this metric.
+  2. **Threads above what this process may use are clamped**, with a plain note - page, CLI and query files alike.
+  3. **Must-haves that can only mean "is it there at all" stay refused**, on the page too, with a plain reason
+     and no command-line flag the page cannot pass.
+  4. **The time estimate respects "Stop after"**: the budget plus its bounded overrun, and how much of the asked
+     seeds fits; a yes is asked only when that capped time is long.
+  5. (A proved false refusal, fixed without asking under the standing rule) distances from SPAWN may reach
+     10,500 + 5,100 = 15,600 m; 10,530 m was measured in a real world.
+  6. **When the installed game is another build, the refusal stays, in plain words**: what happened (Valheim
+     was updated), what still works (biomes, heights, rivers, maps), what does not (bosses, traders, dungeons
+     and other places), and what to do (the game-data step in `docs\game-data.md`), with no hash in the first
+     sentence. The check itself is never weakened. The web page must fail such a request at once, not spin.
+  7. The per-search log of decision 14 (as amended the same day).
+- **The user's answers to the design's three questions (2026-09-26, after the design)** - they override its
+  defaults:
+  - **D1, the automatic block size for slow searches: about one minute per group.** Automatic =
+    `min(256, today's count rule, max(1, floor(60 s / s_high)))`, `s_high` being the estimate's per-seed,
+    per-worker time; fast searches keep up to 256, the plan says which rule applied, a resume keeps the
+    checkpoint's size, and 256 stays the ceiling (the 2026-09-24 decision).
+  - **D2, "Stop after" (the time limit): a short grace period.** At the limit, a group that can finish within
+    the grace is finished and saved; every other unfinished group is thrown away and checked again if the
+    search is continued. Grace = `max(30 s, 25 % of the limit)` from the limit; after it, every worker stops
+    after the seed it is on. A limit is still not a floor. The overrun is bounded by the grace plus one seed
+    plus the final save, and the plan says so. The page and the CLI plan warn before the start when the
+    limit is too short to save anything.
+  - **D3, a search's own log** (the user: *"any such logs should not be completely persistent ... A resume
+    option should utilize the log, but if a brand new search starts there should be a warning about an
+    operation that can be resumed"*): beside the checkpoint while resumable, a resume appends to it; at the
+    end it moves beside the results file (`<results file>.log`) or is removed if there is none; it is
+    replaced or removed with that results file, removed by `vseed clean` and the uninstall, and search logs
+    in SeedLab's folders get a retention cap (for example the newest 20, or 64 MB in all, oldest first, at a
+    session start; stated in `docs\limits.md` and the plan), each still capped at 1 MiB of progress lines.
+    **Starting a new search while a resumable one exists warns** and offers: continue that search (its
+    name, progress and last run), start the new one anyway - which deletes the earlier search's saved
+    progress and log, said plainly before the yes - or cancel; the CLI asks, and with no one to answer
+    refuses and names `--resume` / `--discard-previous`. The same-query "checkpoint exists" dialog becomes
+    one case of this.
+- **Status, 2026-09-26 evening: none of 1-7 or D1-D3 is on `main` or reviewed.** The implementer was stopped
+  at 16:34 for the data rebuild; its unfinished, untested work (stop, thread-count and estimate code, 30 files)
+  is preserved as a work-in-progress commit on a local branch (after a commit that pins every preset's query
+  hash), "not for merging as is". history.md, "the web page
+  diagnosed", has what was proved and the plan.

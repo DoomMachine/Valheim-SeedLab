@@ -1,6 +1,6 @@
-# Seeds, World Files and Character Profiles (Valheim 1.0.15, network version 40)
+# Seeds, World Files and Character Profiles (Valheim 1.0.15 and 1.0.16, network version 40)
 
-> Researched 2026-09-22 against Valheim 1.0.15 by decompiling the shipped assemblies; every claim was then checked by an independent refute-by-default verifier, who corrected errors in place. Items marked **Unverified:** could not be settled from code. Re-check with `valheim-modding/scripts/decompile.ps1` after a game update.
+> Researched 2026-09-22 against Valheim 1.0.15 by decompiling the shipped assemblies; every claim was then checked by an independent refute-by-default verifier, who corrected errors in place. Items marked **Unverified:** could not be settled from code. Re-check with `valheim-modding/scripts/decompile.ps1` after a game update. **Re-verified on 1.0.16 on 2026-09-26**: the seed hash, `World` set-up, `GenerateSeed`, the world UID, the version constants and the `.fwl2`/`.db2`/`.chunks`/`.fch` layouts were re-decompiled and are unchanged, and a `.fwl2`, `.db2` and `.chunks` that 1.0.16 wrote parse with 0 bytes left over (seedlab `history.md`, the 1.0.16 audit).
 
 **Summary**
 - The seed text the player types (`World.m_seedName`) becomes the integer seed via `m_seed = seedName == "" ? 0 : seedName.GetStableHashCode()` (the `World(string name, string seed)` constructor). The hash is a public extension method in `assembly_utils.dll` (`StringExtensionMethods.GetStableHashCode`), and it gave the stored seed exactly for two real saves on this machine.
@@ -9,7 +9,7 @@
 - **This build has a new save format ("chunked", world version 40 and later).** Each world is a folder `worlds_local/<World>/` holding `_main.<N>.fwl2`, `_main.<N>.db2`, `_main.<N>.chunks`, `_main.<N>.ok` and `*.chunk` files. The old `<World>.fwl` / `<World>.db` pair is still loaded, but only for migration.
 - Map exploration and personal pins are stored **per character, per world UID**, in the client's `.fch` file: `PlayerProfile.m_worldData[worldUID].m_mapData`. They are never stored in the world save. Cartography-table shared map data is stored in the world, in the MapTable piece's ZDO.
 - World modifiers and presets are stored as strings in `World.m_startingGlobalKeys` in the `.fwl2` file, for example `"resourcerate 300"` and `"preset combat_default:...:resources_most:..."`.
-- Game version is **1.0.15**. Current format versions: world 41 (DeepNorth), player profile 46 (DeepNorth), map data 8, shared map 3, player data 33, item 109, world generator 2, network 40.
+- Game version is **1.0.16** since 2026-09-25 (it was 1.0.15). Current format versions, **unchanged by 1.0.16**: world 41 (DeepNorth), player profile 46 (DeepNorth), map data 8, shared map 3, player data 33, item 109, world generator 2, cached minimap 1, network 40.
 - Clients receive `m_name`, `m_seed`, `m_seedName`, `m_uid` and `m_worldGenVersion` from the server in `ZNet.RPC_PeerInfo`. Every client, and every client-side mod, can therefore rebuild terrain and biomes from the seed.
 
 Evidence tags: *(Type.Member / decompiled)* means ILSpy output of the shipped DLL. *(verified on disk)* means I parsed a real save on this machine with a script written from the decompiled layout. *(runtime log)* means `Player.log`.
@@ -20,7 +20,7 @@ Evidence tags: *(Type.Member / decompiled)* means ILSpy output of the shipped DL
 
 | Constant | Value | Source |
 |---|---|---|
-| `Version.CurrentVersion` | `GameVersion(1, 0, 15)`, so `ToString()` returns `"1.0.15"` | *(Version.CurrentVersion / decompiled)*; runtime log line `Valheim version: 1.0.15 (network version 40)` |
+| `Version.CurrentVersion` | `GameVersion(1, 0, 16)` in 1.0.16, so `ToString()` returns `"1.0.16"` (it was `GameVersion(1, 0, 15)`); **the only constant in this table 1.0.16 changed** | *(Version.CurrentVersion / decompiled 1.0.16, 2026-09-26)*; runtime log line `Valheim version: 1.0.16 (network version 40)` |
 | `Version.c_networkVersion` | `40u` | *(Version / decompiled)* |
 | `Version.c_WorldVersion` | `World.DeepNorth` = **41** | *(Version / decompiled)* |
 | `Version.c_PlayerVersion` | `Player.DeepNorth` = **46** | *(Version / decompiled)*; real `.fch` starts with 46 *(verified on disk)* |
@@ -54,7 +54,7 @@ for (int i = 0; i < str.Length && str[i] != 0; i += 2) {
 return num + num2 * 1566083941;
 ```
 - The arithmetic is **unchecked 32-bit and wraps around**. The IL uses plain `add`/`mul`/`shl`, not the `.ovf` forms. *(IL dump of StringExtensionMethods.GetStableHashCode)*
-- It is two interleaved djb2-xor streams, one over even-indexed chars and one over odd-indexed chars, combined as `a + b*1566083941`. A `'\0'` character ends the string. Chars are UTF-16 code units.
+- It is two interleaved djb2-xor streams, one over even-indexed chars and one over odd-indexed chars, combined as `a + b*1566083941`. A `'\0'` character ends the string. Chars are UTF-16 code units. **This skill's `scripts/valheim_saves.py` hashes Python code points (`ord(s[i])`)**, so it gives the wrong seed for a text holding a character outside the Basic Multilingual Plane (an emoji is two UTF-16 code units in C#, one code point in Python); correct for every other text (read 2026-09-26; SeedLab's C# hash is correct for any text).
 - **No normalization.** The seed is case-sensitive, and whitespace is significant. `FejdStartup.OnNewWorldDone` passes `m_newWorldSeed.text` straight into `new World(name, seed)`. *(FejdStartup.OnNewWorldDone / decompiled)*
 - **An empty seed text gives seed 0.** The same is true for the menu, editor and dev worlds: `m_seed = ((!(m_seedName == "")) ? m_seedName.GetStableHashCode() : 0)` *(World..ctor(string,string) / decompiled)*.
 - Different seed texts can hash to the same int. The world will then be identical, because generation uses only the int (§2.3).
@@ -71,7 +71,8 @@ independent pieces of ground truth the game itself wrote:
 - the `int seed` in the first 4 bytes of `cacheMinimapMeta` for both local worlds -
   `"MWd8eV6svz"` -> `-1772362158` (asdasdasd) and `"hnBd9gJf2G"` -> `319486907` (testworldclaude);
 - **47 location prefab names with the hashes the game logged for them**
-  (`groundtruth/location-names.csv`) - all 47 reproduced exactly, which is the
+  (`groundtruth/location-names.csv` as it was then; that file was lost on 2026-09-26 and
+  the rebuilt one holds 35 names from the 1.0.16 logs) - all 47 reproduced exactly, which is the
   broadest confirmation on this machine that the port is the game's function and not merely a
   plausible djb2 variant;
 - the spec 06 vector set, including `"a"` -> 372029373, `"abc"` -> 1099313834, `"HHcLC5acQt"` ->
@@ -86,12 +87,16 @@ A mod can simply call `"text".GetStableHashCode()`. It is public in assembly_uti
 It builds 10 characters, each `UnityEngine.Random.Range(0, 59)` from the alphabet `abcdefghijklmnpqrstuvwxyzABCDEFGHIJKLMNPQRSTUVWXYZ023456789`. The alphabet has no `o`, `O` or `1`. *(World.GenerateSeed / decompiled)*
 - Called by `FejdStartup.OnWorldNew` to fill the seed box. Also called by `World.GetCreateWorld` when a named world does not exist yet, or exists but loads with any `SaveDataError` (it then creates a new world under that name with a random seed). This is the dedicated-server `-world` path.
 - There is **no `-seed` command-line argument**. `FejdStartup.ParseServerArguments` accepts `-world -name -port -password -savedir -public -logfile -crossplay -instanceid -backups -backupshort -backuplong -saveinterval -resetmodifiers -preset -modifier -setkey`. A dedicated server that creates a world always uses a random seed text. *(FejdStartup.ParseServerArguments / decompiled)*
-- **Unverified:** in this client DLL, `ParseServerArguments` has no IL callers (xref scan). It is presumably called only in the separate dedicated-server build, which is not installed here.
-- The UI requires a world name of at least 5 characters (`m_newWorldDone.interactable = m_newWorldName.text.Length >= 5`) and places no rule on the seed **in code**. The limits are prefab data on the input components, and they were read out of the running game 2026-09-22 (`seed-input.json` in the SeedLab data snapshot; **settled, was Unverified**):
-  - `FejdStartup.m_newWorldSeed` (`GUIFramework.GuiInputField`): `characterLimit` **10**, `characterValidation` **Alphanumeric**.
-  - `m_newWorldName`: `characterLimit` **20**, also Alphanumeric.
+- In this client DLL `ParseServerArguments` has no IL callers (xref scan). **The dedicated server runs it:** its own `assembly_valheim.dll` calls `ParseServerArguments()` from `FejdStartup.Awake`, and the method's IL is identical in both DLLs, so everything above holds for the server (decompiled and IL-compared 2026-09-26, 1.0.16; valheim-modding `multiplayer.md` section 1.4). (**Corrected 2026-09-26:** this was Unverified, "presumably called only in the separate dedicated-server build".)
+- The UI requires a world name of at least 5 characters (`m_newWorldDone.interactable = m_newWorldName.text.Length >= 5`) and places no rule on the seed **in code**. The components' own properties were read out of the running game (`seed-input.json` in the SeedLab data snapshot, 2026-09-22; the same in the 1.0.16 dump, run 7 on 2026-09-26: `seed field characterLimit = 10, validation = Alphanumeric, contentType = Alphanumeric`):
+  - `FejdStartup.m_newWorldSeed` (`GUIFramework.GuiInputField`): `characterLimit` **10**, `characterValidation` Alphanumeric.
+  - `m_newWorldName`: `characterLimit` **20**, `characterValidation` Alphanumeric.
 
-  So a typed seed really is **1-10 characters of A-Z a-z 0-9**, which is the 853,058,371,866,181,866-text space of 2.4 — and since 7 characters reach every int32, every world a tool can name is typeable. Nothing *enforces* this on a seed that arrives another way: a dedicated server's world, a `.fwl2` edited by a tool, or any string passed to `new World(name, seed)` may be any UTF-16 text, and `GetStableHashCode` will hash it.
+  **But `characterValidation` is not what the game enforces** (corrected 2026-09-26; this said "a typed seed really is 1-10 characters of A-Z a-z 0-9", read from the property alone). `GuiInputField.Start` adds `onValidateInput += ValidateLimits`, and `TMP_InputField.Append(char)` calls `onValidateInput` **instead of** `characterValidation` whenever that hook is set. `ValidateLimits` checks only `characterLimit` and surrogates, so by the code these boxes accept any character at or above U+0020 except U+007F, surrogate pairs included; only `characterLimit` is enforced (by `Insert`). The Alphanumeric value is a property nothing uses. *(GuiInputField.Start / ValidateLimits, TMP_InputField.Append / decompiled 1.0.16)*
+  - **World-name box: proven live.** A world whose name holds a punctuation mark and a space was created through `OnNewWorldDone` on 2026-09-25, and its files read cleanly.
+  - **Seed box: Unverified** which characters it accepts. It is the same component class, so the code says the same, but no seed with a non-alphanumeric character has been typed and checked. Whether 1.0.15 behaved the same is also **Unverified**: `gui_framework.dll` was rewritten by the 1.0.16 update (`Unity.TextMeshPro.dll` was not), and no 1.0.15 copy survives.
+
+  So a typed seed is at most 10 characters. Every A-Z a-z 0-9 text of 1-10 characters (the 853,058,371,866,181,866-text space of 2.4) is accepted, and since 7 characters reach every int32, every world a tool can name is typeable; if the seed box accepts more characters, the number of typeable texts is larger, while the number of worlds stays 2^32. Nothing enforces any of this on a seed that arrives another way: a dedicated server's world, a `.fwl2` edited by a tool, or any string passed to `new World(name, seed)` may be any UTF-16 text, and `GetStableHashCode` will hash it.
 
 ### 2.3 How the seed is consumed
 ```csharp
@@ -248,7 +253,7 @@ return persistantDataPath;                                    // = Application.p
 
 - Reload scan order is Cloud, then Local, then Legacy. *(SaveCollection.Reload / decompiled)*
 - New worlds and characters default to Cloud when `CloudStorageSupportedAndEnabled`, unless the player forces local. *(FejdStartup.OnNewWorldDone, PlayerProfile..ctor / decompiled)*
-- `-savedir` (via `Utils.SetSaveDataPath`) is parsed only in `ParseServerArguments` (see the caveat in §2.2).
+- `-savedir` (via `Utils.SetSaveDataPath`) is parsed only in `ParseServerArguments`, which only the dedicated server runs (§2.2). Seen live 2026-09-26: a server started with `-savedir X` wrote `X\worlds_local\` and its admin, ban and permitted lists.
 - `Utils.GetSaveDataPath`, `SetSaveDataPath`, `SaveSystem.GetWorldsSaveRootPath` and `GetCharacterFolderPath` are all **public static**.
 
 ### 3.2 The chunked world format (world version 40 and later; everything written by 1.0.15)
@@ -274,14 +279,27 @@ Strings use `BinaryWriter.Write(string)` format: a 7-bit-encoded length followed
 
 After the version and netTime, the ZoneSystem block is `int len` followed by **GZip** bytes (`Utils.Compress` = `GZipStream`, `CompressionLevel.Fastest`). The decompressed block contains:
 1. `int n` + n × `Vector2s` generated zones (two `short`s each)
-2. `int m_locationVersion`: 32 in a real save, even though the code default is 1, so the prefab overrides it
+2. `int m_locationVersion`: 32 in a real save, even though the code default is 1, so the prefab overrides it (still 32 in a `.db2` written by 1.0.16, 2026-09-26)
 3. `int n` + n global keys (server-option keys are **excluded**, see §4)
 4. `bool locationsGenerated`
 5. `int n` + n × (`int prefabHash`, `float x, y, z`, `bool placed`) **location instances**
 
 The real save holds **12,314 locations**, both placed and not yet placed. The first was StartTemple at (70.5, 33.9, -2.8).
 
+After the ZoneSystem block come `RandEventSystem.Save`'s block and then the persistent-event block, which is an `int` length followed by a **Brotli** payload, not GZip (`PersistentEventSystem.Load` calls `BrotliCompressor.DecompressBytes`, and returns early when fewer than 4 bytes remain). *(PersistentEventSystem.Load / decompiled 1.0.16, 2026-09-26)*
+
 So location positions (boss altars, traders, and so on) are generated from the seed **once** and then **stored** in the save. `ZoneSystem.m_locationInstances` is a public field populated on the server. Clients get only icon positions via the routed RPC `"LocationIcons"`. *(ZoneSystem.SendLocationIcons / RPC_LocationIcons / decompiled)* If the stored `m_locationVersion` differs from the current one, `locationsGenerated` is reset to false. `ZNet.ServerLoadWorld` then calls `GenerateLocationsIfNeeded`, and `GenerateLocationsTimeSliced` starts with `ClearNonPlacedLocations()`: instances already placed (zone generated) are kept, and all **unplaced** ones are discarded and regenerated. So "generated once" holds only until the game bumps `m_locationVersion`. *(ZoneSystem.Load / GenerateLocationsTimeSliced / ClearNonPlacedLocations, ZNet.ServerLoadWorld / decompiled)*
+
+What the regeneration can place, re-read on 1.0.16 (2026-09-26, a read-only investigation for TomTom's Find, with a critic):
+- New candidates go only into zones that are **not generated yet** (`else if (!IsZoneGenerated(zoneID))`).
+  - So location types that an update adds exist only in areas nobody has visited.
+  - A search in areas explored before the update finds none of them.
+- A unique location that is already placed is **never given new candidates** (`if (!location.m_unique || placed <= 0)`).
+- **Every unplaced unique candidate is discarded and redrawn.** Examples are an unplaced Hildir or Bog Witch, or a
+  Big Rock Clearing that nobody has found yet.
+  - So those candidate spots can move after a game update.
+  - A route that saved them (TomTom's "(possible)" waypoints) can then point at places that are no longer
+    candidates.
 
 **Chunk grid** *(ZoneSystem.GetZonesChunk, GetZoneFromChunk, ChunkIndexFromXY, ChunkSaveMapping.GetChunkFilename / decompiled)*
 - Zones are 64 m (`ZoneSystem.GetZone`: `floor((x+32)/64)`). The sector grid is 512 × 512 zones, with `SectorToIndex = (y+256)*512 + (x+256)`.
@@ -358,7 +376,8 @@ Character files also rotate through `<name>.fch.new` (written first), then `Repl
 ## 5. Derived caches (deterministic from the seed and safe to delete)
 - **Minimap textures**, set up in `Minimap.Start`: `worlds_local/<m_worldName>/cacheMinimapMask`, `cacheMinimapBiome` and `cacheMinimapHeight` (GZip buffers), plus `cacheMinimapMeta` (`int seed`, `int 1`).
   - These are always in the **Local** folder, even for cloud worlds. `Minimap.Start` also creates that folder, which is why this machine has empty `worlds_local/<World>/` folders for cloud worlds.
-  - The cache loads only if `ZNet.World.m_worldVersion == 41`, the meta seed equals `m_seed`, and the meta version is 1. Otherwise `GenerateWorldMap` runs (about 4.2 s in `Player.log`).
+  - The cache loads only if `ZNet.World.m_worldVersion == 41`, the meta seed equals `m_seed`, and the meta version is 1. Otherwise `GenerateWorldMap` runs (about 4.2 s in `Player.log`). Nothing else is checked, so **1.0.16 loads caches 1.0.15 wrote** (re-read on 1.0.16, 2026-09-26): an update that changed generation without bumping those constants would keep showing the old map. Delete the cache files to force a rebuild.
+  - Observed on 1.0.16 (2026-09-26): re-creating a world logged `Generating new world minimap done` (about 4.3 s) once per world, and the new cache files' times equal those log lines.
   - A brand-new world regenerates on its first session because no cache files exist yet. For a world created in the main menu this is **not** a version effect: that world runs with `m_worldVersion` 41, because the menu re-reads it from its new `_main.0.fwl2` (§2.6). Worlds made by `GetCreateWorld` / `GetDevWorld` run with 0 and skip the cache for that session. The log shows the pattern: "Generating new world minimap", then "Loading minimap textures done" on the next session. On a client, `m_worldVersion` is always 0 (§2.8), so the cache is never used there. *(Minimap.TryLoadMinimapTextureData / GenerateWorldMap / SaveMapTextureDataToDisk, FejdStartup.UpdateWorldList / decompiled)*
   - `GenerateWorldMap` deletes the old cache under `World.GetSaveDirectory(Local, ZNet.World.m_name)` but writes under `m_worldName`, so the two differ for a renamed folder.
   - **Unverified:** where a pure client writes the cache. Code facts: `Minimap.Start` sets the cache paths only if `ZNet.World` is non-null at that moment, and a joining client has `ZNet.World == null` until `RPC_PeerInfo` (`FejdStartup` calls `ZNet.SetServer(false, ..., null)`). With the paths unset, `TryLoadMinimapTextureData` returns false and `SaveMapTextureDataToDisk` returns early, so nothing is written. If `ZNet.World` were already set, its `m_worldName` of `""` would give the `worlds_local` root. Which case happens depends on timing and was not observed.
@@ -460,13 +479,12 @@ Character files also rotate through `<name>.fch.new` (written first), then `Repl
 ---
 
 ## 8. Unverified or not fully checked
-- **Unverified:** the dedicated-server command-line handling (`ParseServerArguments`) has no callers in this client DLL, and the server build is not installed, so it could not be confirmed that the server runs this exact code.
-- ~~the seed and name input character limits~~ — **settled 2026-09-22** from the live components: seed 10 / Alphanumeric, name 20 / Alphanumeric (§2.2).
+- The seed and name input limits: the length limits are settled (seed 10, name 20, read from the live components 2026-09-22 and again on 1.0.16). **Which characters the seed box accepts is Unverified** (§2.2; corrected 2026-09-26, this said "settled: Alphanumeric").
 - **Unverified:** the preset and slider key strings other than `resources_most` → `resourcerate 300`, which are in prefab data.
 - ~~`Minimap.m_pixelSize = 12` at runtime~~ — **settled 2026-09-22** by reading the loaded `Minimap`: `m_textureSize` **2048**, `m_pixelSize` **12** (previously only derived from the cache geometry). Also read there: `m_removeRadius` **300** (code 128f), `m_exploreRadius` **50** (code 100f), `m_exploreInterval` **0.25** (code 2f).
 - **Unverified:** minimap cache behaviour on a pure client (empty `m_worldName`), which is inferred from code and not observed.
 - **Unverified:** the ZDO binary layout inside `.chunk` files (`ZDO.Save` / `ZDO.Load`). It was not decompiled for this document.
-- **Unverified:** the `RandEventSystem.Save` and `PersistentEventSystem.Save` layouts inside `.db2`. They were not decompiled (40 bytes follow the ZoneSystem block in the real save).
+- **Unverified:** the `RandEventSystem.Save` layout inside `.db2`, which was not decompiled for this document (40 bytes follow the ZoneSystem block in the real save). The persistent-event block after it is an `int` length plus a Brotli payload (§3.2, decompiled 1.0.16).
 ---
 
 ## 9. Tools
