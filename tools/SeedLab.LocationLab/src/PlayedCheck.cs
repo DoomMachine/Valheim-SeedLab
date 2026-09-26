@@ -200,6 +200,11 @@ namespace SeedLab.LocationLab
         /// The testworldclaude creation section of the game's LogOutput, in <c>groundtruth\</c>;
         /// <c>groundtruth\README.md</c> names the session and the lines it was cut from. One world's
         /// section only: a log holding several creations would leave the last counter read per name.
+        ///
+        /// <para>A missing log FAILS both log checks. They run only after this world's save was read
+        /// from <c>groundtruth\worlds\</c>, so <c>groundtruth\</c> is there and the log is missing from
+        /// it: an incomplete or older ground truth, never a clone without one. Passing silently would
+        /// drop the game's own counters from the gate without a trace.</para>
         /// </summary>
         private const string WorldgenLog = "worldgen-testworldclaude.log";
 
@@ -217,7 +222,11 @@ namespace SeedLab.LocationLab
         private static int CompareLog(PlacementResult res)
         {
             string path = Path.Combine(GroundTruthPaths.Root, WorldgenLog);
-            if (!File.Exists(path)) { Console.WriteLine("  (no worldgen log at " + path + ")"); return 0; }
+            if (!File.Exists(path))
+            {
+                Console.WriteLine("  game log     MISSING " + path + " - the game's per-type counters were not checked");
+                return 1;
+            }
 
             Dictionary<string, (int p, int q)> log = new Dictionary<string, (int, int)>(StringComparer.Ordinal);
             foreach (string line in File.ReadLines(path))
@@ -263,7 +272,11 @@ namespace SeedLab.LocationLab
         private static int CompareAltBiomeLog(List<AltBiomeRuntime> alts)
         {
             string path = Path.Combine(GroundTruthPaths.Root, WorldgenLog);
-            if (!File.Exists(path)) return 0;
+            if (!File.Exists(path))
+            {
+                Console.WriteLine("  alt-biomes   MISSING " + path + " - the game's alt-biome warnings were not checked");
+                return 1;
+            }
 
             Dictionary<string, (int c, int min, int max, int vs, int vc)> log =
                 new Dictionary<string, (int, int, int, int, int)>(StringComparer.Ordinal);
