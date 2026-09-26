@@ -28,9 +28,10 @@ Set-Alias vseed "$PWD\src\SeedLab.Cli\bin\Release\net10.0\vseed.exe"
 **Searching needs the game data** (`data\`, which you make from your own copy of Valheim:
 [`game-data.md`](game-data.md)). Without it every search - even one that only asks about terrain -
 is refused with a message naming `constraint-atlas.json`, and the location commands fail closed and
-say so. `vseed` finds `data\` by looking up from the folder you run it in and from the folder its
-build is in, so leave the build where it was built (or set `SEEDLAB_DATA_DIR` to
-`data\1.0.15-59f53fb5\`).
+say so. The dumper does not write `constraint-atlas.json`, and no command in this repository
+rebuilds it, so a dump of your own brings the location commands back but not searching. `vseed`
+finds `data\` by looking up from the folder you run it in and from the folder its build is in, so
+leave the build where it was built (or set `SEEDLAB_DATA_DIR` to `data\1.0.16-96cfc004\`).
 
 Check it against the game before trusting a single number:
 

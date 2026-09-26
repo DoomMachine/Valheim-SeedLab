@@ -371,10 +371,12 @@ disc would count houses across an ocean.
 
 Before a seed is touched, every goal is checked against a **constraint atlas** built from the game's
 own asset data — 183 location types, validated against 36,829 real instances with zero violations —
-which ships as `data\1.0.15-59f53fb5\constraint-atlas.json` and is stamped like every other data
-file. Refusals only ever come from code or asset evidence, never from a sample; a **DATA-STAMP
-mismatch disables refusals entirely** and downgrades them to warnings, because a refusal built on
-another build's table would be a false statement about seeds.
+which lives in the game data as `data\1.0.16-96cfc004\constraint-atlas.json` (the 1.0.15 file,
+checked again on the 1.0.16 data and re-stamped) and is stamped like every other data file. With
+several builds in `data\`, the checker reads the atlas beside the location table it uses. Refusals
+only ever come from code or asset evidence, never from a sample; a **DATA-STAMP mismatch disables
+refusals entirely** and downgrades them to warnings, because a refusal built on another build's table
+would be a false statement about seeds.
 
 The count rules that ship are D3 (a world-wide count at the cap → warn, with the proof that
 `count ≤ m_quantity`), V5b (`at_most N` with N ≥ the cap → vacuous) and A1 (an absence line per

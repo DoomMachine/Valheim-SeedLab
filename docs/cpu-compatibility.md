@@ -115,8 +115,8 @@ fingerprints; K0-K8 on 2026-09-24, K10 added on 2026-09-25):
   the river cache, the 2048 x 2048 point grid, all 183 placements, the location oracle), equal to the
   recording made before any of this work;
 - the acceptance suite (32 checks against the game's own map caches), the location gate (12,228
-  instances), the natives goldens (11 checks), GoldenCheck (the generator's private state against the
-  game's) and `vseed selftest`.
+  instances of the 1.0.15 fresh world; these runs were on 1.0.15), the natives goldens (11 checks),
+  GoldenCheck (the generator's private state against the game's) and `vseed selftest`.
 
 K3, K10 and K7 test more than the Perlin kernel: the JIT compiles ordinary scalar code differently when
 AVX-512, AVX or every intrinsic is off (other instruction encodings - EVEX, VEX or legacy SSE - and other

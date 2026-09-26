@@ -8,7 +8,9 @@ You do **not** need any of this for **terrain answers**. Biomes, heights, rivers
 text arithmetic work straight after building SeedLab. They are computed from the seed alone.
 **Searches do need it, today** - even a search that asks only about terrain: the search's checker
 reads one file of the game data (`constraint-atlas.json`), and without it every search is refused
-with a message naming that file.
+with a message naming that file. **The dumper does not write that file**, so a dump of your own
+brings location answers back but not searches (see "Your folder will be smaller than the author's"
+in [section 14](#14-copy-it-into-seedlab-and-check-it)).
 
 **Tested on Windows only.** The dumper has never been run on Linux or macOS. See
 [section 16](#16-linux-and-macos).
@@ -78,8 +80,9 @@ What it will and will not do:
 ## 2. What you need before you start
 
 1. **Valheim for Windows, from Steam.**
-2. **The right game version.** SeedLab reproduces **Valheim 1.0.15**, the build whose
-   `assembly_valheim.dll` has a SHA-256 beginning `59f53fb5`. From the SeedLab folder, run:
+2. **The right game version.** This version of SeedLab is verified against **Valheim 1.0.16**, the
+   build whose `assembly_valheim.dll` has a SHA-256 beginning `96cfc004` (the game code SeedLab
+   reproduces is unchanged since 1.0.15). From the SeedLab folder, run:
 
    ```
    powershell -ExecutionPolicy Bypass -File tools\check-game-version.ps1
@@ -446,24 +449,25 @@ findstr /C:"dump DONE" "%BEPINEX%\BepInEx\LogOutput.log"
 ```
 
 After a complete run it prints (with your user folder in place of `%USERPROFILE%`, and your game's
-version and code in place of `1.0.15-59f53fb5`):
+version and code in place of `1.0.16-96cfc004`):
 
 ```
-[Warning:SeedLab.Dumper] SeedLab.Dumper: native-function dump DONE -> %USERPROFILE%\AppData\valheim-dumper\1.0.15-59f53fb5
-[Warning:SeedLab.Dumper] SeedLab.Dumper: world-generator dump DONE -> %USERPROFILE%\AppData\valheim-dumper\1.0.15-59f53fb5
-[Warning:SeedLab.Dumper] SeedLab.Dumper: asset dump DONE -> %USERPROFILE%\AppData\valheim-dumper\1.0.15-59f53fb5
+[Warning:SeedLab.Dumper] SeedLab.Dumper: native-function dump DONE -> %USERPROFILE%\AppData\valheim-dumper\1.0.16-96cfc004
+[Warning:SeedLab.Dumper] SeedLab.Dumper: world-generator dump DONE -> %USERPROFILE%\AppData\valheim-dumper\1.0.16-96cfc004
+[Warning:SeedLab.Dumper] SeedLab.Dumper: asset dump DONE -> %USERPROFILE%\AppData\valheim-dumper\1.0.16-96cfc004
 ```
 
 (Each `DONE` also appears once more on an `[Info` line ending `Files are in ...`.)
 
 The words that mean it did **not** work are **`FAILED`**, **`STOPPED`** and **`REFUSED`**. Search for
 them the same way. Warning lines on their own are not failures. The author's 2026-09-24 run logged 19
-`SoftReference unreadable` warnings and still ended `DONE`. **Unverified:** whether those warnings
-lose any data. Anything the dumper is unsure about is written into the `notes` list at the end of the
-output's `manifest.json`.
+`SoftReference unreadable` warnings and still ended `DONE`, and so did the 2026-09-26 run in 1.0.16
+(the same 19). **Unverified:** whether those warnings lose any data. Anything the dumper is unsure
+about is written into the `notes` list at the end of the output's `manifest.json`.
 
 **Read the log before you start Valheim again.** BepInEx rewrites `LogOutput.log` every time the game
-starts.
+starts. (The game's own log rotates too: `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\Player.log`
+becomes `Player-prev.log` at the next start, replacing the one before.)
 
 ## 13. Quit, and find the output
 
@@ -473,8 +477,8 @@ starts.
 2. **Do not start Valheim again until you have removed the dumper** ([section 15](#15-remove-the-dumper)).
 
 The output is in a folder named after the game build: the game version, a dash, and the first 8
-characters of the SHA-256 of the game's `assembly_valheim.dll`. For Valheim 1.0.15 that is
-`1.0.15-59f53fb5`. To see it, type:
+characters of the SHA-256 of the game's `assembly_valheim.dll`. For Valheim 1.0.16 that is
+`1.0.16-96cfc004` (for 1.0.15 it was `1.0.15-59f53fb5`). To see it, type:
 
 ```
 dir /b "%USERPROFILE%\AppData\valheim-dumper"
@@ -493,7 +497,7 @@ In the command window (still in the SeedLab folder), set `DUMP` to the name you 
 then copy the whole folder, sub-folders included:
 
 ```
-set "DUMP=1.0.15-59f53fb5"
+set "DUMP=1.0.16-96cfc004"
 if exist "data\%DUMP%" echo STOP - data\%DUMP% already exists. Read "Replacing a folder" below.
 if not exist "data\%DUMP%" xcopy /E /I "%USERPROFILE%\AppData\valheim-dumper\%DUMP%" "data\%DUMP%"
 ```
@@ -530,13 +534,18 @@ variable.
 
 ### Your folder will be smaller than the author's, and that is expected
 
-The author's `data\1.0.15-59f53fb5\` also holds files the dumper does not write: a hand-written
-`README.md`, and `constraint-atlas.json`, `count-sample.bin` and `count-sample.json`, which were built
-by one-off studies. No command in this repository rebuilds them. Only the search's pre-flight checker
-reads them, and it says so when they are missing:
+The author's `data\1.0.16-96cfc004\` (and the older `data\1.0.15-59f53fb5\` beside it) also holds
+files the dumper does not write: a hand-written `README.md`, and `constraint-atlas.json`,
+`count-sample.bin` and `count-sample.json`, which were built by one-off studies for 1.0.15 and carried
+over to 1.0.16 after being checked again on its data. **No command in this repository rebuilds them.**
+Only the search's pre-flight checker reads them, and it says so when they are missing:
 
-- without `constraint-atlas.json`, a search goal that the checker would have refused as impossible
-  gets a **warning** instead, and the search still runs;
+- without `constraint-atlas.json`, **every search is refused**, even one that asks only about terrain,
+  with a message naming that file (checked 2026-09-24 on a copy without `data\`; when `data\` holds
+  your own dump without the file, the code refuses the same way - read from the code, not run). So with a dump of your own and nothing
+  else, SeedLab answers location questions but cannot search. If `data\` also holds another build's
+  folder that has an atlas, the checker uses that one instead and prints every refusal it would make
+  as a warning, because the atlas is from another build;
 - without `count-sample.*`, two warnings about goals that nearly every seed meets (rules D4 and D5)
   stay silent.
 
@@ -673,14 +682,39 @@ data` says `MISMATCH`. From then on, **location answers are refused, and terrain
 a warning.** That is deliberate: a location table from another build gives coordinates that look right
 and are not.
 
-**What a new dump does not fix, said plainly:** SeedLab is a copy of **Valheim 1.0.15's** world
-generation, checked against that version only. A new dump makes `vseed data` say `MATCH` again, and
-location answers come back. It does **not** check that SeedLab still generates worlds the way the new
-version does. If the update changed how the game places locations, the answers will be wrong and will
-look right. Only the maintainer's tests can re-check that, and they need files that are not in this
-repository. Until the project says it has been checked against your version, treat every location
-answer as unverified. `check-game-version.ps1` keeps saying `GAME CHANGED` even after your new dump,
-because it compares the game with the build SeedLab was verified against, not with your data.
+**What a new dump does not fix, said plainly:** SeedLab is a copy of Valheim's world generation,
+checked against the builds it names: **1.0.16** for this version (and 1.0.15 before it). A new dump
+makes `vseed data` say `MATCH` again, and location answers come back. It does **not** check that
+SeedLab still generates worlds the way the new version does. If the update changed how the game
+places locations, the answers will be wrong and will look right. Only the maintainer's tests can
+re-check that, and they need files that are not in this repository. Until the project says it has
+been checked against your version, treat every location answer as unverified.
+`check-game-version.ps1` keeps saying `GAME CHANGED` even after your new dump, because it compares the
+game with the build SeedLab was verified against, not with your data.
+
+**What the maintainer's check involves**, as it was done when Valheim went from 1.0.15 to 1.0.16 on
+2026-09-25 (the README's *After a Valheim update* has the full list):
+
+1. A read-only audit of the new build's code. For 1.0.16 it found that none of the game code SeedLab
+   reproduces had changed, and that the Unity engine files were byte-identical.
+2. A new dump, into `data\1.0.16-96cfc004\` beside the 1.0.15 folder (this page, sections 6 to 15),
+   with the asset dump taken in a fresh world (`Throwaway`).
+3. The three reference worlds created again in the new build, with the same names and seed texts:
+   `asdasdasd` (`MWd8eV6svz`), `testworldclaude` (`hnBd9gJf2G`) and `ClaudeTestWold2` (`ClaudeTest`).
+   Each was entered once, so the game saved its map, and left; nothing was explored or built.
+4. **The game's logs, copied before Valheim started again.** Every start rotates them: `Player.log`
+   in `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\` becomes `Player-prev.log` (the older
+   `Player-prev.log` is lost), and BepInEx rewrites `BepInEx\LogOutput.log`. The lines that record how
+   the game placed each world's locations exist only there.
+5. The ground truth rebuilt from those worlds and logs. **The script that did this is not in this
+   repository**, nor are the map-cache decoder and the save reader it used.
+6. Every gate run against the new ground truth. For 1.0.16 all of them passed: the terrain acceptance
+   32/32, the location gate on the fresh world (12,182 of 12,182 instances) and on the three
+   re-created worlds' saves, the native-function checks and GoldenCheck.
+
+The constraint atlas and the count sample (above, section 14) were carried over to 1.0.16 because the
+location tables did not change. An update that changes them would leave the search checker without a
+valid atlas until someone rebuilds it, and the tools for that are not in this repository either.
 
 If you want to dump anyway:
 

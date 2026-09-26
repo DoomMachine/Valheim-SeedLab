@@ -2,7 +2,8 @@
 
 ## What it does
 
-`WorldGeneratorPort` is Valheim 1.0.15's `WorldGenerator` rewritten in C#, statement for statement.
+`WorldGeneratorPort` is Valheim's `WorldGenerator` rewritten in C#, statement for statement. It was
+ported from 1.0.15; 1.0.16 did not change that code, and the port is verified against 1.0.16.
 Give it an int32 seed and a `worldGenVersion` and it answers the same three questions the game asks
 of its own generator:
 
@@ -26,17 +27,18 @@ source: `UnityPerlin` (`Mathf.PerlinNoise`), `UnityRandom` (`UnityEngine.Random`
 
 | evidence | what it shows |
 |---|---|
-| `dotnet run --project tests\SeedLab.Acceptance.Tests -c Release` | 32/32. Two worlds the game itself generated and wrote: biome 0 mismatches over ~5.1 M decodable minimap pixels, height 4,194,304/4,194,304 identical binary16 codes per world, 0 m worst difference. |
+| `dotnet run --project tests\SeedLab.Acceptance.Tests -c Release` | 32/32. Two worlds the game itself (1.0.16) generated and wrote: biome 0 mismatches over ~5.1 M decodable minimap pixels, height 4,194,304/4,194,304 identical binary16 codes per world, 0 m worst difference. |
 | `groundtruth\decoded\*.biome.u8`, `*.height.f32` | The oracles: the game's own minimap cache, decoded. Not a re-derivation — bytes the game wrote. |
 | `dotnet run --project tests\SeedLab.Tests -c Release -- natives` | 11 checks against corpora captured from the running game: 262,780/262,780 `Mathf.PerlinNoise` samples, 276/276 `UnityEngine.Random` traces (1,980 draws — result bits and the state after each), `Mathf.FloatToHalf` resolved as ties **away** from zero (.NET's `(Half)f` gets 2 of the 4 midpoints wrong), 93/93 libm results identical between Mono and .NET 10, 429/429 hash vectors. |
-| `dotnet run -c Release --project tools\SeedLab.GoldenCheck` | The generator's *private* state for three seeds, against what the game's own generator was holding: the five offsets, the two river seeds, the constructor's RNG draws, the lakes, rivers and streams in order, and the full rendered river-point grid. 8.5 M float32 comparisons, 0 differ. |
+| `dotnet run -c Release --project tools\SeedLab.GoldenCheck` | The generator's *private* state for three seeds, against what the game's own generator was holding: the five offsets, the two river seeds, the constructor's RNG draws, the lakes, rivers and streams in order, and the full rendered river-point grid. On the 1.0.16 dump: 8.3 M float32 comparisons, 0 differ (8.5 M on the 1.0.15 dump, whose third seed was another world). |
 | `vseed selftest` | A fast subset of the above, runnable any time. |
 
 One of the two worlds, `testworldclaude` (seed 319486907), is a **hold-out**: it was never used while
 porting the biome and height code. It matched blind on biome and to 99.9998 % on height, and a last
-one-ulp residual was then diagnosed on both worlds and closed. The fully independent check is the
-third, fresh seed 75539276 (GoldenCheck). (The world's name is explained in the root README, under
-*Where the evidence lives* and *Credits*.)
+one-ulp residual was then diagnosed on both worlds and closed. The fully independent checks are the
+fresh worlds the dumps were taken in (GoldenCheck's third seed): 75539276 for 1.0.15, and -1147437162
+(`Throwaway`) for 1.0.16. (The world's name is explained in the root README, under *Where the
+evidence lives* and *Credits*.)
 
 ## Traps
 

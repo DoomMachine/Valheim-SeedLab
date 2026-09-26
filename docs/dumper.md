@@ -15,35 +15,43 @@ have never installed a mod, from BepInEx to a checked `data\` folder and the dum
 
 ## Its state on this machine, right now
 
-It **has run six times and is not installed.** Run 6 (2026-09-24, assets only: the dungeon doors'
-captions and the Vegvisir pins) was imported the same day, and the plugin was retired to
-`_ModSource\_retired\DoomMachine-SeedLabDumper-20260924-run6`. **F4** is free.
+It **has run seven times and is not installed.** Run 7 (2026-09-26, the first in Valheim 1.0.16: all
+three modes in one session - `seedlab_natives` and `seedlab_worldgen` at the main menu, the asset dump
+in the fresh world `Throwaway`) became `data\1.0.16-96cfc004\`, and the plugin was retired to
+`_ModSource\_retired\DoomMachine-SeedLabDumper-20260926-run7`. Run 6 (2026-09-24, Valheim 1.0.15,
+assets only: the dungeon doors' captions and the Vegvisir pins) was the last run for
+`data\1.0.15-59f53fb5\`. **F4** is free.
 
 ```
+retired 2026-09-26 (run 7)  SeedLab.Dumper.dll     FAEEE8D755746141B20DB99B515E6A2B74A31610BE3694DF9614A7C945F6F3F7
+                            SeedLab.Contracts.dll  15504007B7D28F65885BEC41A799646FD92DA999048563CD726A2E66544E0B2F
+                            dumper.enable          "all"
 retired 2026-09-24 (run 6)  SeedLab.Dumper.dll     85F54A8566E3AC50CCB549521C332E7079D37AD712E5DC2625F64705B6103C7A
                             SeedLab.Contracts.dll  81056CC679D78575F29BEB13006D7BDDD34A42CEDF8F1112C3C351297D4FAF6F
                             dumper.enable          "assets"
 ```
 
-Run 6's log is also the live check on the 2026-09-23 RNG fix: `Random.state` was identical at the start
-and the end of the asset dump. (The defect: a `RandomGuard` struct whose constructor never ran zeroed
-Unity's global generator and made every new world's suggested seed `aaaaaaaaaa` for the rest of the
-session. `RandomGuard` is now a reference type with private constructors, a single
+Runs 6 and 7 are also the live check on the 2026-09-23 RNG fix: `Random.state` was identical at the
+start and the end of run 6's asset dump, and of run 7's natives and worldgen dumps. (The defect: a
+`RandomGuard` struct whose constructor never ran zeroed Unity's global generator and made every new
+world's suggested seed `aaaaaaaaaa` for the rest of the session. `RandomGuard` is now a reference type with private constructors, a single
 `RandomStateSafe.Restore` is the assembly's only writer of `Random.state` and it refuses to write an
 all-zero state, and preflight gates hold the contract. The affected build is in
 `_ModSource\_retired\DoomMachine-SeedLabDumper-20260923\`.)
 
 Making the data from your own copy of the game, step by step: [`game-data.md`](game-data.md).
 
-The data SeedLab ships came out of a run
-stamped `dumped=2026-09-22` — that is the **UTC** date the plugin writes (`DateTime.UtcNow` in
-`GameInfo.Stamp`); the files in `data\1.0.15-59f53fb5\` carry the local date they were written on,
-which can differ from it by a day, and `BepInEx\LogOutput.log` holds that session:
+The 1.0.16 data came out of run 7, stamped `dumped=2026-09-26`. The oldest 1.0.15 files came out of a
+run stamped `dumped=2026-09-22` — that is the **UTC** date the plugin writes (`DateTime.UtcNow` in
+`GameInfo.Stamp`); the files in a `data\` folder carry the local date they were written on, which can
+differ from it by a day. `BepInEx\LogOutput.log` holds the session, until the game's next start
+rewrites it; run 7's said:
 
 ```
 [Warning:SeedLab.Dumper] SeedLab.Dumper 1.0.0 is ARMED in mode 'all'. Remove dumper.enable to make it inert again.
-[Warning:SeedLab.Dumper] SeedLab.Dumper: native-function dump DONE -> ...\valheim-dumper\1.0.15-59f53fb5
-[Warning:SeedLab.Dumper] SeedLab.Dumper: world-generator dump DONE -> ...\valheim-dumper\1.0.15-59f53fb5
+[Warning:SeedLab.Dumper] SeedLab.Dumper: native-function dump DONE -> ...\valheim-dumper\1.0.16-96cfc004
+[Warning:SeedLab.Dumper] SeedLab.Dumper: world-generator dump DONE -> ...\valheim-dumper\1.0.16-96cfc004
+[Warning:SeedLab.Dumper] SeedLab.Dumper: asset dump DONE -> ...\valheim-dumper\1.0.16-96cfc004
 ```
 
 A statement that it was "run once on 2026-09-22 and then removed" was wrong on the second half at the
@@ -81,8 +89,9 @@ The dumper is not checked by tests — it is checked by **everything downstream 
 
 - the 262,780 Perlin samples and 276 `UnityEngine.Random` traces it captured are what the ported
   natives are compared against, bit for bit;
-- the location table it captured drives the placement engine, which reproduces 12,228/12,228 instances
-  of the game's own fresh-world dump and every one of the 29 `placed N out of M` counters;
+- the location table it captured drives the placement engine, which reproduces every instance of the
+  game's own fresh-world dump (12,182/12,182 in 1.0.16's, 12,228/12,228 in 1.0.15's) and every
+  `placed N out of M` counter in the game's log of a world's creation (27 in 1.0.16's, 29 in 1.0.15's);
 - the `seed-input.json` it captured (`characterLimit` 10, `Alphanumeric`) is what bounds the seed
   inverter, and `vseed space` re-verifies the arithmetic that rests on it;
 - the preflight (`preflight.ps1`) checks the built plugin before it is ever put in the game folder.
@@ -108,10 +117,10 @@ If a dumped value were wrong, one of those comparisons would stop being exact.
   which you create, and `BepInEx\config\DoomMachine.SeedLabDumper.cfg`, which BepInEx writes the first
   time the plugin launches armed. Both are yours to delete.
 - **Timing figures in the plugin README were written before the first real run** and are estimates.
-  Treat `data\1.0.15-59f53fb5\manifest*.json` as the record of what the run actually did.
+  Treat the `manifest*.json` files in each `data\` folder as the record of what the runs actually did.
 - **The `dumped=` date in a DATA-STAMP is UTC**, taken from `DateTime.UtcNow`. Depending on the
   machine's time zone, the local timestamps of the same dump can fall on a different day — which is
-  why the shipped data's `dumped=2026-09-22` need not match the local date on its files.
+  why the 1.0.15 data's `dumped=2026-09-22` need not match the local date on its files.
   The two SHA-256s, not the date, are the authority on which build the data describes.
 - **`vseed clean` reports the dumper's output folder but never deletes it.** It compares every file
   in `%USERPROFILE%\AppData\valheim-dumper` against the copy in `data\` by SHA-256 and tells you

@@ -1,14 +1,32 @@
 # SeedLab
 
-**Valheim 1.0.15 world generation, offline and exact.** Type a seed and see the world without
+**Valheim world generation, offline and exact.** Verified against Valheim 1.0.16, the current build;
+the game code SeedLab reproduces is unchanged since 1.0.15. Type a seed and see the world without
 launching the game; or scan all 4,294,967,296 of them for one that suits you, with no 20,000-seed cap.
+
+**Status: version 0.2.0a, an ALPHA - not for active use yet.** It includes three changes that were
+implemented and passed every check, but have not yet had the review and the round of fixes every other
+change gets:
+
+- `vseed selftest` fails when the ground truth is incomplete (commit `f8a8f4d`);
+- the world-fingerprint reference the machine report compares with was re-recorded on Valheim 1.0.16
+  (`3412934`);
+- three rounding helpers compute at the game's full precision, with `tools\SeedLab.MonoProbe` as the
+  evidence (`0b31717`).
+
+The last reviewed version is **0.1.0**, commit `f65a331`; use that one for anything you rely on. (0.1.0
+names Valheim 1.0.15 as its verified build, so its version check says the game changed; that is
+expected, because 1.0.16 did not change the code it reproduces.) The "a" comes off the version number
+once the review and its fixes are done. What changed since 0.1.0:
+[`CHANGES-FOR-THE-USER.md`](CHANGES-FOR-THE-USER.md).
 
 Two things make it worth having rather than another seed viewer:
 
-- **The terrain is not an approximation.** On two worlds the game itself generated and wrote to disk,
-  every biome pixel matches and every height matches *as a binary16 bit pattern* — 4,194,304 of
+- **The terrain is not an approximation.** On two worlds Valheim 1.0.16 itself generated and wrote to
+  disk, every biome pixel matches and every height matches *as a binary16 bit pattern* — 4,194,304 of
   4,194,304 codes per world, 0 differing, worst difference 0 m. The location placement reproduces
-  12,228 of 12,228 instances of a fresh world bit-identically, including the `x/y/z` float bits.
+  12,182 of 12,182 instances of a fresh world bit-identically, including the `x/y/z` float bits, and
+  every instance stored in three more worlds' saves.
 - **It never rounds an answer into a claim.** Every figure carries the grid it was measured on, a
   thing that cannot be predicted is labelled as unpredictable instead of being printed as a
   coordinate, and a search that could not answer a goal refuses rather than returning seeds it never
@@ -46,7 +64,8 @@ the result and opening it on the map.
 This repository holds the source, the tests, the tools and the documentation. Two folders the rest of
 this README mentions are kept on the author's machine on purpose:
 
-- **`data\`** - the game data snapshot (`data\1.0.15-59f53fb5\`). It is read out of the running game
+- **`data\`** - the game data snapshot (`data\1.0.16-96cfc004\`, with the 1.0.15 one,
+  `data\1.0.15-59f53fb5\`, kept beside it). It is read out of the running game
   by `tools\SeedLab.Dumper`, so it is Iron Gate's content - location tables, prefab constants, the
   game's own English text - and it is not redistributed. **Without it, terrain answers work** (biome,
   height, rivers, maps, seed arithmetic: they need only the seed), and **location answers refuse**
@@ -55,11 +74,13 @@ this README mentions are kept on the author's machine on purpose:
   atlas (`constraint-atlas.json`) from `data\`, and without it `vseed search` and the page's Search
   panel refuse every run and name that file (checked 2026-09-24 on a copy without `data\`). To get
   it, follow [`docs\game-data.md`](docs/game-data.md), which walks through running the dumper against
-  your own copy of Valheim step by step.
-- **`groundtruth\`** - two worlds the game generated on the author's machine, their map caches, a game
-  log and the recorded native-function values. It is the evidence the gates compare against, so
-  `vseed selftest`, `tests\SeedLab.Acceptance.Tests`, the location gate and the tile check in
-  `vseed serve --selftest` say that it is missing rather than pass. It is **not** needed to run
+  your own copy of Valheim step by step. That brings location answers back, but **not searches**:
+  the dumper does not write `constraint-atlas.json`, and no command in this repository rebuilds it.
+- **`groundtruth\`** - four worlds Valheim 1.0.16 generated on the author's machine, their map caches,
+  the game's logs of their creation and the recorded native-function values. It is the evidence the
+  gates compare against, so `vseed selftest`, `tests\SeedLab.Acceptance.Tests`, the location gate and
+  the tile check in `vseed serve --selftest` say that it is missing rather than pass (and `vseed
+  selftest` fails, naming the file, when it is there but incomplete). It is **not** needed to run
   `vseed`: on x64 the built-in machine self-test is self-contained, and only another CPU architecture
   would need `groundtruth\natives` to prove itself.
 
@@ -313,8 +334,9 @@ location need the `data\` folder**, which you make from your own copy of Valheim
 stop with a message that says so (exit code 3). **Searching and `vseed explain` need it too, for
 now - even for a search that only asks about terrain**: the search's checker reads one file of the
 game data (`constraint-atlas.json`), and without it every search and every explain is refused, on
-the page and in the terminal, with a message naming that file. `vseed data` shows what data SeedLab found and whether it matches
-your installed game.
+the page and in the terminal, with a message naming that file. The dumper does not write that file
+and no command in this repository rebuilds it, so a dump of your own does not lift this. `vseed data`
+shows what data SeedLab found and whether it matches your installed game.
 
 ### Updating
 
@@ -420,8 +442,8 @@ What differs from Windows:
 | Terrain height at any point | verified as the stored binary16 code, 4,194,304/4,194,304 per world |
 | Rivers, streams and lakes | the generator's own point lists, 2.1 M rendered river points in order, bit-exact on three seeds |
 | The biome map | `vseed map --plain --palette game` is pixel-identical to the game's own texture |
-| Where every location instance is | 12,228/12,228 on a fresh world; 12,314/12,314 and 12,287/12,287 against two played worlds' `.db2` |
-| How many of each type got placed | the game's own 29 `placed N out of M` counters, all reproduced exactly |
+| Where every location instance is | 12,182/12,182 on a fresh world; 12,314/12,314, 12,287/12,287 and 12,228/12,228 against three more worlds' `.db2` |
+| How many of each type got placed | the game's own `placed N out of M` counters (27 in the 1.0.16 log the gate reads), all reproduced exactly |
 | Seed text ↔ int32, both directions | every returned text is re-hashed before it is printed |
 
 ### True, but with a resolution attached
@@ -498,7 +520,7 @@ PowerShell, from the SeedLab folder:
 Set-Alias vseed "$PWD\src\SeedLab.Cli\bin\Release\net10.0\vseed.exe"
 ```
 
-Run it from inside the SeedLab folder, or set `SEEDLAB_DATA_DIR` to `data\1.0.15-59f53fb5\` — that is
+Run it from inside the SeedLab folder, or set `SEEDLAB_DATA_DIR` to `data\1.0.16-96cfc004\` — that is
 where the location table lives, and without it the location commands exit 3 and say so.
 
 Check the build against the game before trusting it:
@@ -582,7 +604,7 @@ Measurement
   grid                  G12 (2048 x 2048 @ 12 m, the grid the game itself samples)
   cells in world        2,405,324 of 4,194,304   (DUtils.Length(x,z) <= 10500 m)
   area sampled          346.37 km2   (cell 144 m2)
-  time                  5.48 s field, 1.98 s analysis, 16 threads
+  time                  0.67 s field, 0.37 s analysis, 8 threads
 
 Land and water  (land = height >= 30.0 m, the game's water level)
 -----------------------------------------------------------------------------
@@ -603,8 +625,7 @@ Biomes  (share of the sampled in-world area)
   Deep North       23.91   6.90     18.19       7915            8078
   Ocean            97.98  28.29      0.00        102               -
 
-  'nearest' is the centre of the closest cell of that biome to (0,0), so it is within 8.5 m
-  (half a cell diagonal) of the true nearest point.
+  'nearest' is the centre of the closest cell of that biome to (0,0), so it is within 8.5 m (half a cell diagonal) of the true nearest point.
 ```
 
 `World..ctor` in that output is not a typo or a cut-off word: it is the real name of the game's
@@ -618,8 +639,8 @@ binary16 precision the game's own map cache stores), the spawn area, the extreme
 ```
 Landmarks  (the game's own location placement, run for this seed)
 -----------------------------------------------------------------------------
-  game data             1.0.15, dumped 2026-09-23
-  types run             23 of 183   (0.58 s biome grid, 0.09 s placement)
+  game data             1.0.16, dumped 2026-09-26
+  types run             23 of 183   (0.62 s biome grid, 0.09 s placement)
   spawn (StartTemple)   (71, -3)   this is Game.FindSpawnPoint's anchor, not (0, 0)
   name                prefab                         kind        count  nearest m  dir      at              biome         one position?
   ------------------  -----------------------------  ----------  -----  ---------  -------  --------------  ------------  -------------
@@ -676,10 +697,10 @@ Locations
 ---------------------
   as typed              "MWd8eV6svz"  (seed text)
   int32                 -1772362158
-  game data             1.0.15, dumped 2026-09-23 (59f53fb55d99)
+  game data             1.0.16, dumped 2026-09-26 (96cfc004f7f4)
   selection             --type boss,trader  ->  11 of 183 location types
-  names                 English, from the 1.0.15 dump
-  placement run         23 of 183 types (0.74 s world, 0.12 s placement)
+  names                 English, from the 1.0.16 dump
+  placement run         23 of 183 types (0.85 s world, 0.13 s placement)
   
   Everything before the selection has to run too: one location per zone, globally, so an
   earlier type can take a later one's zone. The prefix is never shortened past that.
@@ -741,6 +762,8 @@ Every text is re-hashed before it is printed. An unverified preimage is never re
 
 ### `vseed worlds`, `vseed world` — your saves, read-only
 
+(An example from the 1.0.15 period; the command reads only the save files, not the game data.)
+
 ```
 $ vseed worlds
 Worlds  (2)
@@ -771,7 +794,8 @@ runs bit-exactly on the scalar path: send `vseed --simd scalar selftest --report
 starts, proves the AVX2 path separately and prints where it differs. `--report` runs the self-test
 even when `--skip-self-test` is given.
 `bench` measures each stage on your machine, so any throughput estimate is anchored to a number you
-watched being produced:
+watched being produced (this example is from a 1.0.15-period build; the numbers are the machine's, and
+`docs\measurements.md` stays the source of throughput figures):
 
 ```
 $ vseed bench --no-map
@@ -1189,20 +1213,29 @@ Some of what SeedLab needs is not in Valheim's code — it is serialized asset d
 defaults are wrong: `Minimap.m_textureSize` is 256 in the IL and **2048** in the prefab,
 `m_pixelSize` is 64 and **12**, `ZoneSystem.m_locationVersion` is 1 and **32**.
 
-So `data\1.0.15-59f53fb5\` holds what the running game was actually holding, read out of its loaded
+So `data\1.0.16-96cfc004\` holds what the running game was actually holding, read out of its loaded
 objects by `tools\SeedLab.Dumper`, a BepInEx plugin: 232 `ZoneLocation` entries in list order, 257
 vegetation entries, 32 alt biomes, 186 location prefabs, the prefab and version constants, the
-seed-field limits, the constraint atlas and the native goldens. Every file carries a `DATA-STAMP`
-naming the game build and the SHA-256 of its `assembly_valheim.dll`, and every dumped file the tool
-reads has its SHA-256 in `manifest.json`, verified before it is parsed.
+seed-field limits and the native goldens, plus two derived files, the constraint atlas and the count
+sample. Every file carries a `DATA-STAMP` naming the game build and the SHA-256 of its
+`assembly_valheim.dll`, and every dumped file the tool reads has its SHA-256 in `manifest.json`,
+verified before it is parsed.
 
-**The dumper is installed only for a named capture and retired after each.** The current data came out
-of runs 4 and 5 on 2026-09-23 and run 6 on 2026-09-24: run 4 captured the whole dungeon surface after
-a field-coverage audit found the earlier dumps had been carrying 10 of `DungeonGenerator`'s 24 public
-instance fields and no `RoomConnection` data at all, run 5 the localization table that lets the map
-say "The Elder" rather than `GDKing`, and run 6 the captions on the dungeon doors
-(`Teleport.m_enterText`) that let it say "Burial Chambers" rather than `Crypt2`, with the Vegvisir
-pins. All three copies were retired to `_ModSource\_retired\`; the plugin is not installed and **F4**
+`data\1.0.15-59f53fb5\` stays beside it. The 1.0.16 location, vegetation and alt-biome tables are
+identical to 1.0.15's apart from the stamp. When `data\` holds several folders, SeedLab uses the one
+whose name ends with the first 8 hex of the installed game's hash - for the location table and, since
+0.2.0a, for the search checker's constraint atlas too (before, the checker took the first folder that
+had an atlas, so a 1.0.16 search ran with 1.0.15's, refusing nothing).
+
+**The dumper is installed only for a named capture and retired after each.** The 1.0.16 data came out
+of run 7 on 2026-09-26: one game session in Valheim 1.0.16, all three of the dumper's modes, the asset
+dump taken in a fresh world, `Throwaway` (seed text `VRbvYNainE`), before anything in it was explored.
+The 1.0.15 folder came out of runs 4 and 5 on 2026-09-23 and run 6 on 2026-09-24: run 4 captured the
+whole dungeon surface after a field-coverage audit found the earlier dumps had been carrying 10 of
+`DungeonGenerator`'s 24 public instance fields and no `RoomConnection` data at all, run 5 the
+localization table that lets the map say "The Elder" rather than `GDKing`, and run 6 the captions on
+the dungeon doors (`Teleport.m_enterText`) that let it say "Burial Chambers" rather than `Crypt2`, with
+the Vegvisir pins. Every copy of the plugin was retired after its run; it is not installed and **F4**
 is free. Making this data from your own copy of the game, step by step: [`docs\game-data.md`](docs/game-data.md).
 
 **SeedLab itself needs no plugin and no console command.** The dumper is a capture tool, not a runtime
@@ -1218,8 +1251,8 @@ Installed game
 --------------------------
   verdict               MATCH - this data describes the installed game
   install               E:\SteamLibrary\steamapps\common\Valheim
-  assembly_valheim      59f53fb55d99d22a33e8ed094eec8d21e9f133543bce92bc3d80dce44033adb1
-  the installed game is the build this data was dumped from (Valheim 1.0.15, assembly_valheim 59f53fb5).
+  assembly_valheim      96cfc004f7f4a6f30d070bef39eafd79c466a137121c4665a2f19fb9c15c6127
+  the installed game is the build this data was dumped from (Valheim 1.0.16, assembly_valheim 96cfc004).
 
   terrain answers (at, map, seed, search on terrain): allowed
   location answers (locations, dungeons, traders, resources): allowed
@@ -1237,22 +1270,54 @@ The stamp stops matching, and SeedLab **fails closed in the direction that matte
 What to do, in order. **If you cloned this repository**, the first two steps are yours:
 
 1. `powershell -ExecutionPolicy Bypass -File tools\check-game-version.ps1` — exit 0 means the
-   installed game is the build SeedLab was verified on, exit 2 means the game moved, exit 3 means the
-   game was not found (name it with `-ValheimDir <folder>` or `SEEDLAB_VALHEIM_DIR`).
+   installed game is the build SeedLab was verified on (1.0.16 for this version), exit 2 means the
+   game moved, exit 3 means the game was not found (name it with `-ValheimDir <folder>` or
+   `SEEDLAB_VALHEIM_DIR`).
 2. Re-run the dumper (`docs\dumper.md`, and the full manual in `tools\SeedLab.Dumper\README.md`) and
-   copy its output into a **new** folder `data\<game version>-<first 8 hex of the assembly sha256>\`.
-   **Never edit the old folder** — an edit is indistinguishable from corruption and is treated as
-   corruption.
+   copy its output into a **new** folder `data\<game version>-<first 8 hex of the assembly sha256>\`,
+   beside the old one. **Never edit the old folder** — an edit is indistinguishable from corruption
+   and is treated as corruption.
 
-The rest needs `groundtruth\`, which is not in the repository (see
-[Cloned from GitHub?](#cloned-from-github-two-folders-are-not-here)), so it is **the maintainer's**:
+A new dump brings location answers back; it does **not** show that SeedLab still generates worlds the
+way the new build does. That is what the rest is for. It needs `groundtruth\`, which is not in the
+repository (see [Cloned from GitHub?](#cloned-from-github-two-folders-are-not-here)), so it is **the
+maintainer's**. This is how the move from 1.0.15 to 1.0.16 was done, on 2026-09-26:
 
-3. `vseed selftest`. If the terrain checks still pass against the old ground truth, the generator
-   itself did not change; if they fail, the port needs re-verifying against the new build before any
-   number from it is trusted.
-4. Capture fresh ground truth: a world generated by the new build, its `.fwl2`/`.db2`/map cache, into
-   `groundtruth\`.
-5. Re-run the two gates below. They are the definition of "SeedLab still matches the game".
+3. **Read the new build's code before trusting anything.** Compare the game code SeedLab reproduces
+   (the world generator, the location placement, the Unity functions they call) with the previous
+   build's. For 1.0.16 a read-only audit found none of it changed, and the Unity engine files
+   byte-identical. `tools\decompile.ps1` shows one game type as C#; the scripts that compared whole
+   builds for that audit are not in this repository.
+4. **Dump the new build** (steps 1 and 2), all three modes in one session, the asset dump in a fresh,
+   throwaway world. That world's location instances become the fresh-world golden the location gate
+   compares with (`Throwaway` for 1.0.16).
+5. **Re-create the three reference worlds in the new build**, with the same names and seed texts:
+   `asdasdasd` (`MWd8eV6svz`), `testworldclaude` (`hnBd9gJf2G`) and `ClaudeTestWold2` (`ClaudeTest`).
+   Enter each one once, so the game draws and saves its map, then quit. Explore nothing, build nothing.
+6. **Copy the game's logs before Valheim starts again.** Every start rotates them:
+   `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\Player.log` becomes `Player-prev.log`, replacing
+   the one before, and BepInEx rewrites `BepInEx\LogOutput.log` from the beginning. Each world's
+   creation - its `Failed to place all` and `took more than ... seconds to place` counters and its
+   alt-biome warnings - is written only there, so read and copy `Player.log`, `Player-prev.log` and
+   `LogOutput.log` straight after the session.
+7. **Rebuild `groundtruth\`** from those copies: each world's save and map cache
+   (`worlds\<world>\`), its decoded map cache (`decoded\<world>.biome.u8` / `.height.f32`), its stored
+   location instances (`<world>-locations.csv`), the logged types' names and counters
+   (`location-names.csv`), `testworldclaude`'s creation cut out of the log
+   (`worldgen-testworldclaude.log`), and the native goldens from the dump (`natives\`). **The script
+   that built it is not in this repository**, and neither are the map-cache decoder and the `.db2`
+   reader it used; they are separate from SeedLab's own readers on purpose, so that the gates compare
+   two implementations.
+8. **Run every gate** in [Where the evidence lives](#where-the-evidence-lives), plus `vseed data
+   --verify`. They are the definition of "SeedLab still matches the game". Only when all of them pass
+   is the new build written into `src\SeedLab.Cli\Infra\Verified.cs`, which is what
+   `check-game-version.ps1` compares the installed game with.
+
+The search checker's constraint atlas and the count sample are derived from the game data, not
+dumped, and **no command in this repository rebuilds them**. For 1.0.16 the 1.0.15 files were carried
+over, re-stamped, only after the location tables were shown to be identical apart from the stamp and
+the files had been recomputed or compared on the new data. An update that changes a location table
+would need them rebuilt, and the tools that built them are not in this repository.
 
 ---
 
@@ -1263,38 +1328,47 @@ Nothing in this README is a claim you have to take on trust. These are the thing
 ```
 dotnet run --project tests\SeedLab.Acceptance.Tests -c Release
 ```
-32 checks, two to three and a half minutes. Regenerates both ground-truth worlds cell by cell and compares them
+32 checks, two to three and a half minutes. Regenerates both terrain ground-truth worlds
+(`asdasdasd` and `testworldclaude`, as Valheim 1.0.16 created them) cell by cell and compares them
 against what the game itself wrote — biome, height as binary16 codes, the world-edge constant, the
-river pass, and the float32 `y` of every location instance in the saves. Last run: **32 passed, 0
-failed**, 4,194,304/4,194,304 height codes exact per world, 0 biome mismatches, 12,314/12,314 and
-12,287/12,287 location heights bit-exact.
+river pass, and the float32 `y` of every location instance in the saves. Last run (2026-09-26, on
+1.0.16): **32 passed, 0 failed**, 4,194,304/4,194,304 height codes exact per world, 0 biome
+mismatches, 12,314/12,314 and 12,287/12,287 location heights bit-exact.
 
 ```
 dotnet run -c Release --project tools\SeedLab.LocationLab -- gate
 ```
-The location gate. Fresh world: 12,228/12,228 instances bit-identical in zone, prefab and x/y/z, 178
-of 178 prefabs exact, every per-type count equal. Played worlds: 12,314/12,314 and 12,287/12,287
-reproduced from the `.db2`. Alt biomes 32/32, and all 29 of the game's own `placed N out of M` log
-lines reproduced exactly. Last run: **GATE: PASS**.
+The location gate. Fresh world (`Throwaway`, the world the 1.0.16 dump was taken in): 12,182/12,182
+instances bit-identical in zone, prefab and x/y/z, 178 of 178 prefabs exact, every per-type count
+equal. The saves of the three re-created reference worlds: 12,314/12,314, 12,287/12,287 and
+12,228/12,228 reproduced from the `.db2`. Alt biomes 32/32, and all 27 of the game's own `placed N
+out of M` counters in `testworldclaude`'s 1.0.16 creation log reproduced exactly; a missing log fails
+the gate. (The 1.0.15 log had 29. Two of the 27 come from `took more than ... seconds to place` lines,
+which depend on how long placement took, so the count can differ between sessions; that this explains
+the difference is inferred, because the 1.0.15 log is no longer available.) Last run (2026-09-26):
+**GATE: PASS**.
 
 ```
 dotnet run --project tests\SeedLab.Tests -c Release -- natives
 ```
 The three Unity functions the port had to re-implement, against corpora captured from the running
-game. 11 checks: **262,780/262,780** `Mathf.PerlinNoise` samples bit-exact, 268/268 `InitState`
-seeds, **276/276** `UnityEngine.Random` traces (1,980 draws, both the result bits and the state after
+game (the 1.0.16 dump's). 11 checks: **262,780/262,780** `Mathf.PerlinNoise` samples bit-exact,
+268/268 `InitState` seeds, **276/276** `UnityEngine.Random` traces (1,980 draws, both the result bits and the state after
 each), `Mathf.FloatToHalf` resolved as ties-**away**-from-zero (.NET's `(Half)f` gets 2 of the 4
 midpoints wrong), 93/93 libm results identical between Mono and .NET 10, 429/429 `GetStableHashCode`
-vectors. Last run: **ALL 11 NATIVE CHECKS PASSED**.
+vectors. Last run (2026-09-26): **ALL 11 NATIVE CHECKS PASSED**.
 
 ```
 dotnet run -c Release --project tools\SeedLab.GoldenCheck
 ```
-The generator's *private* state against what the game's own generator was holding, for three seeds:
-the five offsets, the two river seeds, the constructor's RNG draws, the lakes / rivers / streams in
-order, the full rendered river-point grid (2.1 M points, 8.5 M float32 comparisons), and
-`GetHeight` as float32 for 12,228 location instances. Last run: **VERDICT: PASS - every internal
-field is bit-identical**.
+The generator's *private* state against what the game's own generator was holding, for the three
+seeds of the 1.0.16 dump (`hnBd9gJf2G`, `MWd8eV6svz` and `Throwaway`'s `VRbvYNainE`): the five
+offsets, the two river seeds, the constructor's RNG draws, the lakes / rivers / streams in order, the
+full rendered river-point grid (2.1 M points, 8.3 M float32 comparisons), and `GetHeight` as float32
+for 12,182 location instances. With no argument it reads the newest dump in
+`%USERPROFILE%\AppData\valheim-dumper\`; give it a folder (`-- data\1.0.16-96cfc004`) to check that
+one. Last run (2026-09-26, on `data\1.0.16-96cfc004`): **VERDICT: PASS - every internal field is
+bit-identical**. (The tool's own README still shows its first run, on the 1.0.15 dump.)
 
 ```
 vseed selftest          # the fast subset, any time
@@ -1307,19 +1381,21 @@ The raw material:
 | | |
 |---|---|
 | `groundtruth\decoded\*.biome.u8`, `*.height.f32` | the game's own minimap cache, decoded — bytes the game wrote |
-| `groundtruth\worlds\` | the `.fwl2` / `.db2` of two worlds the game generated |
-| `groundtruth\*-locations.csv`, `LogOutput-*.log` | the game's own location dump and its log lines |
+| `groundtruth\worlds\` | the saves (`.fwl2` / `.db2`) and map caches of four worlds Valheim 1.0.16 generated: `asdasdasd`, `testworldclaude`, `ClaudeTestWold2` and the dump world `Throwaway` |
+| `groundtruth\*-locations.csv`, `location-names.csv`, `worldgen-testworldclaude.log`, `logs\` | every location instance stored in three of those saves, the names and counters the game logged, and the game's logs of the sessions that created the worlds |
 | `groundtruth\natives\` | 262,780 real `Mathf.PerlinNoise` samples, 268 `Random` states + 276 traces, `Mathf.FloatToHalf` over an adversarial float set, Mono's libm, 429 hash vectors |
-| `data\1.0.15-59f53fb5\goldens\` | the same natives corpora, plus the generator's private state per seed (with the full river-point grids) and 12,228 `LocationInstance`s of a fresh world |
+| `data\1.0.16-96cfc004\goldens\` | the same natives corpora, plus the generator's private state for three seeds (with the full river-point grids) and the 12,182 `LocationInstance`s of the fresh world `Throwaway` |
 
-One of the two ground-truth worlds, `testworldclaude` (seed 319486907), is a **hold-out**: it was
-never used while porting the biome and height code. It matched blind on biome and to 99.9998 % on
+One of the two terrain ground-truth worlds, `testworldclaude` (seed 319486907), is a **hold-out**: it
+was never used while porting the biome and height code. It matched blind on biome and to 99.9998 % on
 height, and a last one-ulp residual was then diagnosed on both worlds and closed. The fully
-independent check is the third, fresh seed 75539276 (GoldenCheck).
+independent checks are the fresh worlds the dumps were taken in, which the port had never seen: seed
+75539276 (`ClaudeTestWold2`) for 1.0.15 and seed -1147437162 (`Throwaway`) for 1.0.16, each checked by
+GoldenCheck and the location gate.
 
-The name is the one DoomMachine gave that world in game, as a test world for Claude (see
-[Credits](#credits)). It is stored inside the game's own save, which SeedLab never edits, and the
-gates key on it, so it stays.
+The names `testworldclaude` and `ClaudeTestWold2` are the ones DoomMachine gave those worlds in game,
+as test worlds for Claude (see [Credits](#credits)). They are stored inside the game's own saves, which
+SeedLab never edits, and the gates key on them, so they stay.
 
 ---
 
@@ -1340,6 +1416,7 @@ src\SeedLab.Cli          vseed itself
 tools\SeedLab.Dumper     the BepInEx plugin that captured data\              docs\dumper.md
 tools\SeedLab.LocationLab   the location gate
 tools\SeedLab.GoldenCheck   the generator's private state against the game's
+tools\SeedLab.MonoProbe     pieces of the game's code run on the game's own Mono runtime (the rounding evidence)
 tools\check-game-version.ps1  is the installed game the build SeedLab was verified on?
 tools\decompile.ps1           one game type as C#, for checking a spec's citation (needs ILSpy or ilspycmd)
 SeedLab.bat, SeedLab 1..6 - *.bat   the Windows menu and one-click files                  docs\scripts.md
@@ -1349,9 +1426,11 @@ tests\SeedLab.Acceptance.Tests   the 32-check gate against the game's own output
 tests\SeedLab.Search.Tests       the query language, the tiers and prefilter parity
 tests\SeedLab.Search.Safety.Tests  the output layer: bounds, rotation, kills and resumes
 tests\SeedLab.Runtime.Tests      the runtime layer (326 checks)
-tests\SeedLab.Tests              the library-level checks, incl. the natives gate and the river golden
+tests\SeedLab.Tests              the library-level checks, incl. the natives gate, the river golden,
+                                 the rounding checks and the ground-truth completeness test
 tests\bench-search.ps1           a real search's stages: time, processor, memory, disk   docs\benchmarking.md
-data\1.0.15-59f53fb5\    the captured game data (its own README is the authority)
+data\1.0.16-96cfc004\    the captured game data (its own README is the authority)
+data\1.0.15-59f53fb5\    the same for Valheim 1.0.15, kept
 groundtruth\             what the game itself wrote
 docs\                    one short page per subsystem, plus docs\specs\
 .claude\                 Claude Code skills and a research agent for Valheim modding and SeedLab
@@ -1369,9 +1448,10 @@ docs\                    one short page per subsystem, plus docs\specs\
 [`web.md`](docs/web.md).
 
 `docs\specs\` holds the eight design documents the source cites by name and section
-(`07-features.md section 2.2` and the like). They lived in a session scratchpad that does not
-survive; they were copied in on 2026-09-23 so those citations still resolve. Where a spec and the
-code disagree, the code and the goldens are the evidence.
+(`07-features.md section 2.2` and the like). They were first written in a temporary working folder
+outside the repository and copied in on 2026-09-23, so those citations still resolve. They describe
+Valheim 1.0.15, the build they were written against. Where a spec and the code disagree, the code and
+the goldens are the evidence.
 
 House rules, in case you come back to this and wonder: **no NuGet packages**; port rather than
 improve, and cite the decompiled member for anything ported; keep the numerics discipline (the game

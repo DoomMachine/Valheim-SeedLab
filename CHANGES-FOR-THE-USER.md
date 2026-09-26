@@ -1,5 +1,102 @@
 # SeedLab — what changed, and what to try first
 
+## 2026-09-26: version 0.2.0a — an alpha, not for active use yet
+
+**Read this first.** 0.2.0a is an **alpha**. It passes every check SeedLab has, but three of its
+changes (group 3 below) were implemented without the review and the round of fixes that every other
+change gets: nobody has yet tried on purpose to break them, and the fixes such a review brings have
+not been made. So do not rely on this version yet. The last reviewed version is **0.1.0**, commit
+`f65a331`. The `a` comes off the version number once the review and its fixes are done.
+`vseed --version` says which one you have (`vseed 0.2.0a` for this one).
+
+Since 0.1.0, three groups of changes:
+
+### 1. Measuring where the time, the memory and the disk go (reviewed)
+
+- **`vseed profile --saturate <seconds>`** sizes every measurement so that all its workers stay busy
+  for about that long, and reports what each one used, not only how long it took: processor time
+  (the workers and the rest, mostly the garbage collector), how many cores were busy, the stretch in
+  which every worker was busy, memory sampled every 200 ms with the exact peak, and bytes read and
+  written. **`vseed profile --plan <profile.json>`** replays an earlier profile's exact seeds, so a
+  before/after comparison measures the same worlds.
+- **`tests\bench-search.ps1`** runs a fixed set of real searches and gives each stage - start-up, the
+  plan, the scan, a funnel's two stages, writing the results - its time, processor, memory and disk.
+  It never leaves a `vseed` running, however it ends, and it refuses to run while Valheim does.
+- **The river-points golden** records what the lake, river and stream code produces, bit for bit and
+  in order, so a later change to that code can be proved to change no value.
+
+How to run them and read what they print: [`docs\benchmarking.md`](docs/benchmarking.md). No value a
+seed produces changed.
+
+**Proof:**
+
+```
+dotnet run -c Release --project tests\SeedLab.Runtime.Tests                      # 326 checks
+dotnet run -c Release --project tests\SeedLab.Runtime.Tests -- --profile-check   # a saturated profile and its replay
+dotnet run -c Release --project tests\SeedLab.Tests -- river-golden --self-test  # 16 checks
+powershell -ExecutionPolicy Bypass -File tests\bench-search.ps1 -Quick           # a short smoke run
+```
+
+### 2. Verified against Valheim 1.0.16 (reviewed)
+
+Valheim updated to 1.0.16 (Steam build 25527674) on 2026-09-25. A read-only audit of its code found
+that it changed **none of the game code SeedLab reproduces**, and that the Unity engine files are
+byte-identical. Then everything was checked again against what 1.0.16 itself produced:
+
+- **New game data**, `data\1.0.16-96cfc004\`, from a new dump (run 7, 2026-09-26, in a fresh world
+  called `Throwaway`). Its location tables are identical to 1.0.15's apart from the stamp.
+  `data\1.0.15-59f53fb5\` is kept beside it, and SeedLab uses the one that matches your game.
+- **The search checker reads the atlas that belongs to the location table in use.** With both
+  folders in `data\`, a 1.0.16 search used to pick the 1.0.15 atlas, and then refused nothing.
+- **New ground truth**, rebuilt from worlds the game generated in 1.0.16: `asdasdasd`,
+  `testworldclaude` and `ClaudeTestWold2` created again with the same names and seeds, and
+  `Throwaway`.
+- **The location gate** checks the 1.0.16 fresh world when run without options, checks a third saved
+  world (`ClaudeTestWold2`), and now fails when the game log it compares with is missing (it used to
+  skip it and pass).
+- `vseed --version`, `vseed selftest` and `tools\check-game-version.ps1` now name 1.0.16 as the
+  verified build.
+
+Results on 2026-09-26: `vseed selftest` 15 rows PASS (the new `N1` row is from group 3), the
+acceptance suite 32/32, the location gate PASS on four worlds (the fresh `Throwaway` 12,182 of
+12,182 instances; the saves of `asdasdasd` 12,314, `testworldclaude` 12,287 and `ClaudeTestWold2`
+12,228; the game log's 27 counters), the native-function checks 11/11, GoldenCheck PASS on the three
+captures of the 1.0.16 dump, and `vseed data --verify` 8/8.
+
+**Proof:**
+
+```
+powershell -ExecutionPolicy Bypass -File tools\check-game-version.ps1   # exit 0 on 1.0.16
+vseed data                                                              # MATCH, data 1.0.16-96cfc004
+vseed selftest                                                          # 15 rows, all PASS
+```
+
+and the five gates at the bottom of this file. Everything here except `check-game-version.ps1` and
+`vseed data` needs `groundtruth\` (and the gates `data\` too), which is not in the public repository.
+
+### 3. Three changes not yet reviewed
+
+Each passed the full list of checks above - the four 1.0.16 worlds in the location gate, the terrain
+acceptance, the native-function checks, GoldenCheck, and the 64 reference seeds' world fingerprints,
+320 of 320 equal - but has **not** had its review and fixes yet. Details are in the three sections
+dated 2026-09-26 further down.
+
+- **`vseed selftest` fails on an incomplete ground truth** (`f8a8f4d`), naming the missing file, with
+  a new row `N1`. See "An incomplete ground truth fails `vseed selftest`".
+  **Proof:** `dotnet run -c Release --project tests\SeedLab.Tests -- groundtruth-completeness --work
+  <scratch folder>` - 32 checks.
+- **The world-fingerprint reference was re-recorded on 1.0.16** (`3412934`), so the machine report
+  compares all 40 digests of its 8 seeds again. See "The machine report compares the location
+  fingerprints again". **Proof:** `vseed selftest --report` ends `PASS - ... all 40 compared world
+  digests bit for bit`.
+- **Three rounding helpers compute at the game's full precision** (`0b31717`), with
+  `tools\SeedLab.MonoProbe`, which runs the game's own code on the game's own runtime, as the
+  evidence. See "Three rounding helpers now compute at the game's precision". **Proof:**
+  `dotnet run -c Release --project tests\SeedLab.Tests -- rounding` - 196 checks; the probe itself is
+  `powershell -ExecutionPolicy Bypass -File tools\SeedLab.MonoProbe\run-rounding-probe.ps1`.
+
+---
+
 Written 2026-09-23. If you are reading this three weeks later: this is the state of the tool the
 last time anyone ran it end to end, and every number below came out of a command run that day on
 your machine (8-core / 16-thread 9800X3D, Valheim not running, machine otherwise idle).
@@ -634,7 +731,7 @@ which is paused and changes the same file.
 
 **Proof:** `dotnet run -c Release --project tests\SeedLab.Tests -- rounding` - **196 checks**. Its
 expected values were produced by the game's own IL on the game's own Mono runtime with that option (the
-probe that ran them is kept with the fix's report), and for every "a hair from a boundary" input the test
+probe that ran them is `tools\SeedLab.MonoProbe`), and for every "a hair from a boundary" input the test
 also checks that the old float formula gave a different answer; run against the old code, 46 of its
 checks fail.
 

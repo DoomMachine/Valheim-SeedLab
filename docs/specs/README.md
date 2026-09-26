@@ -32,7 +32,9 @@ the skills the specs cite are the author's Claude Code skills; a scrubbed snapsh
 in `.claude\` at the repository root.
 
 The game build these specs describe is Valheim 1.0.15, `assembly_valheim.dll`
-sha256 `59f53fb5…33adb1` — the same stamp `data\1.0.15-59f53fb5\` and `vseed selftest` check against.
+sha256 `59f53fb5…33adb1` — the stamp of `data\1.0.15-59f53fb5\`. SeedLab is now verified against
+Valheim 1.0.16 (`96cfc004…`, `data\1.0.16-96cfc004\`), which changed none of the game code these specs
+describe; where a spec was corrected since, it says so in place.
 
 Credits: see the root README - created and tested by DoomMachine; code, tests and docs written by
 Claude (Anthropic) in Claude Code.

@@ -19,10 +19,14 @@ see `docs\data.md`) and a 2048² biome-point grid plus the 32 alt-biome sector a
 dotnet run -c Release --project tools\SeedLab.LocationLab -- gate
 ```
 
-- **Fresh world**: 12,228/12,228 instances bit-identical to the game's own dump — same zone, same
-  prefab, same x/y/z float32 bits. 178/178 prefabs reproduced exactly.
-- **Two played worlds**, read out of their `.db2`: 12,314/12,314 and 12,287/12,287 bit-identical.
-- The game's own log lines (`Crypt4 170 out of 200`) — all **29** per-type counters reproduced exactly.
+- **Fresh world** (`Throwaway`, the world the 1.0.16 dump was taken in): 12,182/12,182 instances
+  bit-identical to the game's own dump — same zone, same prefab, same x/y/z float32 bits. 178/178
+  prefabs reproduced exactly. (On 1.0.15 it was 12,228/12,228 in `ClaudeTestWold2`.)
+- **Three more worlds**, read out of their 1.0.16 `.db2`: 12,314/12,314, 12,287/12,287 and
+  12,228/12,228 bit-identical.
+- The game's own log lines (`Crypt4 170 out of 200`) — all **27** per-type counters in
+  `testworldclaude`'s 1.0.16 creation log reproduced exactly (the 1.0.15 log had 29; some of these
+  lines depend on how long placement took). A missing log fails the gate.
 - Alt biomes: 32/32 assigned to the same sectors, and the same under-minimum warning the game logged.
 - The acceptance suite's T5 check compares `GetHeight` against the float32 `y` the save stores:
   0 differ, worst 0 float ULPs, including 1,462 and 1,526 instances sitting in a river field.
