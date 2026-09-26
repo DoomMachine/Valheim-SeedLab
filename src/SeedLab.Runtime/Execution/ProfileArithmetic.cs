@@ -11,9 +11,11 @@ namespace SeedLab.Runtime.Execution
     /// <para>A measurement "saturates" the machine when every worker is busy for most of it. The rate
     /// comes from the pilot's mean seed time, not from the pilot's seeds over its wall time: a pilot of
     /// a few seeds per worker is mostly its own ramp-up and tail, and its wall-clock rate would size
-    /// the real run too small. The count is at least <see cref="MinPerWorker"/> per worker, so the
-    /// ramp-up and the tail stay a small part of it, and a multiple of the worker count, so every
-    /// worker can be given the same share.</para>
+    /// the real run too small. The pilot grows (<see cref="NextPilotSeeds"/>) until it has run for
+    /// <see cref="MinPilotSeconds"/>, and the rate is taken from the later half of its last run's
+    /// seeds (<see cref="SecondHalfMeanMs"/>), so fast tiers are timed on optimised code. The count is
+    /// at least <see cref="MinPerWorker"/> per worker, so the ramp-up and the tail stay a small part of
+    /// it, and a multiple of the worker count, so every worker can be given the same share.</para>
     /// </summary>
     public static class SaturationPlanner
     {
@@ -23,8 +25,67 @@ namespace SeedLab.Runtime.Execution
         /// <summary>The most seeds one measurement runs (the profile's own cap on <c>--seeds</c>).</summary>
         public const int MaxSeeds = 1_000_000;
 
-        /// <summary>The pilot's size: two seeds per worker, never fewer than four.</summary>
+        /// <summary>The first pilot's size: two seeds per worker, never fewer than four.</summary>
         public static int PilotSeeds(int workers) => Math.Max(4, 2 * Math.Max(1, workers));
+
+        /// <summary>The most seeds one pilot run takes while it grows toward <see cref="MinPilotSeconds"/>.</summary>
+        public const int PilotCap = 100_000;
+
+        /// <summary>
+        /// How long a pilot must run (its measured part, warm-up excluded) before its pace is trusted:
+        /// 10 % of the target, at least 0.5 s and at most 3 s. A pilot of a few fast seeds times code
+        /// the runtime has not optimised yet (seen 2026-09-26 on a busy machine: a t2 pilot of 4 seeds
+        /// after 3 warm-up seeds read 2.0 ms per seed, the measurement then ran at a 0.52 ms median, so it
+        /// was sized about 3x short).
+        /// </summary>
+        public static double MinPilotSeconds(double targetSeconds)
+        {
+            double t = double.IsNaN(targetSeconds) ? 0 : targetSeconds;
+            return Math.Min(3.0, Math.Max(0.5, 0.1 * t));
+        }
+
+        /// <summary>
+        /// The next pilot run's size after one of <paramref name="lastSeeds"/> seeds ran for
+        /// <paramref name="wallSeconds"/>: enough to reach 1.5 x <paramref name="minSeconds"/> at the last
+        /// run's pace, at least twice and at most 64 times as many, rounded up to a multiple of the
+        /// worker count and never above <see cref="PilotCap"/>. 0 when the last run was long enough, or
+        /// the pilot cannot grow any more: then the last run is the one to size from.
+        /// </summary>
+        public static int NextPilotSeeds(int lastSeeds, double wallSeconds, double minSeconds, int workers)
+        {
+            if (workers < 1) throw new ArgumentOutOfRangeException(nameof(workers));
+            if (wallSeconds >= minSeconds || lastSeeds >= PilotCap) return 0;
+            double factor = wallSeconds > 0 && !double.IsNaN(wallSeconds) ? 1.5 * minSeconds / wallSeconds : 64;
+            factor = Math.Min(64, Math.Max(2, factor));
+            double want = Math.Ceiling(Math.Max(1, lastSeeds) * factor / workers) * workers;
+            long capRounded = Math.Max(workers, (long)PilotCap / workers * workers);
+            long next = (long)Math.Min(want, capRounded);
+            return next > lastSeeds ? (int)next : 0;
+        }
+
+        /// <summary>
+        /// The mean seed time, in ms, of the LATER half of a pilot's seeds by start time (the earlier
+        /// half is still meeting code the runtime has not optimised). Every seed's start and wall time
+        /// are in ticks of <paramref name="frequency"/> per second; with one seed, that seed. NaN for none.
+        /// </summary>
+        public static double SecondHalfMeanMs(long[] starts, long[] walls, int count, long frequency)
+        {
+            if (frequency <= 0) throw new ArgumentOutOfRangeException(nameof(frequency));
+            int n = Math.Min(count, Math.Min(starts.Length, walls.Length));
+            if (n <= 0) return double.NaN;
+            int[] order = new int[n];
+            for (int i = 0; i < n; i++) order[i] = i;
+            Array.Sort(order, (a, b) => starts[a] != starts[b] ? starts[a].CompareTo(starts[b]) : a.CompareTo(b));
+            double sum = 0;
+            int from = n / 2, used = 0;
+            for (int k = from; k < n; k++)
+            {
+                sum += walls[order[k]];
+                used++;
+            }
+
+            return sum * 1000.0 / frequency / used;
+        }
 
         /// <summary>
         /// Seeds per second when <paramref name="workers"/> each take <paramref name="meanSeedMs"/> per

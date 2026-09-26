@@ -20,10 +20,19 @@ namespace SeedLab.Cli.Infra
     /// </summary>
     internal static class ProcessResources
     {
-        /// <summary>Where the thread CPU figure comes from on this machine, or null when there is none.</summary>
+        private const string LinuxClock = "clock_gettime(CLOCK_THREAD_CPUTIME_ID) on the worker thread itself";
+        private const string LinuxSchedstat = "/proc/thread-self/schedstat on the worker thread itself (clock_gettime was not available)";
+
+        private static volatile string? s_linuxSource;
+        private static volatile bool s_clockBroken;
+
+        /// <summary>
+        /// Where the thread CPU figure came from on this machine - the source actually used (on Linux,
+        /// the libc clock or, when that call is missing, schedstat) - or null when there is none.
+        /// </summary>
         public static string? ThreadCpuSource =>
             OperatingSystem.IsWindows() ? "GetThreadTimes on the worker thread itself"
-            : OperatingSystem.IsLinux() ? "clock_gettime(CLOCK_THREAD_CPUTIME_ID) on the worker thread itself"
+            : OperatingSystem.IsLinux() ? s_linuxSource ?? LinuxClock
             : null;
 
         /// <summary>The calling thread's user plus kernel processor time since it started, or null.</summary>
@@ -39,17 +48,32 @@ namespace SeedLab.Cli.Infra
 
                 if (OperatingSystem.IsLinux())
                 {
-                    if (IntPtr.Size == 8 && clock_gettime(ClockThreadCpuTimeId, out Timespec ts) == 0)
+                    // The libc call alone may throw (no "libc" to load, no entry point): then, and when it
+                    // fails, the kernel's schedstat file is the answer - never "not measured" while it exists.
+                    if (IntPtr.Size == 8 && !s_clockBroken)
                     {
-                        return TimeSpan.FromTicks(ts.Seconds * TimeSpan.TicksPerSecond + ts.Nanoseconds / 100);
+                        try
+                        {
+                            if (clock_gettime(ClockThreadCpuTimeId, out Timespec ts) == 0)
+                            {
+                                s_linuxSource = LinuxClock;
+                                return TimeSpan.FromTicks(ts.Seconds * TimeSpan.TicksPerSecond + ts.Nanoseconds / 100);
+                            }
+                        }
+                        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+                        {
+                            s_clockBroken = true;
+                        }
                     }
 
-                    return ProcFiles.ReadThreadSchedstat();
+                    TimeSpan? sched = ProcFiles.ReadThreadSchedstat();
+                    if (sched.HasValue) s_linuxSource = LinuxSchedstat;
+                    return sched;
                 }
             }
             catch (Exception)
             {
-                // A missing library or entry point: not available.
+                // Not available.
             }
 
             return null;

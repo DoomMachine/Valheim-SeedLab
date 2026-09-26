@@ -76,7 +76,31 @@ namespace SeedLab.RuntimeTests
             check(SaturationPlanner.RateFromMeanSeedMs(4, double.NaN) == 0 && SaturationPlanner.RateFromMeanSeedMs(4, 0) == 0,
                   "saturate: no mean seed time, no rate", "");
             check(SaturationPlanner.PilotSeeds(1) == 4 && SaturationPlanner.PilotSeeds(16) == 32,
-                  "saturate: the pilot is two seeds per worker, never fewer than four", SaturationPlanner.PilotSeeds(1) + ", " + SaturationPlanner.PilotSeeds(16));
+                  "saturate: the first pilot run is two seeds per worker, never fewer than four", SaturationPlanner.PilotSeeds(1) + ", " + SaturationPlanner.PilotSeeds(16));
+
+            // The pilot grows until it has run long enough for the runtime to have optimised the code.
+            check(SaturationPlanner.MinPilotSeconds(5) == 0.5 && SaturationPlanner.MinPilotSeconds(10) == 1.0 && SaturationPlanner.MinPilotSeconds(30) == 3.0
+                  && SaturationPlanner.MinPilotSeconds(600) == 3.0,
+                  "saturate: a pilot must run 10 % of the target, at least 0.5 s and at most 3 s", "");
+            int n1 = SaturationPlanner.NextPilotSeeds(4, 0.008, 0.5, 1);
+            int n2 = SaturationPlanner.NextPilotSeeds(256, 0.13, 0.5, 1);
+            int n3 = SaturationPlanner.NextPilotSeeds(32, 0.1, 3.0, 16);
+            // 4 seeds in 8 ms: 64x (the most); 256 in 0.13 s: 0.75 / 0.13 = 5.77x -> 1,477; 32 on 16 workers
+            // in 0.1 s toward 4.5 s: 45x -> 1,440, a multiple of 16.
+            check(n1 == 256 && n2 == 1477 && n3 == 1440,
+                  "saturate: a short pilot grows toward 1.5 x the minimum at its own pace, between 2x and 64x, in whole rounds of the workers",
+                  n1 + ", " + n2 + ", " + n3);
+            check(SaturationPlanner.NextPilotSeeds(1477, 0.6, 0.5, 1) == 0 && SaturationPlanner.NextPilotSeeds(SaturationPlanner.PilotCap, 0.1, 3.0, 1) == 0
+                  && SaturationPlanner.NextPilotSeeds(90_000, 0.01, 3.0, 60_000) == 0,
+                  "saturate: a pilot that ran long enough, or cannot grow, stops (and is the one to size from)", "");
+
+            // Four seeds on 1,000 ticks per second, listed out of start order: the later half by START
+            // time is the two 10-tick seeds, so 10 ms - not the 55 ms mean of all four.
+            double half = SaturationPlanner.SecondHalfMeanMs(new long[] { 30, 0, 20, 10 }, new long[] { 10, 100, 10, 100 }, 4, 1000);
+            check(Near(half, 10), "saturate: the pace comes from the later half of the pilot's seeds by start time", half.ToString("F3"));
+            check(Near(SaturationPlanner.SecondHalfMeanMs(new long[] { 5 }, new long[] { 7 }, 1, 1000), 7)
+                  && double.IsNaN(SaturationPlanner.SecondHalfMeanMs(Array.Empty<long>(), Array.Empty<long>(), 0, 1000)),
+                  "saturate: one seed is its own pace; no seed has none", "");
         }
 
         // ---- the steady state ------------------------------------------------------------------------
@@ -127,10 +151,14 @@ namespace SeedLab.RuntimeTests
             check(string.Join(",", warm) == "15,16,17,18,19,20",
                   "indices: warm-up seeds follow the measured ones, worker by worker, and never overlap them", string.Join(",", warm));
 
-            // A replay rebuilds the same (from, n, warm-up), so it reads exactly these indices again.
-            bool same = true;
-            for (int i = 0; i < 100; i++) same &= ProfileIndices.Measured(123, i) == ProfileIndices.Measured(123, i) && ProfileIndices.Measured(123, i) == 123 + i;
-            check(same, "indices: a replay with the plan's first index reads the same measured indices", "");
+            // The measured indices are from, from + 1, ... taken modulo 2^32, so a first index 50 short of
+            // the end reads the last 50 indices and then 0, 1, 2, ... (a replay rebuilds the same list
+            // from the same first index; --profile-check proves that end to end with the seed-list digest).
+            bool wraps = true;
+            const long nearEnd = 4294967296L - 50;
+            for (int i = 0; i < 100; i++) wraps &= ProfileIndices.Measured(nearEnd, i) == (i < 50 ? nearEnd + i : i - 50);
+            check(wraps && ProfileIndices.Measured(nearEnd, 50) == 0 && ProfileIndices.Measured(nearEnd, 99) == 49,
+                  "indices: the measured indices run on from the first index and wrap to 0 after 4294967295", "");
 
             byte[] raw = { 1, 0, 0, 0, 2, 0, 0, 0 };
             string want = Convert.ToHexString(SHA256.HashData(raw)).ToLowerInvariant();
@@ -143,25 +171,55 @@ namespace SeedLab.RuntimeTests
 
         // ---- the plan reader -------------------------------------------------------------------------
 
-        private const string PlanDoc = "{ \"schema\": \"seedlab-profile/2\", \"run\": { \"key\": \"0xA17A25EED10C5117\", \"from_index\": 7, \"warmup_per_worker\": 2 },\n"
-                                       + "  \"sections\": [ { \"tier\": \"t4\", \"workers\": 4, \"seeds\": 128, \"seed_list_sha256\": \"ab\" },\n"
-                                       + "                { \"tier\": \"t2\", \"grid_m\": 384, \"workers\": 1, \"seeds\": 32 },\n"
-                                       + "                { \"tier\": \"t5\", \"prefix\": 21, \"prefix_requested\": 22, \"workers\": 2, \"seeds\": 64 } ] }";
+        private const string D0 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        private const string D1 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        private const string D2 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+        private const string PlanDoc = "{ \"schema\": \"seedlab-profile/2\",\n"
+                                       + "  \"build\": { \"vseed_sha256\": \"v1\", \"worldgen_sha256\": \"w1\", \"locations_sha256\": \"l1\", \"data\": \"1.0.15 / abcd1234 (183 entries)\" },\n"
+                                       + "  \"machine\": { \"gc\": \"server\", \"gc_config\": { \"GCDynamicAdaptationMode\": 1, \"HeapCount\": 16 }, \"logical_cores\": 16,\n"
+                                       + "               \"cpu\": { \"brand\": \"Some CPU\" } },\n"
+                                       + "  \"run\": { \"tier\": \"all\", \"key\": \"0xA17A25EED10C5117\", \"from_index\": 7, \"warmup_per_worker\": 2, \"counters\": false,\n"
+                                       + "           \"saturate\": { \"pilots\": [ { \"section_index\": 0, \"workers\": 4, \"pilot_runs\": [ 8, 64 ], \"pilot_s\": 1.5 },\n"
+                                       + "                                    { \"section_index\": 1, \"workers\": 1, \"pilot_seeds\": 4, \"pilot_s\": 0.5 },\n"
+                                       + "                                    { \"section_index\": 2, \"workers\": 2, \"pilot_runs\": [ 4 ], \"pilot_s\": 20 } ] } },\n"
+                                       + "  \"sections\": [ { \"tier\": \"t4\", \"workers\": 4, \"seeds\": 128, \"wall_s\": 5.5, \"seed_list_sha256\": \"" + D0 + "\" },\n"
+                                       + "                { \"tier\": \"t2\", \"grid_m\": 384, \"workers\": 1, \"seeds\": 32, \"wall_s\": 1, \"seed_list_sha256\": \"" + D1 + "\" },\n"
+                                       + "                { \"tier\": \"t5\", \"prefix\": 21, \"prefix_requested\": 22, \"workers\": 2, \"seeds\": 64, \"wall_s\": 100, \"seed_list_sha256\": \"" + D2 + "\" } ] }";
 
         private static void Plans(Action<bool, string, string> check)
         {
             ProfilePlan p = ProfilePlan.Parse(PlanDoc);
             check(p.Key == 0xA17A25EED10C5117UL && p.From == 7 && p.Warmup == 2 && p.Sections.Count == 3,
                   "plan: the seed order, the first index and the warm-up are read", p.Sections.Count + " sections");
-            check(p.Sections[0].Tier == "t4" && p.Sections[0].Workers == 4 && p.Sections[0].Seeds == 128 && p.Sections[0].SeedListSha256 == "ab"
-                  && p.Sections[1].Grid == 384 && p.Sections[2].PrefixRequested == 22,
+            check(p.Sections[0].Tier == "t4" && p.Sections[0].Workers == 4 && p.Sections[0].Seeds == 128 && p.Sections[0].SeedListSha256 == D0
+                  && p.Sections[1].Grid == 384 && p.Sections[1].SeedListSha256 == D1 && p.Sections[2].PrefixRequested == 22,
                   "plan: each section's tier, grid, ASKED-FOR prefix (not the run length), workers, seeds and digest, in order", "");
+            check(p.Pilots.Count == 3 && string.Join(",", p.Pilots[0].Runs) == "8,64" && p.Pilots[0].SectionIndex == 0 && p.Pilots[0].Workers == 4
+                  && string.Join(",", p.Pilots[1].Runs) == "4" && p.Pilots[2].SectionIndex == 2,
+                  "plan: the pilots that ran before the measurements are read, each run's seed count in order (an older single pilot_seeds too)", "");
+            check(p.RecordedSeconds.HasValue && Near(p.RecordedSeconds.Value, 5.5 + 1 + 100 + 1.5 + 0.5 + 20),
+                  "plan: how long the recorded measurements and pilots took is known before replaying them", p.RecordedSeconds?.ToString() ?? "null");
+            check(p.Counters == false && p.TierText == "all" && p.VseedSha256 == "v1" && p.WorldGenSha256 == "w1" && p.LocationsSha256 == "l1"
+                  && p.DataProvenance!.StartsWith("1.0.15", StringComparison.Ordinal) && p.GcMode == "server" && p.GcDynamicAdaptation == "1"
+                  && p.LogicalCores == 16 && p.CpuBrand == "Some CPU",
+                  "plan: what the recorded run was measured with (counters, build, game data, garbage collector, machine) is read", "");
+
+            // A replay records the pilots it ran again under run.plan, and a replay of THAT replays them.
+            string replayDoc = PlanDoc.Replace("\"saturate\": { \"pilots\"", "\"plan\": { \"pilots\"");
+            ProfilePlan rp = ProfilePlan.Parse(replayDoc);
+            check(rp.Pilots.Count == 3 && string.Join(",", rp.Pilots[0].Runs) == "8,64",
+                  "plan: a replay's own record of the pilots it re-ran is a plan's pilots too", "");
 
             check(p.Conflict(null, null, null) == null && p.Conflict(0xA17A25EED10C5117UL, 7, 2) == null,
                   "plan: options left out, or equal to the plan's, agree", "");
             check((p.Conflict(1, null, null) ?? "").Contains("--key") && (p.Conflict(null, 8, null) ?? "").Contains("--from")
                   && (p.Conflict(null, null, 3) ?? "").Contains("--warmup"),
                   "plan: a different key, first index or warm-up is named as the conflict", p.Conflict(null, null, 3) ?? "");
+            ProfilePlan withCounters = ProfilePlan.Parse(PlanDoc.Replace("\"counters\": false", "\"counters\": true"));
+            check(p.CountersConflict(false) == null && (p.CountersConflict(true) ?? "").Contains("leave --counters out")
+                  && (withCounters.CountersConflict(false) ?? "").Contains("add --counters") && withCounters.CountersConflict(true) == null,
+                  "plan: counting on one side and not the other is a conflict, with what to do", withCounters.CountersConflict(false) ?? "");
 
             check(Refused(PlanDoc.Replace("seedlab-profile/2", "seedlab-profile/1"), "only seedlab-profile/2"),
                   "plan: a /1 document is refused in plain words (it lacks the asked-for prefix)", "");
@@ -170,6 +228,21 @@ namespace SeedLab.RuntimeTests
             check(Refused("{ \"schema\": \"seedlab-profile/2\", \"run\": { \"key\": \"0x1\", \"from_index\": 0, \"warmup_per_worker\": 3 } }", "no measured sections"),
                   "plan: an --overhead profile (no sections) is not a plan", "");
             check(Refused("not json", "not a JSON"), "plan: something that is not JSON says so", "");
+
+            // A hand-edited or foreign document: a plain reason naming the field, never a crash.
+            check(Refused(PlanDoc.Replace(", \"seed_list_sha256\": \"" + D1 + "\"", ""), "sections[1].seed_list_sha256"),
+                  "plan: a section without its seed-list digest is refused (a replay could not prove its seeds)", "");
+            check(Refused(PlanDoc.Replace("\"grid_m\": 384", "\"grid_m\": null"), "sections[1] is a t2 section without grid_m")
+                  && Refused(PlanDoc.Replace("\"grid_m\": 384", "\"grid_m\": \"384\""), "sections[1].grid_m is not a whole number"),
+                  "plan: a grid that is null or text is refused by name", "");
+            check(ProfilePlan.Parse(PlanDoc.Replace("{ \"tier\": \"t4\",", "{ \"tier\": \"t4\", \"grid_m\": null,")).Sections[0].Grid == 0,
+                  "plan: a null grid on a t4 section (which has none) is read as absent", "");
+            check(Refused(PlanDoc.Replace("\"from_index\": 7", "\"from_index\": -5"), "outside the seed order")
+                  && Refused(PlanDoc.Replace("\"from_index\": 7", "\"from_index\": 4294967296"), "outside the seed order")
+                  && Refused(PlanDoc.Replace("\"warmup_per_worker\": 2", "\"warmup_per_worker\": 5000"), "outside 0 to 1000"),
+                  "plan: a first index or warm-up the command line would refuse is refused here too", "");
+            check(Refused(PlanDoc.Replace("\"section_index\": 1, \"workers\": 1", "\"section_index\": 1, \"workers\": 3"), "its section at 1"),
+                  "plan: a pilot that does not match its section's worker count is refused", "");
         }
 
         private static bool Refused(string json, string words)

@@ -797,10 +797,11 @@ per-point events (base heights, world angles, river lookups), and `--out profile
   memory sampled every 200 ms (working set, private bytes, the collector's heap and what it has
   committed) with the last collection's details, and the bytes read and written.
 - **`--saturate <seconds>`** sizes every measurement so all its workers stay busy for about that long
-  (a short uncounted pilot measures the rate first; the plan and the estimated time are printed before
+  (an uncounted pilot measures the rate first; the plan and the estimated time are printed before
   anything is measured), and **`--plan <profile.json>`** replays an earlier profile's exact sections,
-  worker counts and seeds, so a before/after comparison measures the same worlds. How to run it and
-  read its numbers: [`docs\benchmarking.md`](docs/benchmarking.md).
+  worker counts and seeds after running its pilots again, so a before/after comparison measures the
+  same worlds from the same start. How to run it and read its numbers:
+  [`docs\benchmarking.md`](docs/benchmarking.md).
 
 - **It changes no answer.** Timestamps are taken only at phase boundaries, generator code can write
   the profiler but never read it (an IL check in the tests enforces that), and the world fingerprints
@@ -1343,7 +1344,7 @@ seedlab.sh, SeedLab.command         the same for macOS and Linux (not tested the
 tests\SeedLab.Acceptance.Tests   the 32-check gate against the game's own output
 tests\SeedLab.Search.Tests       the query language, the tiers and prefilter parity
 tests\SeedLab.Search.Safety.Tests  the output layer: bounds, rotation, kills and resumes
-tests\SeedLab.Runtime.Tests      the runtime layer (311 checks)
+tests\SeedLab.Runtime.Tests      the runtime layer (326 checks)
 tests\SeedLab.Tests              the library-level checks, incl. the natives gate and the river golden
 tests\bench-search.ps1           a real search's stages: time, processor, memory, disk   docs\benchmarking.md
 data\1.0.15-59f53fb5\    the captured game data (its own README is the authority)

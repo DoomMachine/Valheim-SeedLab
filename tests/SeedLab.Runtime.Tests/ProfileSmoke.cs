@@ -59,6 +59,17 @@ namespace SeedLab.RuntimeTests
                       "the saturated run records one pilot per measurement", "");
                 Check(rb.GetProperty("run").TryGetProperty("plan", out JsonElement plan) && plan.GetProperty("file").GetString() == Path.GetFullPath(a),
                       "the replay records the plan it replayed", "");
+                JsonElement rp = default;
+                bool pilotsAgain = plan.ValueKind == JsonValueKind.Object && plan.TryGetProperty("pilots", out rp) && rp.GetArrayLength() == 2;
+                for (int i = 0; pilotsAgain && i < 2; i++)
+                {
+                    pilotsAgain &= rp[i].GetProperty("pilot_runs").GetRawText() == sat.GetProperty("pilots")[i].GetProperty("pilot_runs").GetRawText()
+                                   && rp[i].GetProperty("workers").GetInt32() == sat.GetProperty("pilots")[i].GetProperty("workers").GetInt32();
+                }
+
+                Check(pilotsAgain, "the replay ran the plan's pilots again first, with the same seed counts, so both measured from the same start", "");
+                Check(ra.GetProperty("run").GetProperty("tier").GetString() == "t4" && rb.GetProperty("run").GetProperty("tier").GetString() == "t4",
+                      "the replay keeps the plan's run.tier", rb.GetProperty("run").GetProperty("tier").GetString() ?? "");
 
                 JsonElement sa = ra.GetProperty("sections"), sb = rb.GetProperty("sections");
                 Check(sa.GetArrayLength() == 2 && sb.GetArrayLength() == 2, "two measurements each (t4 at 1 and at 2 workers)", sa.GetArrayLength() + " and " + sb.GetArrayLength());
@@ -92,6 +103,14 @@ namespace SeedLab.RuntimeTests
                 Check(r3 == 2 && o3.Contains("only seedlab-profile/2", StringComparison.Ordinal), "a seedlab-profile/1 document is not a plan", "exit " + r3);
                 (int r4, string o4) = Vseed(exe, cache, "profile", "--tier", "t4", "--seeds", "8", "--saturate", "3", "--quiet-baseline", "0");
                 Check(r4 == 2 && o4.Contains("--saturate chooses", StringComparison.Ordinal), "--saturate with --seeds is refused", "exit " + r4);
+                (int r5, string o5) = Vseed(exe, cache, "profile", "--plan", a, "--counters", "--quiet-baseline", "0");
+                Check(r5 == 2 && o5.Contains("leave --counters out", StringComparison.Ordinal),
+                      "a plan measured without --counters is refused with --counters (the timings would not compare)", "exit " + r5);
+                string textGrid = Path.Combine(root, "textgrid.json");
+                File.WriteAllText(textGrid, File.ReadAllText(a).Replace("\"seed_list_sha256\"", "\"grid_m\": \"G384\", \"seed_list_sha256\""));
+                (int r6, string o6) = Vseed(exe, cache, "profile", "--plan", textGrid, "--quiet-baseline", "0");
+                Check(r6 == 2 && o6.Contains("grid_m is not a whole number", StringComparison.Ordinal),
+                      "a hand-edited plan is refused by field, in plain words, not with a crash", "exit " + r6);
             }
             catch (Exception ex)
             {
@@ -148,7 +167,10 @@ namespace SeedLab.RuntimeTests
             bool ramOk = sampler.GetProperty("samples").GetInt32() >= 2
                          && sampler.GetProperty("working_set_bytes").GetProperty("peak").GetInt64() > 0
                          && sampler.GetProperty("gc_heap_bytes").GetProperty("peak").GetInt64() > 0
-                         && mem.GetProperty("allocated_bytes").GetInt64() > 0;
+                         && mem.GetProperty("allocated_bytes").GetInt64() > 0
+                         && mem.GetProperty("profiler_table").GetProperty("while_measuring_bytes").GetInt64() > 0
+                         && mem.GetProperty("profiler_table").GetProperty("kept_bytes").GetInt64() > 0
+                         && mem.GetProperty("profiler_table").GetProperty("kept_bytes").GetInt64() <= mem.GetProperty("profiler_table").GetProperty("while_measuring_bytes").GetInt64();
             if (OperatingSystem.IsWindows()) ramOk &= sampler.GetProperty("private_bytes").GetProperty("peak").GetInt64() > 0;
             Check(ramOk, label + "memory: at least two samples, positive working set, heap and allocation", sampler.GetProperty("samples").GetInt32() + " samples");
 
@@ -177,9 +199,18 @@ namespace SeedLab.RuntimeTests
             using Process p = Process.Start(psi)!;
             p.StandardInput.Close();
             System.Threading.Tasks.Task<string> err = p.StandardError.ReadToEndAsync();
-            string stdout = p.StandardOutput.ReadToEnd();
+            System.Threading.Tasks.Task<string> stdout = p.StandardOutput.ReadToEndAsync();
+            // A hung vseed must not hang the check: 15 minutes is far beyond any run here.
+            if (!p.WaitForExit(TimeSpan.FromMinutes(15)))
+            {
+                try { p.Kill(entireProcessTree: true); }
+                catch (Exception) { /* already gone */ }
+                p.WaitForExit();
+                return (-1, "timed out after 15 minutes and was stopped");
+            }
+
             p.WaitForExit();
-            return (p.ExitCode, stdout + err.Result);
+            return (p.ExitCode, stdout.Result + err.Result);
         }
 
         private static string Tail(string s)

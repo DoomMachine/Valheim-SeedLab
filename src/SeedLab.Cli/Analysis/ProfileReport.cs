@@ -29,10 +29,13 @@ namespace SeedLab.Cli.Analysis
     /// <para>The document is <c>seedlab-profile/2</c> JSON, UTF-8 without a BOM. A measurement that was
     /// not taken is left out, never written as 0. Only this layer reads a <see cref="PhaseSink"/>.
     /// /2 keeps every /1 field as it was and adds, per section, what the section used (<c>cpu</c>,
-    /// <c>steady_state</c>, <c>memory</c>, <c>io</c>, <c>gc.last_gc</c>), how its seed count was chosen
+    /// <c>steady_state</c>, <c>memory</c> with the profiler's own table and the exact window peaks,
+    /// <c>io</c>, <c>gc.last_gc</c> and <c>gc.heap_count_max</c>), how its seed count was chosen
     /// (<c>sizing</c>), and what a replay needs (<c>prefix_requested</c>, <c>first_index</c>,
-    /// <c>seed_list_sha256</c>); per run, the <c>--saturate</c> pilots or the <c>--plan</c> replayed; and
-    /// the garbage collector's configuration in the machine block.</para>
+    /// <c>seed_list_sha256</c>); per run, the <c>--saturate</c> pilots (every pilot run's seed count) or
+    /// the <c>--plan</c> replayed (the pilots it ran again, and what differed from the plan's run); and
+    /// the garbage collector's configuration in the machine block. A replay keeps the plan's
+    /// <c>run.tier</c>; <c>run.plan</c> says it was a replay.</para>
     /// </summary>
     internal sealed class ProfileReport
     {
@@ -60,7 +63,13 @@ namespace SeedLab.Cli.Analysis
             }
 
             _tainted = _taintReasons.Count > 0;
-            foreach (SectionResult s in run.Sections) _sections.Add(new SectionView(s, run));
+            long kept = 0;
+            foreach (SectionResult s in run.Sections)
+            {
+                // Every earlier section's table, as it was kept, lived under this one.
+                _sections.Add(new SectionView(s, run, kept));
+                kept += s.Table.BytesKept;
+            }
             if (run.Overhead == null) BuildHypotheses();
         }
 
@@ -114,36 +123,31 @@ namespace SeedLab.Cli.Analysis
 
         private sealed class SectionView
         {
-            public SectionView(SectionResult r, ProfileRun run)
+            public SectionView(SectionResult r, ProfileRun run, long keptBefore)
             {
                 Result = r;
-                int n = r.Rows.Count;
+                KeptBeforeBytes = keptBefore;
+                SeedTable t = r.Table;
+                int n = t.Count;
                 double f = Stopwatch.Frequency;
                 SeedMs = new double[n];
-                for (int i = 0; i < n; i++) SeedMs[i] = r.Rows[i].WallTicks * 1000.0 / f;
+                for (int i = 0; i < n; i++) SeedMs[i] = t.WallTicks[i] * 1000.0 / f;
                 Seed = Stat.Of(SeedMs);
                 double alloc = 0;
-                foreach (SeedRow row in r.Rows) alloc += row.AllocBytes;
+                for (int i = 0; i < n; i++) alloc += t.AllocBytes[i];
                 AllocMean = n > 0 ? alloc / n : 0;
 
-                bool recorded = n > 0 && r.Rows[0].Phase != null;
+                bool recorded = n > 0 && t.HasPhases;
                 if (recorded)
                 {
                     foreach (Phase p in PhaseMap.All)
                     {
                         int id = (int)p;
-                        long entries = 0;
-                        double allocP = 0;
-                        double[] ms = new double[n];
-                        for (int i = 0; i < n; i++)
-                        {
-                            long[] ph = r.Rows[i].Phase!;
-                            entries += ph[PhaseSink.EntriesOffset + id];
-                            allocP += ph[PhaseSink.AllocOffset + id];
-                            ms[i] = ph[id] * 1000.0 / f;
-                        }
-
+                        long entries = t.EntriesSum[id];
+                        double allocP = t.AllocSum[id];
                         if (entries == 0) continue;
+                        double[] ms = new double[n];
+                        for (int i = 0; i < n; i++) ms[i] = t.Tick(i, p) * 1000.0 / f;
                         Stat st = Stat.Of(ms);
                         Phases.Add(new PhaseView
                         {
@@ -180,12 +184,12 @@ namespace SeedLab.Cli.Analysis
                     OtherMs = Seed.Mean - top;
                 }
 
-                if (run.CountersOn && n > 0 && r.Rows[0].Counters != null)
+                if (run.CountersOn && n > 0 && t.HasCounters)
                 {
                     Counters = new double[PhaseClock.Capacity];
-                    foreach (SeedRow row in r.Rows)
+                    for (int i = 0; i < n; i++)
                     {
-                        for (int c = 0; c < PhaseClock.Capacity; c++) Counters[c] += row.Counters![c];
+                        for (int c = 0; c < PhaseClock.Capacity; c++) Counters[c] += t.Counter(i, c);
                     }
 
                     for (int c = 0; c < PhaseClock.Capacity; c++) Counters[c] /= n;
@@ -206,16 +210,9 @@ namespace SeedLab.Cli.Analysis
                 // The steady state: every seed's start and finish, on the clock of the window's edges.
                 if (n > 0 && r.EndTicks > r.StartTicks)
                 {
-                    long[] starts = new long[n], ends = new long[n];
-                    int[] who = new int[n];
-                    for (int i = 0; i < n; i++)
-                    {
-                        starts[i] = r.Rows[i].StartTicks;
-                        ends[i] = r.Rows[i].StartTicks + r.Rows[i].WallTicks;
-                        who[i] = r.Rows[i].Worker;
-                    }
-
-                    Steady = SteadyState.Compute(r.StartTicks, r.EndTicks, starts, ends, who, r.WorkerCount, Stopwatch.Frequency);
+                    long[] ends = new long[n];
+                    for (int i = 0; i < n; i++) ends[i] = t.StartTicks[i] + t.WallTicks[i];
+                    Steady = SteadyState.Compute(r.StartTicks, r.EndTicks, t.StartTicks, ends, t.Worker, r.WorkerCount, Stopwatch.Frequency);
                 }
 
                 // Worker CPU, measured on each worker's own thread over its share.
@@ -242,6 +239,9 @@ namespace SeedLab.Cli.Analysis
 
             public SteadyStateResult? Steady { get; }
 
+            /// <summary>The profiler's tables of every earlier section, as kept, alive while this one measured.</summary>
+            public long KeptBeforeBytes { get; }
+
             /// <summary>The workers' own thread CPU summed, when every worker's was read.</summary>
             public double? WorkerCpuSeconds { get; }
 
@@ -260,9 +260,9 @@ namespace SeedLab.Cli.Analysis
 
             public PhaseView? Get(Phase p) => Phases.Find(v => v.Phase == p);
 
-            public double SeedsPerSecond => Result.WallSeconds > 0 ? Result.Rows.Count / Result.WallSeconds : 0;
+            public double SeedsPerSecond => Result.WallSeconds > 0 ? Result.Table.Count / Result.WallSeconds : 0;
 
-            public double CpuMsPerSeed => Result.Rows.Count > 0 ? Result.CpuSeconds * 1000.0 / Result.Rows.Count : 0;
+            public double CpuMsPerSeed => Result.Table.Count > 0 ? Result.CpuSeconds * 1000.0 / Result.Table.Count : 0;
 
             public double PauseShare => Result.WallSeconds > 0 ? Result.PauseMs / (Result.WallSeconds * 1000.0) : 0;
 
@@ -271,13 +271,13 @@ namespace SeedLab.Cli.Analysis
             /// <summary>Per-seed ratio of the summed ticks of <paramref name="num"/> to those of <paramref name="den"/> (or the seed).</summary>
             public double[] Shares(Phase[] num, Phase? den)
             {
-                double[] s = new double[Result.Rows.Count];
+                SeedTable t = Result.Table;
+                double[] s = new double[t.Count];
                 for (int i = 0; i < s.Length; i++)
                 {
-                    long[] ph = Result.Rows[i].Phase!;
                     double a = 0;
-                    foreach (Phase p in num) a += ph[(int)p];
-                    double b = den.HasValue ? ph[(int)den.Value] : Result.Rows[i].WallTicks;
+                    foreach (Phase p in num) a += t.Tick(i, p);
+                    double b = den.HasValue ? t.Tick(i, den.Value) : t.WallTicks[i];
                     s[i] = b > 0 ? a / b : 0;
                 }
 
@@ -455,6 +455,18 @@ namespace SeedLab.Cli.Analysis
                                  + Out.F(sixteen.CpuMsPerSeed, 1) + " at 16 (x" + Out.F(ratio, 2) + "; predicted x1.15-1.45)";
                     SectionView? eight = _sections.Find(v => v.Result.WorkerCount == 8 && v.Result.Spec.Label == one.Result.Spec.Label);
                     if (eight != null) h.Evidence += ", " + Out.F(eight.CpuMsPerSeed, 1) + " at 8";
+
+                    // Sized per worker count (--saturate), the sections cover different numbers of the same
+                    // seed order, and seed costs vary: say so rather than imply like for like.
+                    int n1 = one.Result.Table.Count, n16 = sixteen.Result.Table.Count;
+                    if (n1 != n16 || (eight != null && eight.Result.Table.Count != n1))
+                    {
+                        h.Evidence += " - over different seed counts (1 worker: " + n1 + " seeds; "
+                                      + (eight != null ? "8 workers: " + eight.Result.Table.Count + "; " : "")
+                                      + "16 workers: " + n16 + "; the first " + Math.Min(n1, Math.Min(n16, eight?.Result.Table.Count ?? n16))
+                                      + " in common), so part of the difference can be the seeds";
+                    }
+
                     break;
                 }
 
@@ -707,14 +719,17 @@ namespace SeedLab.Cli.Analysis
                 {
                     pilots.Add(new Dictionary<string, object?>
                     {
+                        ["section_index"] = p.SectionIndex,
                         ["section"] = p.Label,
                         ["workers"] = p.Workers,
+                        ["pilot_runs"] = p.Sizing.PilotRuns?.ConvertAll(x => (object?)x),
                         ["pilot_seeds"] = p.Sizing.PilotSeeds,
                         ["pilot_s"] = p.Sizing.PilotSeconds.HasValue ? Math.Round(p.Sizing.PilotSeconds.Value, 3) : null,
                         ["pilot_mean_seed_ms"] = p.Sizing.PilotMeanSeedMs.HasValue ? R(p.Sizing.PilotMeanSeedMs.Value) : null,
                         ["rate_estimate_seeds_per_second"] = p.Sizing.RateEstimate.HasValue ? R(p.Sizing.RateEstimate.Value) : null,
                         ["chosen_seeds"] = p.Seeds,
                         ["capped"] = p.Sizing.Capped ? true : null,
+                        ["min_per_worker_decided"] = p.Sizing.FloorDecided ? true : null,
                         ["estimated_s"] = p.Sizing.EstimatedSeconds.HasValue ? R(p.Sizing.EstimatedSeconds.Value) : null,
                     });
                 }
@@ -723,8 +738,10 @@ namespace SeedLab.Cli.Analysis
                 {
                     ["target_s"] = _run.SaturateSeconds.Value,
                     ["min_seeds_per_worker"] = SaturationPlanner.MinPerWorker,
+                    ["min_pilot_s"] = SaturationPlanner.MinPilotSeconds(_run.SaturateSeconds.Value),
                     ["rule"] = "seeds = max(workers x min_seeds_per_worker, ceil(rate x target_s)) rounded up to a multiple of the worker count; "
-                               + "rate = workers x 1000 / the pilot's mean seed ms; the pilots are not measurements",
+                               + "rate = workers x 1000 / the mean seed ms of the later half of the last pilot run; a pilot grows run by run "
+                               + "(pilot_runs) until one has worked min_pilot_s; the pilots are not measurements",
                     ["estimated_total_s"] = _run.EstimatedSeconds.HasValue ? R(_run.EstimatedSeconds.Value) : null,
                     ["pilots"] = pilots,
                 };
@@ -732,11 +749,33 @@ namespace SeedLab.Cli.Analysis
 
             if (_run.PlanFile != null)
             {
+                List<object?> replayed = new List<object?>();
+                foreach (ReplayedPilot p in _run.ReplayedPilots)
+                {
+                    replayed.Add(new Dictionary<string, object?>
+                    {
+                        ["section_index"] = p.SectionIndex,
+                        ["section"] = p.Label,
+                        ["workers"] = p.Workers,
+                        ["pilot_runs"] = p.Runs.ConvertAll(x => (object?)x),
+                        ["pilot_s"] = Math.Round(p.Seconds, 3),
+                    });
+                }
+
+                List<object?> differences = new List<object?>();
+                foreach (PlanDifference x in _run.PlanDifferences)
+                {
+                    differences.Add(new Dictionary<string, object?> { ["what"] = x.What, ["plan"] = x.Plan, ["now"] = x.Now, ["note"] = x.Note });
+                }
+
                 runBlock["plan"] = new Dictionary<string, object?>
                 {
                     ["file"] = _run.PlanFile,
                     ["sha256"] = _run.PlanSha256,
-                    ["note"] = "the sections, worker counts, seed counts, seed order and warm-up were replayed from this profile",
+                    ["note"] = "the sections, worker counts, seed counts, seed order and warm-up were replayed from this profile, after "
+                               + "its pilots were run again (uncounted), so the measurements started from the same history of work",
+                    ["pilots"] = replayed,
+                    ["differences"] = differences,
                 };
             }
 
@@ -775,6 +814,9 @@ namespace SeedLab.Cli.Analysis
                 notMeasured.Add("the process's input and output: this operating system gave no reading");
             if (_sections.Exists(s => s.Result.Resources && s.WorkerCpuSeconds == null))
                 notMeasured.Add("the workers' own thread CPU: this operating system gave no reading, so no split of the process's CPU");
+            if (_sections.Exists(s => s.Result.Resources))
+                notMeasured.Add("the number of garbage-collector heaps in use: with dynamic adaptation (DATAS) it moves between 1 and gc.heap_count_max, "
+                                + "and only the maximum is read");
             d["not_measured"] = notMeasured;
             d["disk_note"] = "vseed profile writes nothing while it measures: --out (and --per-seed's CSV) is written once, after the last "
                              + "section, and vseed's own session log is kept in the cache root. Each section's io block counts every read "
@@ -876,7 +918,7 @@ namespace SeedLab.Cli.Analysis
                 ["prefix"] = r.Spec.Tier == "t5" ? r.PrefixRun : null,
                 ["work"] = ProfileCommand.DescribeWork(r.Spec.Tier),
                 ["workers"] = r.WorkerCount,
-                ["seeds"] = r.Rows.Count,
+                ["seeds"] = r.Table.Count,
                 ["warmup_per_worker"] = r.Warmup,
                 ["wall_s"] = Math.Round(r.WallSeconds, 4),
                 ["seeds_per_second"] = Math.Round(s.SeedsPerSecond, 3),
@@ -938,7 +980,11 @@ namespace SeedLab.Cli.Analysis
             };
             if (r.Resources)
             {
-                gc["heap_count"] = r.GcHeapCount;
+                gc["heap_count_max"] = r.GcHeapCountMax;
+                gc["heap_count_note"] = r.GcHeapCountMax.HasValue
+                    ? "the collector's configured maximum (GC.GetConfigurationVariables HeapCount), not the heaps in use: with dynamic "
+                      + "adaptation (DATAS) that moves between 1 and this, and is not measured"
+                    : null;
                 gc["last_gc"] = LastGcDoc(r.LastGc, r.GcCountAtStart);
                 if (r.LastFullGc.Index > 0)
                 {
@@ -1001,12 +1047,15 @@ namespace SeedLab.Cli.Analysis
                 ["plan_file"] = z.PlanFile,
                 ["target_s"] = z.TargetSeconds,
                 ["min_seeds_per_worker"] = z.MinPerWorker,
+                ["pilot_runs"] = z.PilotRuns?.ConvertAll(x => (object?)x),
                 ["pilot_seeds"] = z.PilotSeeds,
                 ["pilot_s"] = z.PilotSeconds.HasValue ? Math.Round(z.PilotSeconds.Value, 3) : null,
                 ["pilot_mean_seed_ms"] = z.PilotMeanSeedMs.HasValue ? R(z.PilotMeanSeedMs.Value) : null,
                 ["rate_estimate_seeds_per_second"] = z.RateEstimate.HasValue ? R(z.RateEstimate.Value) : null,
                 ["capped"] = z.Capped ? true : null,
+                ["min_per_worker_decided"] = z.FloorDecided ? true : null,
                 ["estimated_s"] = z.EstimatedSeconds.HasValue ? R(z.EstimatedSeconds.Value) : null,
+                ["recorded_s"] = z.RecordedSeconds.HasValue ? R(z.RecordedSeconds.Value) : null,
             };
         }
 
@@ -1036,7 +1085,7 @@ namespace SeedLab.Cli.Analysis
                            + "server GC, the JIT, the quiet-machine probe (every 5 s) and the runtime. Under workstation GC a collection runs on "
                            + "the worker that triggered it and lands in workers_s instead. workers_not_running_s is the time the workers' shares "
                            + "spent off a processor: waiting for a collection, preempted, or stalled on a page fault. Thread and process times "
-                           + "advance in steps of about 15.6 ms on Windows",
+                           + "advance in steps of about 15.6 ms on Windows, so a sampler_s of 0 means below that step, not free",
             };
             return c;
         }
@@ -1046,17 +1095,24 @@ namespace SeedLab.Cli.Analysis
         {
             SectionResult r = s.Result;
             double seedAlloc = 0;
-            foreach (SeedRow row in r.Rows) seedAlloc += row.AllocBytes;
-            long rowsBytes = RowsRetainedBytes(r);
+            for (int i = 0; i < r.Table.Count; i++) seedAlloc += r.Table.AllocBytes[i];
             Dictionary<string, object?> m = new Dictionary<string, object?>
             {
                 ["allocated_bytes"] = r.AllocatedBytes,
-                ["allocated_bytes_per_seed"] = r.Rows.Count > 0 ? Math.Round((double)r.AllocatedBytes / r.Rows.Count) : null,
+                ["allocated_bytes_per_seed"] = r.Table.Count > 0 ? Math.Round((double)r.AllocatedBytes / r.Table.Count) : null,
                 ["seed_work_allocated_bytes"] = Math.Round(seedAlloc),
-                ["profiler_rows_retained_bytes_estimate"] = rowsBytes,
                 ["allocation_note"] = "allocated_bytes is the whole process in the window; seed_work_allocated_bytes sums each measured seed's own; "
-                                      + "the difference is the profiler's rows, the sampler, the probe and the runtime. The rows stay alive until the "
-                                      + "report is written, so they are part of every heap figure here",
+                                      + "the difference is the sampler, the probe and the runtime (the profiler's per-seed table is allocated before "
+                                      + "the window)",
+                ["profiler_table"] = new Dictionary<string, object?>
+                {
+                    ["while_measuring_bytes"] = r.Table.BytesWhileMeasured,
+                    ["kept_bytes"] = r.Table.BytesKept,
+                    ["earlier_sections_kept_bytes"] = s.KeptBeforeBytes,
+                    ["note"] = "the profile's own per-seed figures: this section's table (no object per seed, allocated before the window) "
+                               + "and every earlier section's table as kept after it ended, cut to the phases it entered. Both were alive while "
+                               + "this section measured, so they are part of its memory figures",
+                },
             };
             if (r.Memory != null)
             {
@@ -1086,17 +1142,34 @@ namespace SeedLab.Cli.Analysis
                 };
             }
 
+            WindowPeaks(r, out long? ws, out long? priv);
+            if (r.MemoryStart != null && r.MemoryEnd != null)
+            {
+                m["window_peak"] = new Dictionary<string, object?>
+                {
+                    ["working_set_bytes"] = ws,
+                    ["private_bytes"] = priv,
+                    ["working_set_rose"] = ws.HasValue,
+                    ["private_rose"] = priv.HasValue,
+                    ["note"] = "exact, from the operating system's peak counters read at both edges of the window: they only ever rise, so "
+                               + "a peak that rose in the window is the window's own. When it did not rise, the window stayed below the "
+                               + "earlier peak and only the sampled peak is known",
+                };
+            }
+
             return m;
         }
 
-        /// <summary>What the profiler's own per-seed rows keep alive: the row, its phase deltas, its counters.</summary>
-        private static long RowsRetainedBytes(SectionResult r)
+        /// <summary>The window's exact peaks, where the lifetime peak rose inside it; null where it did not.</summary>
+        private static void WindowPeaks(SectionResult r, out long? workingSet, out long? privateBytes)
         {
-            if (r.Rows.Count == 0) return 0;
-            long per = 64;
-            if (r.Rows[0].Phase != null) per += 24 + 8L * r.Rows[0].Phase!.Length;
-            if (r.Rows[0].Counters != null) per += 24 + 8L * r.Rows[0].Counters!.Length;
-            return per * r.Rows.Count;
+            workingSet = null;
+            privateBytes = null;
+            if (r.MemoryStart == null || r.MemoryEnd == null) return;
+            if (r.MemoryEnd.PeakWorkingSet.HasValue && r.MemoryStart.PeakWorkingSet.HasValue && r.MemoryEnd.PeakWorkingSet > r.MemoryStart.PeakWorkingSet)
+                workingSet = r.MemoryEnd.PeakWorkingSet;
+            if (r.MemoryEnd.PeakPrivateBytes.HasValue && r.MemoryStart.PeakPrivateBytes.HasValue && r.MemoryEnd.PeakPrivateBytes > r.MemoryStart.PeakPrivateBytes)
+                privateBytes = r.MemoryEnd.PeakPrivateBytes;
         }
 
         private static Dictionary<string, object?>? SeriesDoc(SeriesStat? s)
@@ -1372,18 +1445,19 @@ namespace SeedLab.Cli.Analysis
             foreach (SectionView s in _sections)
             {
                 string label = s.Result.Spec.Label.Replace(' ', '_');
-                foreach (SeedRow r in s.Result.Rows)
+                SeedTable r = s.Result.Table;
+                for (int i = 0; i < r.Count; i++)
                 {
                     if (++rows > 1_000_000) break;
                     sb.Append(label).Append(',').Append(s.Result.WorkerCount.ToString(CultureInfo.InvariantCulture))
-                      .Append(',').Append(r.Seed.ToString(CultureInfo.InvariantCulture))
-                      .Append(',').Append(r.Worker.ToString(CultureInfo.InvariantCulture))
-                      .Append(',').Append(((long)Math.Round((r.StartTicks - s.Result.StartTicks) * 1e6 / f)).ToString(CultureInfo.InvariantCulture))
-                      .Append(',').Append(((long)Math.Round(r.WallTicks * 1e6 / f)).ToString(CultureInfo.InvariantCulture))
-                      .Append(',').Append((r.AllocBytes / 1024).ToString(CultureInfo.InvariantCulture));
+                      .Append(',').Append(r.Seed[i].ToString(CultureInfo.InvariantCulture))
+                      .Append(',').Append(r.Worker[i].ToString(CultureInfo.InvariantCulture))
+                      .Append(',').Append(((long)Math.Round((r.StartTicks[i] - s.Result.StartTicks) * 1e6 / f)).ToString(CultureInfo.InvariantCulture))
+                      .Append(',').Append(((long)Math.Round(r.WallTicks[i] * 1e6 / f)).ToString(CultureInfo.InvariantCulture))
+                      .Append(',').Append((r.AllocBytes[i] / 1024).ToString(CultureInfo.InvariantCulture));
                     foreach (Phase p in cols)
                     {
-                        long t = r.Phase == null ? 0 : r.Phase[(int)p];
+                        long t = r.Tick(i, p);
                         sb.Append(',').Append(((long)Math.Round(t * 1e6 / f)).ToString(CultureInfo.InvariantCulture));
                     }
 
@@ -1391,7 +1465,7 @@ namespace SeedLab.Cli.Analysis
                     {
                         foreach (Counter c in PhaseClock.All)
                         {
-                            sb.Append(',').Append((r.Counters?[(int)c] ?? 0).ToString(CultureInfo.InvariantCulture));
+                            sb.Append(',').Append(r.Counter(i, (int)c).ToString(CultureInfo.InvariantCulture));
                         }
                     }
 
@@ -1423,10 +1497,15 @@ namespace SeedLab.Cli.Analysis
             {
                 o.Field("seed counts", "sized to keep every worker busy for about " + Out.F(_run.SaturateSeconds.Value, 0) + " s (at least "
                                        + SaturationPlanner.MinPerWorker + " seeds per worker), from an uncounted pilot each; estimated "
-                                       + Out.F(_run.EstimatedSeconds ?? 0, 0) + " s in all");
+                                       + ProfileCommand.Minutes(_run.EstimatedSeconds ?? double.NaN) + " in all");
             }
 
-            if (_run.PlanFile != null) o.Field("seed counts", "replayed from " + _run.PlanFile);
+            if (_run.PlanFile != null)
+            {
+                o.Field("seed counts", "replayed from " + _run.PlanFile
+                                       + (_run.ReplayedPilots.Count > 0 ? ", after running its " + _run.ReplayedPilots.Count + " pilot(s) again, uncounted" : ""));
+                foreach (PlanDifference d in _run.PlanDifferences) o.Field("differs", d.What + ": " + d.Plan + " then, " + d.Now + " now - " + d.Note);
+            }
             if (_run.Baseline != null)
             {
                 QuietBaseline b = _run.Baseline;
@@ -1474,7 +1553,7 @@ namespace SeedLab.Cli.Analysis
         {
             SectionResult r = s.Result;
             o.Header(r.Spec.Label + (r.Spec.Tier == "t5" && r.PrefixRun != r.Spec.Prefix ? " (runs " + r.PrefixRun + ")" : "")
-                     + ", " + r.WorkerCount + " worker(s), " + r.Rows.Count + " seeds (+" + r.Warmup + " warm-up each)"
+                     + ", " + r.WorkerCount + " worker(s), " + r.Table.Count + " seeds (+" + r.Warmup + " warm-up each)"
                      + (s.Tainted ? "  TAINTED" : ""));
             o.Field("seed", "median " + Out.F(s.Seed.Median, 2) + " ms, p10 " + Out.F(s.Seed.P10, 2) + ", p90 " + Out.F(s.Seed.P90, 2)
                             + ", mean " + Out.F(s.Seed.Mean, 2) + "; " + Out.F(s.SeedsPerSecond, 2) + " seeds/s, "
@@ -1540,9 +1619,9 @@ namespace SeedLab.Cli.Analysis
                     double sampler = r.Memory?.SamplerCpu?.TotalSeconds ?? 0;
                     double other = process - s.WorkerCpuSeconds.Value - sampler;
                     o.Field("cpu split", "workers " + Out.F(s.WorkerCpuSeconds.Value, 1) + " s, everything else " + Out.F(other, 1)
-                                         + " s (garbage collection threads, JIT, runtime); the workers were off a processor "
-                                         + Out.F(s.WorkerShareSeconds.Value - s.WorkerCpuSeconds.Value, 1) + " s of their "
-                                         + Out.F(s.WorkerShareSeconds.Value, 1) + " s (waiting for a collection, preempted, page faults)");
+                                         + " s (the garbage collector's threads, the JIT compiling code, the runtime)");
+                    o.Field("off cpu", "the workers were off a processor " + Out.F(s.WorkerShareSeconds.Value - s.WorkerCpuSeconds.Value, 1)
+                                       + " s of their " + Out.F(s.WorkerShareSeconds.Value, 1) + " s (waiting for a collection, preempted, page faults)");
                 }
 
                 if (r.Memory != null)
@@ -1556,15 +1635,24 @@ namespace SeedLab.Cli.Analysis
                     o.Field("ram", string.Join(", ", parts) + "; " + z.Samples + " samples every " + Out.F(z.Interval.TotalMilliseconds, 0) + " ms");
                 }
 
+                if (r.MemoryStart != null && r.MemoryEnd != null)
+                {
+                    WindowPeaks(r, out long? ws, out long? priv);
+                    o.Field("ram peak", (ws.HasValue ? "working set " + Bytes(ws.Value) : "working set not above its earlier peak of " + Bytes(r.MemoryStart.PeakWorkingSet ?? 0))
+                                        + ", " + (priv.HasValue ? "private " + Bytes(priv.Value) : "private not above its earlier peak of " + Bytes(r.MemoryStart.PeakPrivateBytes ?? 0))
+                                        + " (exact, from Windows' own peak counters; the samples above can miss a short peak)");
+                }
+
                 GCMemoryInfo g = r.LastGc;
                 if (g.Index > 0)
                 {
                     ReadOnlySpan<GCGenerationInfo> gi = g.GenerationInfo;
                     string loh = gi.Length > 3 ? ", large objects " + Bytes(gi[3].SizeAfterBytes) : "";
-                    o.Field("gc heap", "allocated " + Bytes(r.AllocatedBytes) + " (" + Bytes(r.Rows.Count > 0 ? r.AllocatedBytes / r.Rows.Count : 0)
+                    o.Field("gc heap", "allocated " + Bytes(r.AllocatedBytes) + " (" + Bytes(r.Table.Count > 0 ? r.AllocatedBytes / r.Table.Count : 0)
                                        + " per seed); last collection #" + g.Index + " (gen" + g.Generation + (g.Index > r.GcCountAtStart ? "" : ", before this window")
                                        + "): heap " + Bytes(g.HeapSizeBytes) + ", fragmented " + Bytes(g.FragmentedBytes) + ", promoted "
-                                       + Bytes(g.PromotedBytes) + loh + (r.GcHeapCount.HasValue ? "; " + r.GcHeapCount.Value + " GC heap(s)" : ""));
+                                       + Bytes(g.PromotedBytes) + loh
+                                       + (r.GcHeapCountMax.HasValue ? "; up to " + r.GcHeapCountMax.Value + " collector heaps (the configured maximum; how many were in use is not measured)" : ""));
                 }
 
                 o.Field("disk", r.Io == null ? "not available on this system"
@@ -1585,9 +1673,20 @@ namespace SeedLab.Cli.Analysis
             if (r.Sizing != null && r.Sizing.Source == "saturate")
             {
                 SectionSizing z = r.Sizing;
-                o.Field("sizing", "pilot " + z.PilotSeeds + " seeds, " + Out.F(z.PilotMeanSeedMs ?? 0, 1) + " ms each -> "
-                                  + Out.F(z.RateEstimate ?? 0, 1) + " seeds/s -> " + r.Rows.Count + " seeds for about " + Out.F(z.TargetSeconds ?? 0, 0) + " s"
-                                  + (z.Capped ? " (capped)" : ""));
+                string runs = z.PilotRuns != null && z.PilotRuns.Count > 0 ? string.Join(" -> ", z.PilotRuns) : Convert.ToString(z.PilotSeeds, CultureInfo.InvariantCulture) ?? "?";
+                o.Field("sizing", "pilot " + runs + " seeds, " + Out.F(z.PilotMeanSeedMs ?? double.NaN, 2) + " ms each (its later half) -> "
+                                  + Out.F(z.RateEstimate ?? 0, 1) + " seeds/s -> " + r.Table.Count + " seeds, estimated "
+                                  + ProfileCommand.Minutes(z.EstimatedSeconds ?? double.NaN) + " (it took " + ProfileCommand.Minutes(r.WallSeconds) + ")"
+                                  + (z.Capped ? "; capped at " + SaturationPlanner.MaxSeeds.ToString("N0", CultureInfo.InvariantCulture) + " seeds"
+                                     : z.FloorDecided ? "; the " + SaturationPlanner.MinPerWorker + "-per-worker minimum decided, not the "
+                                                        + Out.F(z.TargetSeconds ?? 0, 0) + " s asked" : ""));
+            }
+            else if (r.Sizing != null && r.Sizing.Source == "plan")
+            {
+                o.Field("sizing", "replayed from the plan" + (r.Sizing.RecordedSeconds.HasValue
+                                      ? "; it took " + ProfileCommand.Minutes(r.Sizing.RecordedSeconds.Value) + " when recorded, "
+                                        + ProfileCommand.Minutes(r.WallSeconds) + " now"
+                                      : ""));
             }
         }
 

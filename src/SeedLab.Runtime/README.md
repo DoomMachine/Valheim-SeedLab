@@ -16,7 +16,7 @@ request, and so the self-test can run before a single generator type is loaded. 
 `Environment.ProcessorCount`, `GC.GetGCMemoryInfo`, `DriveInfo`, `RuntimeInformation`, `Process` and
 `System.Runtime.Intrinsics.X86`. No WMI, no registry, no P/Invoke.
 
-Tests: `dotnet run --project tests\SeedLab.Runtime.Tests -c Release` (311 checks, exit 0/1);
+Tests: `dotnet run --project tests\SeedLab.Runtime.Tests -c Release` (326 checks, exit 0/1);
 with `-- --profile-check`, the saturating profile end to end against the built `vseed.exe`.
 This machine: `dotnet run --project tests\SeedLab.Runtime.Tests -c Release -- --probe`.
 
