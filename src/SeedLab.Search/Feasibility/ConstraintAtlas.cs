@@ -194,17 +194,28 @@ namespace SeedLab.Search.Feasibility
             return s.Substring(j, e - j);
         }
 
-        private static ConstraintAtlas? _cached;
+        private static readonly Dictionary<string, ConstraintAtlas> _cached =
+            new Dictionary<string, ConstraintAtlas>(StringComparer.Ordinal);
+
         private static readonly object Gate = new object();
 
-        /// <summary>Loads the atlas once per process, and never throws: a missing atlas is a state.</summary>
-        public static ConstraintAtlas Load()
+        /// <summary>
+        /// Loads the atlas once per process and build tag, and never throws: a missing atlas is a
+        /// state. <paramref name="preferBuildTag"/> is the location table's build tag
+        /// (<c>1.0.16 / 96cfc004</c>): when <c>data\</c> holds several dumps, the folder of that build
+        /// wins, as it does for <c>SeedLab.Data.GameData</c>. The cache is keyed by the tag, so a first
+        /// call without one (the table unavailable at that moment) cannot pin another build's atlas
+        /// for the rest of the process.
+        /// </summary>
+        public static ConstraintAtlas Load(string preferBuildTag = "")
         {
+            preferBuildTag ??= "";
             lock (Gate)
             {
-                if (_cached != null) return _cached;
-                _cached = LoadUncached(FindPath());
-                return _cached;
+                if (_cached.TryGetValue(preferBuildTag, out ConstraintAtlas? hit)) return hit;
+                ConstraintAtlas a = LoadUncached(FindPath(preferBuildTag));
+                _cached[preferBuildTag] = a;
+                return a;
             }
         }
 
@@ -364,14 +375,14 @@ namespace SeedLab.Search.Feasibility
             }
         }
 
-        private static string? FindPath()
+        private static string? FindPath(string preferBuildTag)
         {
             string? env = Environment.GetEnvironmentVariable(DirectoryEnvironmentVariable);
             if (!string.IsNullOrEmpty(env))
             {
                 string direct = System.IO.Path.Combine(env, FileName);
                 if (File.Exists(direct)) return direct;
-                string? inside = PickFrom(env);
+                string? inside = PickFrom(env, preferBuildTag);
                 if (inside != null) return inside;
             }
 
@@ -381,7 +392,7 @@ namespace SeedLab.Search.Feasibility
                 DirectoryInfo? d = new DirectoryInfo(start);
                 for (int i = 0; i < 12 && d != null; i++, d = d.Parent)
                 {
-                    string? found = PickFrom(System.IO.Path.Combine(d.FullName, "data"));
+                    string? found = PickFrom(System.IO.Path.Combine(d.FullName, "data"), preferBuildTag);
                     if (found != null) return found;
                 }
             }
@@ -389,15 +400,41 @@ namespace SeedLab.Search.Feasibility
             return null;
         }
 
-        private static string? PickFrom(string dataDirectory)
+        /// <summary>
+        /// The atlas to use inside one <c>data\</c> folder, or null when no dump folder in it holds
+        /// one. <c>SeedLab.Data.GameData.FindDumpDirectory</c>'s own rule decides between several
+        /// dumps: the folder whose name ends in <c>-&lt;first 8 hex of the build's hash&gt;</c> wins,
+        /// the hash taken from <paramref name="preferBuildTag"/> (<c>1.0.16 / 96cfc004</c>). With no
+        /// such folder, or no tag, the first folder that holds an atlas is used, as before - and the
+        /// stamp gate then reports the mismatch. Without the preference the first folder always won,
+        /// which paired the 1.0.15 atlas with the 1.0.16 location table as soon as both builds were in
+        /// <c>data\</c>: every refusal downgraded to a warning, and D4/D5 quoted the other build's
+        /// sample. Public so the test suite can check the rule on a folder of its own.
+        /// </summary>
+        public static string? PickFrom(string dataDirectory, string preferBuildTag)
         {
+            string sha8 = "";
+            if (!string.IsNullOrEmpty(preferBuildTag))
+            {
+                int slash = preferBuildTag.IndexOf(" / ", StringComparison.Ordinal);
+                if (slash >= 0) sha8 = preferBuildTag.Substring(slash + 3).Trim();
+            }
+
+            string? first = null;
             try
             {
                 if (!Directory.Exists(dataDirectory)) return null;
                 foreach (string d in Directory.GetDirectories(dataDirectory))
                 {
                     string cand = System.IO.Path.Combine(d, FileName);
-                    if (File.Exists(cand)) return cand;
+                    if (!File.Exists(cand)) continue;
+                    if (sha8.Length == 8
+                        && System.IO.Path.GetFileName(d).EndsWith("-" + sha8, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return cand;
+                    }
+
+                    first ??= cand;
                 }
             }
             catch (Exception)
@@ -405,7 +442,7 @@ namespace SeedLab.Search.Feasibility
                 return null;
             }
 
-            return null;
+            return first;
         }
 
         private static string SafeCurrentDirectory()

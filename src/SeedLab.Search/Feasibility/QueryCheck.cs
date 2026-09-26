@@ -243,7 +243,7 @@ namespace SeedLab.Search.Feasibility
         public static QueryCheckReport Run(Query q, CompiledQuery cq, ILocationOracle oracle,
                                            ConstraintAtlas? atlas = null)
         {
-            atlas ??= ConstraintAtlas.Load();
+            atlas ??= ConstraintAtlas.Load(BuildTag(oracle));
             QueryCheckReport r = new QueryCheckReport
             {
                 AtlasAvailable = atlas.Available,
@@ -295,7 +295,7 @@ namespace SeedLab.Search.Feasibility
             return r;
         }
 
-        private static string BuildTag(ILocationOracle oracle)
+        internal static string BuildTag(ILocationOracle oracle)
         {
             // DumpedLocationOracle.Provenance is "1.0.15 / 59f53fb5 (232 entries, 183 ordered)".
             string p = oracle.Available ? oracle.Provenance : "";

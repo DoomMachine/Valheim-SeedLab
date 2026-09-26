@@ -44,7 +44,7 @@ namespace SeedLab.Search.Feasibility
         public static List<CheckResult> Run(ILocationOracle oracle, bool quick = false,
                                             ConstraintAtlas? atlas = null)
         {
-            atlas ??= ConstraintAtlas.Load();
+            atlas ??= ConstraintAtlas.Load(QueryCheck.BuildTag(oracle));
             List<CheckResult> all = new List<CheckResult>();
             List<GoalCheck> everyCheck = new List<GoalCheck>();
 

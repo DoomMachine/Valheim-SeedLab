@@ -121,6 +121,11 @@ namespace SeedLab.SearchTests
                 LifecycleChecks.Run(Check);
             }
 
+            if (Section("19. The constraint atlas follows the location table's build when data\\ holds several"))
+            {
+                AtlasPickChecks.Run(Check);
+            }
+
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));
             Console.WriteLine((_fail == 0 ? "PASS" : "FAIL") + "  " + _pass + " checks passed, " + _fail + " failed");
