@@ -53,6 +53,11 @@ namespace SeedLabTests
             // dotnet run -c Release --project tests\SeedLab.Tests -- river-golden --self-test
             if (args.Length > 0 && args[0] == "river-golden") return RiverGolden.Run(args);
 
+            // vseed selftest fails on an incomplete ground truth (review F1b), on a scratch copy of it with
+            // the binaries beside the copy - never on the real one:
+            // dotnet run -c Release --project tests\SeedLab.Tests -- groundtruth-completeness --work <scratch folder>
+            if (args.Length > 0 && args[0] == "groundtruth-completeness") return GroundTruthCompleteness.Run(args);
+
             string world = (args.Length > 0 && !args[0].StartsWith("-")) ? args[0] : "asdasdasd";
             int seed = world switch
             {

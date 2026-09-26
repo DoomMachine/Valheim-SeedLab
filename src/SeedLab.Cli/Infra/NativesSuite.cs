@@ -31,6 +31,15 @@ namespace SeedLab.Cli.Infra
     /// perfectly good x64 install that happens to ship without <c>groundtruth\</c>. Absent goldens are
     /// the caller's problem to report (see <see cref="CliRuntime"/>), not a divergence.</para>
     ///
+    /// <para><b>Absent is not the same as incomplete</b> (<see cref="Locate"/>). A clone of the public
+    /// repository has no <c>groundtruth\</c> at all, and that is a normal layout: nothing but
+    /// <c>vseed selftest</c> needs it, and <c>selftest --report</c> says so. A <c>groundtruth\</c> that
+    /// is there but lacks <c>natives\</c> or one of the four <see cref="RequiredFiles"/> is a damaged
+    /// ground truth: <c>vseed selftest</c> fails on it with a row naming the missing file, and the
+    /// report says "incomplete: &lt;file&gt; missing". Before 2026-09-26 both cases silently skipped
+    /// the suite, and the finder fell back to any complete <c>groundtruth\natives</c> further up the
+    /// tree, so a binary built inside one SeedLab tree could replay another tree's goldens.</para>
+    ///
     /// <para>The same four bodies of goldens are checked exhaustively by
     /// <c>tests\SeedLab.Tests -- natives</c>, which prints per-block detail and ULP distances. This is
     /// the same data read for a different purpose: a yes/no gate with one first-failure line, fast
@@ -48,18 +57,26 @@ namespace SeedLab.Cli.Infra
             "natives-perlin.bin", "natives-perlin.json", "natives-libm.json", "natives-hash.json"
         };
 
+        /// <summary>What <see cref="Missing"/> holds when the whole <c>natives\</c> folder is absent.</summary>
+        public const string MissingFolder = "natives\\";
+
         /// <summary>
-        /// <c>groundtruth\natives</c>, found the way <see cref="Verified.FindGroundTruth"/> finds the
-        /// rest of the ground truth, or null when it is not beside this build.
+        /// Where the goldens are, and whether they are all there:
+        /// <list type="bullet">
+        /// <item>a <c>groundtruth\</c> was found (<see cref="Verified.FindGroundTruth"/>): ITS
+        /// <c>natives\</c> is the one that counts. <see cref="NativesState.Complete"/> when all four
+        /// <see cref="RequiredFiles"/> are there, otherwise <see cref="NativesState.Incomplete"/> naming
+        /// what is missing - the whole folder or the files. There is no fall-back to another tree;</item>
+        /// <item>no <c>groundtruth\</c> was found: the first <c>groundtruth\natives</c> folder above the
+        /// working directory or the binary, if any (a layout that carries only the goldens), judged the
+        /// same way; <see cref="NativesState.Absent"/> when there is none - a clone of the public
+        /// repository.</item>
+        /// </list>
         /// </summary>
-        public static string? FindDirectory()
+        public static NativesLocation Locate()
         {
             string? gt = Verified.FindGroundTruth();
-            if (gt != null)
-            {
-                string cand = Path.Combine(gt, "natives");
-                if (HasAll(cand)) return cand;
-            }
+            if (gt != null) return Inspect(Path.Combine(gt, "natives"), groundTruth: gt);
 
             foreach (string start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
             {
@@ -67,37 +84,57 @@ namespace SeedLab.Cli.Infra
                 for (int i = 0; i < 12 && d != null; i++, d = d.Parent)
                 {
                     string cand = Path.Combine(d.FullName, "groundtruth", "natives");
-                    if (HasAll(cand)) return cand;
+                    if (Directory.Exists(cand)) return Inspect(cand, groundTruth: null);
                 }
             }
 
-            return null;
+            return new NativesLocation(NativesState.Absent, null, null, Array.Empty<string>());
         }
 
-        private static bool HasAll(string dir)
+        private static NativesLocation Inspect(string dir, string? groundTruth)
         {
+            List<string> missing = new List<string>();
             try
             {
-                if (!Directory.Exists(dir)) return false;
-                foreach (string f in RequiredFiles)
+                if (!Directory.Exists(dir))
                 {
-                    if (!File.Exists(Path.Combine(dir, f))) return false;
+                    missing.Add(MissingFolder);
                 }
-
-                return true;
+                else
+                {
+                    foreach (string f in RequiredFiles)
+                    {
+                        if (!File.Exists(Path.Combine(dir, f))) missing.Add(f);
+                    }
+                }
             }
             catch (Exception)
             {
-                return false;
+                // A folder that cannot even be listed cannot be replayed: name the folder.
+                missing.Clear();
+                missing.Add(MissingFolder);
             }
+
+            return new NativesLocation(missing.Count == 0 ? NativesState.Complete : NativesState.Incomplete,
+                                       dir, groundTruth, missing.ToArray());
         }
 
-        /// <summary>The suite, or null when the goldens are not on this machine.</summary>
-        public static NativesGoldenSuite? TryCreate()
+        /// <summary>
+        /// <c>groundtruth\natives</c> when it is complete (<see cref="Locate"/>), or null when it is
+        /// absent or incomplete.
+        /// </summary>
+        public static string? FindDirectory()
         {
-            string? dir = FindDirectory();
-            return dir == null ? null : new NativesGoldenSuite(dir);
+            NativesLocation loc = Locate();
+            return loc.State == NativesState.Complete ? loc.Directory : null;
         }
+
+        /// <summary>The suite, or null when the goldens are not on this machine or not all there.</summary>
+        public static NativesGoldenSuite? TryCreate() => TryCreate(Locate());
+
+        /// <summary>The suite for a location <see cref="Locate"/> returned, or null unless it is complete.</summary>
+        public static NativesGoldenSuite? TryCreate(NativesLocation loc)
+            => loc.State == NativesState.Complete && loc.Directory != null ? new NativesGoldenSuite(loc.Directory) : null;
 
         /// <summary>
         /// Stable, and it goes into the self-test fingerprint - so adding this suite invalidates a
@@ -284,5 +321,47 @@ namespace SeedLab.Cli.Infra
         private static string Hex32(int bits) => "0x" + bits.ToString("X8", CultureInfo.InvariantCulture);
         private static string Hex64(long bits) => "0x" + bits.ToString("X16", CultureInfo.InvariantCulture);
         private static string R(double d) => d.ToString("R", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Whether the generator goldens are beside this build (<see cref="NativesGoldenSuite.Locate"/>).</summary>
+    public enum NativesState
+    {
+        /// <summary><c>groundtruth\natives</c> holds all four <see cref="NativesGoldenSuite.RequiredFiles"/>.</summary>
+        Complete,
+
+        /// <summary>A ground truth is beside this build but its <c>natives\</c>, or a file in it, is missing.</summary>
+        Incomplete,
+
+        /// <summary>No <c>groundtruth\</c> at all - a clone of the public repository. Not a failure.</summary>
+        Absent,
+    }
+
+    /// <summary>The answer of <see cref="NativesGoldenSuite.Locate"/>.</summary>
+    public sealed class NativesLocation
+    {
+        public NativesLocation(NativesState state, string? directory, string? groundTruth, IReadOnlyList<string> missing)
+        {
+            State = state;
+            Directory = directory;
+            GroundTruth = groundTruth;
+            Missing = missing;
+        }
+
+        public NativesState State { get; }
+
+        /// <summary>The <c>natives</c> folder judged (it may not exist when incomplete); null when absent.</summary>
+        public string? Directory { get; }
+
+        /// <summary>The <c>groundtruth\</c> it belongs to, when one was found.</summary>
+        public string? GroundTruth { get; }
+
+        /// <summary>
+        /// File names only (never a path, so a machine report can print it): the missing
+        /// <see cref="NativesGoldenSuite.RequiredFiles"/>, or <see cref="NativesGoldenSuite.MissingFolder"/>.
+        /// </summary>
+        public IReadOnlyList<string> Missing { get; }
+
+        /// <summary>"natives-libm.json missing", "natives-perlin.bin, natives-hash.json missing", "natives\ missing".</summary>
+        public string MissingText => string.Join(", ", Missing) + " missing";
     }
 }

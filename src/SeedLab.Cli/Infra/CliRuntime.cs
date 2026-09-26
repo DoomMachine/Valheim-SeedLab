@@ -43,8 +43,17 @@ namespace SeedLab.Cli.Infra
         /// <summary>The self-test outcome AFTER the natives suite was registered, when it could be.</summary>
         public SelfTestOutcome? SelfTest { get; private set; }
 
-        /// <summary>Where the natives goldens were found, or null.</summary>
+        /// <summary>Where the natives goldens were found and registered from, or null.</summary>
         public string? NativesDirectory { get; private set; }
+
+        /// <summary>
+        /// Whether the generator goldens are beside this build - complete, incomplete (and what is
+        /// missing) or absent - looked up once at start, whether or not the self-test runs.
+        /// <c>vseed selftest</c> turns an incomplete ground truth into a failing row, and
+        /// <c>selftest --report</c> into "incomplete: &lt;file&gt; missing".
+        /// </summary>
+        public NativesLocation Natives { get; private set; } =
+            new NativesLocation(NativesState.Absent, null, null, Array.Empty<string>());
 
         public SeedLab.Runtime.Storage.CacheRoot Cache => Context.Cache;
 
@@ -155,15 +164,25 @@ namespace SeedLab.Cli.Infra
         private void RegisterSuitesAndVerify(string command)
         {
             SelfTest = Context.SelfTestOutcome;
+            Natives = NativesGoldenSuite.Locate();
             if (!Context.Options.SelfTest) return;
 
-            NativesGoldenSuite? suite = NativesGoldenSuite.TryCreate();
+            NativesGoldenSuite? suite = NativesGoldenSuite.TryCreate(Natives);
             if (suite == null)
             {
                 NativesDirectory = null;
-                // Only worth saying on a platform where it is the difference between running and not.
-                if (SelfTest != null && SelfTest.Status == SelfTestStatus.Unproven)
+                if (Natives.State == NativesState.Incomplete)
                 {
+                    // A damaged ground truth is worth a line wherever the startup block is printed, and
+                    // always in the log; 'vseed selftest' fails on it (its N1 row).
+                    string line = "groundtruth\\natives is incomplete (" + Natives.MissingText + "), so the generator-level "
+                                  + "goldens were not replayed - restore the ground truth from its backup";
+                    _extra.Add(line);
+                    Log.Write(SessionLogLevel.Warn, line + " (" + Natives.Directory + ")");
+                }
+                else if (SelfTest != null && SelfTest.Status == SelfTestStatus.Unproven)
+                {
+                    // Only worth saying on a platform where it is the difference between running and not.
                     _extra.Add("groundtruth\\natives was not found beside this build, so the generator-level "
                                + "goldens could not be replayed - copy groundtruth\\ next to vseed and re-run");
                 }
@@ -197,8 +216,11 @@ namespace SeedLab.Cli.Infra
             {
                 throw new CliException(ex.Message, ExitCodes.CheckFailed,
                     ex.Outcome.Status == SelfTestStatus.Unproven && NativesDirectory == null
-                        ? "the generator goldens (groundtruth\\natives) were not found beside this build; "
-                          + "copy groundtruth\\ next to vseed so the self-test can prove this platform"
+                        ? (Natives.State == NativesState.Incomplete
+                            ? "the generator goldens (groundtruth\\natives) are incomplete (" + Natives.MissingText
+                              + "); restore the ground truth so the self-test can prove this platform"
+                            : "the generator goldens (groundtruth\\natives) were not found beside this build; "
+                              + "copy groundtruth\\ next to vseed so the self-test can prove this platform")
                         : null);
             }
         }

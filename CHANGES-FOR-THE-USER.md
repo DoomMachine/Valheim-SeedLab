@@ -561,6 +561,36 @@ makes between its two stages; the 60-minute default itself; and everything on a 
 (SIGTERM, SIGHUP, file modes, `open`/`xdg-open`, `gio`/`trash-put`). After a stop from outside the
 page, a tab takes up to about 20 seconds to notice - known, not changed.
 
+## An incomplete ground truth fails `vseed selftest` (2026-09-26)
+
+A review of the 1.0.16 ground truth found that `vseed selftest` passed when part of `groundtruth\` was
+missing: a fixture world without its `.fwl2` just lost its `V1c` row, and a `groundtruth\natives` without
+one of its four files left the generator goldens silently unchecked - and `selftest --report` then said
+the folder was "not beside this build" when it was, only incomplete. Now:
+
+- **A new row, `N1`**, says what the machine self-test replayed: `seedlab/natives 263,780/263,780 exact;
+  264,069 recorded values in all`. When `groundtruth\natives`, or `natives-perlin.bin`,
+  `natives-perlin.json`, `natives-libm.json` or `natives-hash.json` is missing, it FAILS with
+  `incomplete: natives-libm.json missing` (or `natives\ missing`) and the self-test exits 1. A full run
+  now shows **15** rows, not 14.
+- **A fixture world without its `.fwl2`** FAILS `V1c/<world>` with
+  `incomplete: groundtruth\worlds\<world>\_main.*.fwl2 missing`; a missing decoded map names its file too.
+- **`vseed selftest --report`** says `incomplete: <file> missing` and fails, instead of "not beside this
+  build".
+- **No `groundtruth\` at all** (a clone of the public repository) behaves as before: `vseed selftest`
+  exits 3 "ground truth not found" and now adds that `selftest --report` needs none; the report says
+  `not run - no groundtruth\ beside this build ...: the machine checks and the terrain fingerprints need
+  only the seed`, and passes.
+- The goldens are taken from the ground truth that was found, never from another `groundtruth\natives`
+  further up the folder tree (the old finder could fall back to one).
+
+**Proof:** `dotnet run -c Release --project tests\SeedLab.Tests -- groundtruth-completeness --work
+<scratch folder>` copies the parts of the ground truth the self-test reads into the scratch folder, puts
+a copy of `vseed` beside it, and removes one file at a time from the COPY: **32 checks pass** (the
+complete copy passes; each of the six mutations fails with the row naming the file; the report and the
+no-ground-truth layout say what they should; every file is back afterwards). Run against the binaries
+built before this change, the same test fails 21 of its 32 checks - the silent passes the review found.
+
 ## Still not implemented — named so you do not go looking
 
 - **GPU.** Still rejected after CPU SIMD delivered 6.03× bit-exactly. A GPU path could only ever be

@@ -757,10 +757,14 @@ folder or to Steam Cloud.**
 ### `vseed data`, `vseed selftest`, `vseed bench`
 
 `data` reports the shipped game data and whether it matches your install. `selftest` re-checks this
-build against the ground truth. `selftest --report` is the **machine report** - the processor, its
+build against the ground truth, and **fails when the ground truth is incomplete**, with a row naming
+the missing file: a fixture world's `.fwl2` or decoded map, `groundtruth\natives` or one of its four
+files (row `N1` shows what the generator goldens replayed). With no `groundtruth\` at all it exits 3,
+"ground truth not found". `selftest --report` is the **machine report** - the processor, its
 instruction sets, the vector path SeedLab chose and why, the C runtime's version, the machine
 self-test run there and then, and world fingerprints of 8 seeds compared with the reference machine's.
-It needs neither `groundtruth\` nor `data\`, contains no machine name, user name or path, and is what
+It needs neither `groundtruth\` nor `data\` (a `groundtruth\` that is beside the build but incomplete makes it
+say `incomplete: <file> missing` and fail), contains no machine name, user name or path, and is what
 to send when SeedLab runs on a CPU it has not been tested on ([`docs\cpu-compatibility.md`](docs/cpu-compatibility.md)).
 If SeedLab stops at start-up because its AVX2 path disagrees with the reference on your CPU, it still
 runs bit-exactly on the scalar path: send `vseed --simd scalar selftest --report` instead, which then

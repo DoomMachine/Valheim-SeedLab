@@ -6,6 +6,7 @@ using System.IO;
 using System.Threading.Tasks;
 using SeedLab.Cli.Infra;
 using SeedLab.Runtime.Execution;
+using SeedLab.Runtime.SelfTest;
 using SeedLab.Render;
 using SeedLab.Render.Png;
 using SeedLab.Saves;
@@ -30,7 +31,9 @@ namespace SeedLab.Cli.Commands
         public const string Help = @"vseed selftest [options]
 
   Regenerates the bundled ground-truth worlds and compares them, cell by cell, against what
-  the game itself wrote, then checks the seed maths and the PNG encoder.
+  the game itself wrote, then checks the seed maths, the generator goldens and the PNG encoder.
+  An incomplete ground truth FAILS, with a row naming the missing file: a world's .fwl2 or
+  decoded map, groundtruth\natives or one of its four files.
 
 Options:
   --quick          sample every 4th row and column instead of every cell (16x faster)
@@ -40,7 +43,8 @@ Options:
   --threads <n>
   --json
 
-Machine checks (no ground truth needed - they work on a clone of the public repository):
+Machine checks (no ground truth needed - they work on a clone of the public repository; with a
+ground truth beside the build, an incomplete one fails them too):
   --report         the machine report to send when SeedLab runs on a CPU it has not been
                    tested on: the processor, its ISA flags, the vector path chosen and why,
                    the C runtime's version, the machine self-test run now, every Perlin path
@@ -111,9 +115,13 @@ Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not fo
             string? gt = Verified.FindGroundTruth();
             if (gt == null)
             {
+                // Unchanged since before 2026-09-26: no ground truth at all is "not found" (exit 3),
+                // never a pass and never a failed check. A clone of the public repository is this case.
                 throw new CliException("ground truth not found (looked for groundtruth\\decoded above the working directory and the binary).",
                     ExitCodes.NotFound,
-                    "run vseed from inside the SeedLab folder, or copy groundtruth\\ next to the executable");
+                    "run vseed from inside the SeedLab folder, or copy groundtruth\\ next to the executable. "
+                    + "A clone of the public repository has no groundtruth\\: 'vseed selftest --report' needs none "
+                    + "(the machine checks and the terrain fingerprints need only the seed)");
             }
 
             List<Check> checks = new List<Check>();
@@ -186,6 +194,12 @@ Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not fo
                 Pass = StableHash.SeedFromText("") == 0,
             });
 
+            // ---- the generator goldens (groundtruth\natives) -----------------------------------------
+            // The machine self-test ran at startup, with this suite registered when all four files were
+            // there. Until 2026-09-26 nothing here said so, and a ground truth missing one of the files
+            // passed with the suite silently unregistered.
+            checks.Add(NativesCheck(rt));
+
             // ---- the worlds ------------------------------------------------------------------------
             List<Verified.Fixture> fixtures = new List<Verified.Fixture>();
             foreach (Verified.Fixture f in Verified.Fixtures)
@@ -206,7 +220,20 @@ Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not fo
                 try
                 {
                     WorldSaveSet? set = SaveDiscovery.ResolveNewestSaveSet(worldDir);
-                    if (set?.FwlPath != null)
+                    if (set?.FwlPath == null)
+                    {
+                        // A fixture without its .fwl2 is an incomplete ground truth: fail, naming it.
+                        // (Before 2026-09-26 the row was simply left out and the self-test passed.)
+                        checks.Add(new Check
+                        {
+                            Id = "V1c/" + f.Name,
+                            What = "the game's own .fwl2: GetStableHashCode(seed text) == stored seed",
+                            Result = "incomplete: groundtruth\\worlds\\" + f.Name
+                                     + (Directory.Exists(worldDir) ? "\\_main.*.fwl2 missing" : "\\ missing"),
+                            Pass = false,
+                        });
+                    }
+                    else
                     {
                         WorldMeta meta = WorldMetaReader.Read(set.FwlPath);
                         bool pass = meta.Seed == StableHash.SeedFromText(meta.SeedName) && meta.Seed == f.Seed;
@@ -228,7 +255,16 @@ Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not fo
                 string heightPath = Path.Combine(gt, "decoded", f.Name + ".height.f32");
                 if (!File.Exists(biomePath) || !File.Exists(heightPath))
                 {
-                    checks.Add(new Check { Id = "T2/" + f.Name, What = "decoded oracle present", Result = "missing", Pass = false });
+                    List<string> gone = new List<string>();
+                    if (!File.Exists(biomePath)) gone.Add("groundtruth\\decoded\\" + f.Name + ".biome.u8");
+                    if (!File.Exists(heightPath)) gone.Add("groundtruth\\decoded\\" + f.Name + ".height.f32");
+                    checks.Add(new Check
+                    {
+                        Id = "T2/" + f.Name,
+                        What = "decoded oracle present",
+                        Result = "incomplete: " + string.Join(", ", gone) + " missing",
+                        Pass = false,
+                    });
                     continue;
                 }
 
@@ -307,6 +343,13 @@ Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not fo
                 j.WriteBoolean("matches", buildMatches);
                 if (gameDir != null) j.WriteString("game_directory", gameDir);
                 j.WriteEndObject();
+                j.WriteStartObject("natives");
+                j.WriteString("state", rt.Natives.State.ToString().ToLowerInvariant());
+                if (rt.Natives.Directory != null) j.WriteString("directory", rt.Natives.Directory);
+                j.WriteStartArray("missing");
+                foreach (string m in rt.Natives.Missing) j.WriteStringValue(m);
+                j.WriteEndArray();
+                j.WriteEndObject();
                 j.WriteStartArray("checks");
                 foreach (Check c in checks)
                 {
@@ -367,6 +410,81 @@ Exit codes: 0 all checks passed, 1 a check failed, 3 the ground truth was not fo
                 : "FAIL - do not trust numbers from this build until it is fixed");
             o.Line();
             return allPass ? ExitCodes.Ok : ExitCodes.CheckFailed;
+        }
+
+        /// <summary>
+        /// Row N1: the machine self-test with the generator goldens (<see cref="NativesGoldenSuite"/>).
+        /// <list type="bullet">
+        /// <item>ground truth present but <c>natives\</c> or one of its four files missing: FAIL, naming
+        /// it (the suite could not be registered, so nothing was replayed);</item>
+        /// <item>complete: the suite's own count from the self-test, run now - a stamp from an earlier
+        /// pass is not reused here, because this command is the one that re-reads the ground truth;</item>
+        /// <item><c>--skip-self-test</c>: a warning, not a failure, as that flag says on every command.</item>
+        /// </list>
+        /// </summary>
+        private static Check NativesCheck(CliRuntime rt)
+        {
+            const string what = "machine self-test with the generator goldens in groundtruth\\natives (Perlin, libm, WorldAngle, hashes)";
+            NativesLocation loc = rt.Natives;
+            if (loc.State != NativesState.Complete)
+            {
+                // Absent cannot happen here (a ground truth was found, so its natives\ was judged), but
+                // if it ever did, the natives folder of this ground truth is what is missing.
+                return new Check
+                {
+                    Id = "N1",
+                    What = what,
+                    Result = "incomplete: " + (loc.State == NativesState.Incomplete ? loc.MissingText : NativesGoldenSuite.MissingFolder + " missing")
+                             + " - the generator goldens were not replayed",
+                    Pass = false,
+                };
+            }
+
+            SelfTestOutcome? st = rt.SelfTest;
+            if (st == null || st.Status == SelfTestStatus.Skipped)
+            {
+                return new Check { Id = "N1", What = what, Result = "NOT RUN - --skip-self-test was given", Pass = false, Gating = false };
+            }
+
+            if (rt.NativesDirectory == null)
+            {
+                return new Check { Id = "N1", What = what, Result = "the goldens are complete but were not registered", Pass = false };
+            }
+
+            if (st.Status == SelfTestStatus.PassedCached)
+            {
+                st = rt.Context.SelfTest.Verify(rt.Context.Hardware, force: true);
+            }
+
+            SelfTestSuiteResult? natives = null;
+            long total = 0;
+            List<string> failed = new List<string>();
+            foreach (SelfTestSuiteResult r in st.Results)
+            {
+                total += r.Checks;
+                if (string.Equals(r.Name, "seedlab/natives", StringComparison.Ordinal)) natives = r;
+                if (!r.Passed) failed.Add(r.ToString());
+            }
+
+            if (st.Ok && natives != null && natives.Passed)
+            {
+                return new Check
+                {
+                    Id = "N1",
+                    What = what,
+                    Result = "seedlab/natives " + Out.N(natives.Checks - natives.Failures) + "/" + Out.N(natives.Checks)
+                             + " exact; " + Out.N(total) + " recorded values in all",
+                    Pass = true,
+                };
+            }
+
+            return new Check
+            {
+                Id = "N1",
+                What = what,
+                Result = st.Status + (failed.Count > 0 ? ": " + string.Join("; ", failed) : natives == null ? ": the natives suite did not run" : ""),
+                Pass = false,
+            };
         }
 
         private sealed class Sweep

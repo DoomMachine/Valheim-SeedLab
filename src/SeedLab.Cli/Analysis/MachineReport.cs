@@ -24,7 +24,9 @@ namespace SeedLab.Cli.Analysis
     /// <para><b>Who it is for.</b> A tester on a CPU the author does not have runs it and sends the text
     /// back; nothing is ever sent by SeedLab itself. It works on a clone of the public repository - no
     /// <c>groundtruth\</c> and no <c>data\</c>: the terrain layers of the world fingerprints need only the
-    /// seed, and the location layers say they were not computed rather than fail.</para>
+    /// seed, and the location layers say they were not computed rather than fail. A <c>groundtruth\</c>
+    /// that IS beside the build but lacks <c>natives\</c> or one of its four files is different: the
+    /// report says "incomplete: &lt;file&gt; missing" and fails (since 2026-09-26).</para>
     ///
     /// <para><b>What it never contains:</b> the machine's name, the user's name, any path (the cache root,
     /// the game folder, the data folder and the ground-truth folder all can name the user), serial
@@ -123,12 +125,18 @@ namespace SeedLab.Cli.Analysis
             // self-test, sent from a machine nobody has checked, so it runs it anyway and says so.
             MachineSelfTest gate = rt.Context.SelfTest;
             bool skipAsked = !gate.Enabled;
+            NativesLocation nativesAt = rt.Natives;
             if (skipAsked)
             {
                 gate.Enabled = true;
-                NativesGoldenSuite? natives = NativesGoldenSuite.TryCreate();
+                NativesGoldenSuite? natives = NativesGoldenSuite.TryCreate(nativesAt);
                 if (natives != null) gate.Register(natives);
             }
+
+            // A ground truth beside the build that lacks natives\ or one of its files is damaged, and the
+            // report must not pass as if it were a clone without one (review F1b, 2026-09-26). No
+            // ground truth at all is still normal here: nothing below needs it.
+            bool nativesIncomplete = nativesAt.State == NativesState.Incomplete;
 
             SelfTestOutcome st = gate.Verify(hw, force: true);
             string perlin;
@@ -234,11 +242,11 @@ namespace SeedLab.Cli.Analysis
                 }
             }
 
-            bool pass = st.Ok && perlinOk && differ == 0 && libmDiffer == 0 && compared > 0;
+            bool pass = st.Ok && perlinOk && differ == 0 && libmDiffer == 0 && compared > 0 && !nativesIncomplete;
             string verdict = pass
                 ? "PASS - this machine reproduces the reference machine's arithmetic and all " + compared
                   + " compared world digests bit for bit"
-                : "FAIL - " + string.Join("; ", Failures(st, perlinOk, differ, compared, libmDiffer));
+                : "FAIL - " + string.Join("; ", Failures(st, perlinOk, differ, compared, libmDiffer, nativesIncomplete ? nativesAt : null));
 
             if (o.Json)
             {
@@ -268,7 +276,7 @@ namespace SeedLab.Cli.Analysis
             foreach (SelfTestSuiteResult r in st.Results) o.Field(r.Name, Shareable(r));
             if (!rt.Context.SelfTest.HasGeneratorSuite)
             {
-                o.Field("seedlab/natives", "not run - groundtruth\\natives is not beside this build (it is not in the public repository)");
+                o.Field("seedlab/natives", NativesNotRun(nativesAt));
             }
 
             o.Field("perlin", perlin);
@@ -315,8 +323,20 @@ namespace SeedLab.Cli.Analysis
             return pass ? ExitCodes.Ok : ExitCodes.CheckFailed;
         }
 
-        private static IEnumerable<string> Failures(SelfTestOutcome st, bool perlinOk, int differ, int compared, int libmDiffer)
+        /// <summary>
+        /// Why the natives suite is not in this report. File names only, never a path. "Incomplete" is a
+        /// failure (a damaged ground truth beside the build); "absent" is the public repository's normal
+        /// layout and fails nothing, because every other section here needs only the seed.
+        /// </summary>
+        private static string NativesNotRun(NativesLocation at) => at.State == NativesState.Incomplete
+            ? "incomplete: " + at.MissingText + " - a groundtruth\\ is beside this build but lacks it, so the generator goldens were not replayed"
+            : "not run - no groundtruth\\ beside this build (a clone of the public repository has none); nothing else in "
+              + "this report needs it: the machine checks and the terrain fingerprints need only the seed";
+
+        private static IEnumerable<string> Failures(SelfTestOutcome st, bool perlinOk, int differ, int compared, int libmDiffer,
+                                                    NativesLocation? incomplete)
         {
+            if (incomplete != null) yield return "the ground truth beside this build is incomplete (groundtruth\\natives: " + incomplete.MissingText + ")";
             if (!st.Ok) yield return "the machine self-test did not pass (" + st.Status + ")";
             if (!perlinOk) yield return "a Perlin path differs from the reference transcription";
             if (libmDiffer > 0) yield return libmDiffer + " libm-dense digest(s) differ from the reference machine's";
@@ -466,6 +486,13 @@ namespace SeedLab.Cli.Analysis
             }
 
             j.WriteEndArray();
+            j.WriteStartObject("natives");
+            j.WriteString("state", rt.Natives.State.ToString().ToLowerInvariant());
+            j.WriteStartArray("missing");
+            foreach (string m in rt.Natives.Missing) j.WriteStringValue(m);
+            j.WriteEndArray();
+            if (!rt.Context.SelfTest.HasGeneratorSuite) j.WriteString("note", NativesNotRun(rt.Natives));
+            j.WriteEndObject();
             j.WriteString("perlin", perlin);
             j.WriteEndObject();
 
