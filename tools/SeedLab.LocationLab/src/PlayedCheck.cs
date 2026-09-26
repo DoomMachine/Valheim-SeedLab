@@ -12,8 +12,8 @@ using SeedLab.WorldGen;
 namespace SeedLab.LocationLab
 {
     /// <summary>
-    /// The two PLAYED worlds, against their <c>.db2</c> and - for <c>testworldclaude</c> - against the
-    /// game's own worldgen log.
+    /// The PLAYED worlds (<see cref="WorldRef.Played"/>), against their <c>.db2</c> and - for
+    /// <c>testworldclaude</c> - against the game's own worldgen log.
     ///
     /// <para><b>What "played" does and does not change.</b> <c>GenerateLocationsTimeSliced</c> runs once,
     /// at world creation, before anything is explored (the log proves it: "missing
@@ -45,7 +45,7 @@ namespace SeedLab.LocationLab
                               + " ordered; alt-biomes " + alts.Count);
 
             int rc = 0;
-            foreach (WorldRef w in WorldRef.All)
+            foreach (WorldRef w in WorldRef.Played)
             {
                 if (only.Length > 0 && !string.Equals(only, w.Name, StringComparison.OrdinalIgnoreCase)) continue;
                 rc |= One(w, table, alts, workers);
@@ -196,6 +196,13 @@ namespace SeedLab.LocationLab
 
         private static int Bits(float f) => BitConverter.SingleToInt32Bits(f);
 
+        /// <summary>
+        /// The testworldclaude creation section of the game's LogOutput, in <c>groundtruth\</c>;
+        /// <c>groundtruth\README.md</c> names the session and the lines it was cut from. One world's
+        /// section only: a log holding several creations would leave the last counter read per name.
+        /// </summary>
+        private const string WorldgenLog = "worldgen-testworldclaude.log";
+
         // ------------------------------------------------------------------------------------------
         // The game's own per-type counters, from the worldgen log of testworldclaude's creation.
         // ------------------------------------------------------------------------------------------
@@ -209,7 +216,7 @@ namespace SeedLab.LocationLab
 
         private static int CompareLog(PlacementResult res)
         {
-            string path = Path.Combine(GroundTruthPaths.Root, "LogOutput-20260922-worldgen.log");
+            string path = Path.Combine(GroundTruthPaths.Root, WorldgenLog);
             if (!File.Exists(path)) { Console.WriteLine("  (no worldgen log at " + path + ")"); return 0; }
 
             Dictionary<string, (int p, int q)> log = new Dictionary<string, (int, int)>(StringComparer.Ordinal);
@@ -255,7 +262,7 @@ namespace SeedLab.LocationLab
         /// </summary>
         private static int CompareAltBiomeLog(List<AltBiomeRuntime> alts)
         {
-            string path = Path.Combine(GroundTruthPaths.Root, "LogOutput-20260922-worldgen.log");
+            string path = Path.Combine(GroundTruthPaths.Root, WorldgenLog);
             if (!File.Exists(path)) return 0;
 
             Dictionary<string, (int c, int min, int max, int vs, int vc)> log =

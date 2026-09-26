@@ -5,7 +5,7 @@ using System.IO;
 
 namespace SeedLab.LocationLab
 {
-    /// <summary>One of the two worlds the game itself generated.</summary>
+    /// <summary>One of the worlds the game itself generated.</summary>
     public sealed class WorldRef
     {
         public WorldRef(string name, string seedText, int seed, bool holdOut)
@@ -19,6 +19,16 @@ namespace SeedLab.LocationLab
         public static readonly WorldRef Development = new WorldRef("asdasdasd", "MWd8eV6svz", -1772362158, false);
         public static readonly WorldRef HoldOut = new WorldRef("testworldclaude", "hnBd9gJf2G", 319486907, true);
         public static readonly WorldRef[] All = { Development, HoldOut };
+
+        public static readonly WorldRef FreshSave = new WorldRef("ClaudeTestWold2", "ClaudeTest", 75539276, false);
+
+        /// <summary>
+        /// The worlds <c>played</c> compares with their <c>.db2</c>. ClaudeTestWold2 was created, entered
+        /// once and left (2026-09-26, 1.0.16); with no dumped golden for it in 1.0.16, its save is its
+        /// oracle. HoldOut stays second: its log checks read the alt-biome state its own placement run
+        /// leaves behind. <see cref="All"/> (grid, streams, reconstruct) keeps the two terrain worlds.
+        /// </summary>
+        public static readonly WorldRef[] Played = { Development, HoldOut, FreshSave };
 
         public static WorldRef ByName(string name)
         {

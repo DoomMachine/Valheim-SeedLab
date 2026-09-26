@@ -27,7 +27,7 @@ namespace SeedLab.LocationLab
         public static int Run(string[] args)
         {
             GameData data = GameData.Load();
-            string seedHex = Args.Str(args, "--seed-hex", "0480A34C");
+            string seedHex = Args.Str(args, "--seed-hex", DefaultSeedHex(data.Directory));
             int workers = Args.Int(args, "--workers", -1);
             bool noAlt = Args.Has(args, "--no-alt");
             bool quiet = Args.Has(args, "--quiet");
@@ -93,6 +93,23 @@ namespace SeedLab.LocationLab
             Console.WriteLine();
             Console.WriteLine(rc == 0 ? "VERDICT: PASS" : "VERDICT: FAIL");
             return rc;
+        }
+
+        /// <summary>
+        /// The fresh world <c>fresh</c> and <c>gate</c> check when no <c>--seed-hex</c> is given:
+        /// <c>0480A34C</c> (ClaudeTestWold2, 1.0.15's fresh world) when this dump holds its golden,
+        /// otherwise the only <c>locationinstances</c> golden the dump holds (1.0.16: <c>BB9B7F96</c>,
+        /// the run-7 world Throwaway). With none or several it stays <c>0480A34C</c>, and the check
+        /// then says which file is missing rather than choosing a world.
+        /// </summary>
+        private static string DefaultSeedHex(string dumpDirectory)
+        {
+            string g = Path.Combine(dumpDirectory, "goldens");
+            if (File.Exists(Path.Combine(g, "locationinstances-0480A34C.json"))) return "0480A34C";
+            string[] all = Directory.Exists(g) ? Directory.GetFiles(g, "locationinstances-*.json") : Array.Empty<string>();
+            return all.Length == 1
+                ? Path.GetFileNameWithoutExtension(all[0]).Substring("locationinstances-".Length)
+                : "0480A34C";
         }
 
         private static int CountEnabled(List<AltBiomeRuntime> a)

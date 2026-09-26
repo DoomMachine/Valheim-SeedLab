@@ -22,15 +22,17 @@ namespace SeedLab.LocationLab
     ///                 RandomBiomeFromBiomes bugs, determinism, target-prefix equivalence, and the
     ///                 world invariants on an invented table.
     ///
-    ///   fresh         [--seed-hex 0480A34C] [--workers N] [--no-alt] [--quiet]
+    ///   fresh         [--seed-hex HEX] [--workers N] [--no-alt] [--quiet]
     ///                 THE decisive test. Reproduces the world the dumper captured before anything was
     ///                 explored and compares the sector decomposition, the alt-biome assignment and
-    ///                 every location instance's float32 bits against the game's own dump.
+    ///                 every location instance's float32 bits against the game's own dump. HEX defaults
+    ///                 to 0480A34C when the dump holds that golden, else to the dump's only
+    ///                 locationinstances golden (1.0.16: BB9B7F96).
     ///
     ///   played        [--world NAME] [--workers N]
-    ///                 Both played worlds against their .db2, plus - for testworldclaude - the per-type
-    ///                 'placed N out of M' counters and the alt-biome warnings in the game's worldgen
-    ///                 log of that world's creation.
+    ///                 The played worlds (asdasdasd, testworldclaude, ClaudeTestWold2) against their
+    ///                 .db2, plus - for testworldclaude - the per-type 'placed N out of M' counters and
+    ///                 the alt-biome warnings in the game's worldgen log of that world's creation.
     ///
     ///   gate          fresh + played, one verdict. The location engine's regression gate.
     ///
