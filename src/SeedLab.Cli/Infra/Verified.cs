@@ -15,11 +15,11 @@ namespace SeedLab.Cli.Infra
         public const string EngineVersion = "0.1.0";
 
         /// <summary>The game build every SeedLab number was measured against.</summary>
-        public const string GameVersion = "1.0.15";
+        public const string GameVersion = "1.0.16";
 
         public const int NetworkVersion = 40;
 
-        public const string SteamBuildId = "25390630";
+        public const string SteamBuildId = "25527674";
 
         /// <summary>
         /// SHA-256 of <c>valheim_Data\Managed\assembly_valheim.dll</c> for that build - the stamp
@@ -28,7 +28,7 @@ namespace SeedLab.Cli.Infra
         /// a different one means every ported constant needs re-verifying before it is trusted.
         /// </summary>
         public const string AssemblyValheimSha256 =
-            "59f53fb55d99d22a33e8ed094eec8d21e9f133543bce92bc3d80dce44033adb1";
+            "96cfc004f7f4a6f30d070bef39eafd79c466a137121c4665a2f19fb9c15c6127";
 
         /// <summary>The world-gen version the ported generator reproduces.</summary>
         public const int WorldGenVersion = 2;

@@ -23,7 +23,7 @@ namespace SeedLab.Cli
         /// Built rather than const so the thread cap and the core count in it are this machine's,
         /// not a number copied into a string literal.
         /// </summary>
-        private static string Usage => @"vseed - offline Valheim world generation, for Valheim 1.0.15 (worldGenVersion 2)
+        private static string Usage => @"vseed - offline Valheim world generation, for Valheim 1.0.16 (worldGenVersion 2)
 
 usage: vseed <command> [options]
 

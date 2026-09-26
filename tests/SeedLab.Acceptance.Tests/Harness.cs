@@ -6,8 +6,10 @@ using System.IO;
 namespace SeedLabAcceptanceTests
 {
     /// <summary>
-    /// The two ground-truth worlds. Both were written by Valheim 1.0.15 itself (world file version 41,
-    /// worldGenVersion 2, minimap cache version 1), so every number below is the game's own output.
+    /// The two ground-truth worlds. Both were written by Valheim itself (world file version 41,
+    /// worldGenVersion 2, minimap cache version 1), so every number below is the game's own output:
+    /// first by 1.0.15, and - after those copies were lost on 2026-09-26 - by 1.0.16, re-created with
+    /// the same names and seeds. The counts below are the same on both builds.
     ///
     /// asdasdasd       is the DEVELOPMENT seed - the port was debugged against it.
     /// testworldclaude is the HOLD-OUT seed - never used while the biome and height code was ported,
