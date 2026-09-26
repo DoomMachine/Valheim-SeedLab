@@ -83,7 +83,7 @@ If you only want to use SeedLab, you do not need any of this: the repository's o
 | `valheim-modding/references/archive/` | raw review outputs from the TomTom work: session logs that quote decompiled game code at length |
 | the `valheim-knowledge-curator`, `valheim-mod-reviewer`, `valheim-release-auditor`, `valheim-claims-skeptic`, `valheim-tripwire-prover`, `seedlab-perf-engineer` and `seedlab-verifier` agents | tied to the author's workspace (its private notes, local folders and standing instructions), to the TomTom mods and to their releases |
 | the `workspace-operations` skill and the `workflows/` folder | how the author's sessions share one machine, and multi-agent workflows prepared for the author's own folders |
-| `valheim-modding/references/server-side-mods.md` and the scripts `il.ps1`, `pe-info.py`, `server-test.ps1` and `anchored_edit.py` | newer parts of the author's knowledge base, written for the author's mods and their releases and not reviewed for publication; SeedLab does not need them |
+| `valheim-modding/references/server-side-mods.md` and the scripts `il.ps1`, `pe-info.py`, `server-test.ps1` and `anchored_edit.py`, and the scripts' `tests\`, `workflow-cases\` and `workflow-dryrun.mjs` | newer parts of the author's knowledge base, written for the author's mods and their releases and not reviewed for publication; SeedLab does not need them |
 | the workspace `CLAUDE.md` | the author's standing instructions for their own game folder |
 | `valheim-modding/scripts/github-release.sh` | the author's release tooling for their own GitHub account: it implements the left-out publishing procedure and reads the local credential store |
 | the Python bytecode cache (`.pyc`) | build output |

@@ -290,14 +290,14 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
     `Int32` next to the search origin's x/z tripped Wayfinder's coordinate-readout check
     (`LocationSearch.OnServerPluginAnswer`); and three new routed-call sites tripped the one-call-site rule.
   - **Instead:** fixed without loosening - a hand-rolled little-endian writer (`FindProtocol`), the warning moved
-    to `LocationSearch.WarnMissing`, and an exact allowlist (method + literal call name) proven by mutants s01/s02.
+    to `LocationSearch.WarnMissing`, and an exact allowlist (method + literal call name) proven by mutants s01/s02 (the author's local mutant driver, not published).
     Widening a type-based check for one legitimate use lets every illegitimate one through.
 - **A mutant run whose setup failed can report the previous run's builds as current** (TomTom 1.2.0,
   2026-09-26).
   - **What happened:** a heredoc-edited mutant driver died with a SyntaxError, and the one-line command went on
     to run preflight over the previous run's folders. The control "failed" - the only tell.
   - **Instead:** one script that stops at the first failure; a driver that deletes only its own marked output
-    folder; and results that name their tree (the mutant driver now prints the commit, the dirty count and a
+    folder; and results that name their tree (the author's local mutant driver, not published, now prints the commit, the dirty count and a
     source hash first and writes `RUN.txt`).
 
 ## 2. Shell and file tooling
@@ -486,7 +486,7 @@ Contents: 1. Process · 2. Shell and file tooling · 3. Build · 4. Game code an
 - **To test that a script restores an environment variable, run it with `&` in the same session**: a child
   `powershell -File` has its own environment, so the parent can never see a leak. With `&`, an `exit` inside a
   function of that script ends the whole script and sets `$LASTEXITCODE`. MobTracker's `tools/mutants.ps1`
-  (`95bf14b`) restores `VALHEIM` on every exit path with a `Finish` function (restore, then `exit`) plus a
+  (`f861232`, in the v0.2.0 release `95bf14b`) restores `VALHEIM` on every exit path with a `Finish` function (restore, then `exit`) plus a
   script-level `trap` that restores it and `break`s (2026-09-26).
 - **Git Bash's `/tmp` is not a path Windows programs understand.** It maps to `%TEMP%` (`cygpath -w /tmp/x` shows
   where), but Windows Python given `'/tmp/x.json'` raises `FileNotFoundError` (2026-09-26). Pass a relative path or a Windows path.

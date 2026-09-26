@@ -45,7 +45,7 @@ You investigate Valheim's game code for a modding project and report facts a dev
 
 **After a game update ("did build N change X?"):** first diff mechanically. Keep a copy of each verified build's
 `valheim_Data\Managed` folder outside the game folder, and compare it with the new one:
-`asmdiff.ps1 -A <that copy> -LabelA OLD -B <game>\valheim_Data\Managed -LabelB NEW`. Only where no old copy exists
+`asmdiff.ps1 -A <that copy> -LabelA OLD -B <game>\valheim_Data\Managed -LabelB NEW -Out <scratch file>`. Only where no old copy exists
 compare the new code with a port or with the knowledge base's recorded behaviour operation by
 operation (order, every float/double conversion, constants, Random draw order and count, loop bounds, collection
 order), and check IL code sizes and recorded IL offsets against what was recorded. Code unchanged does not mean

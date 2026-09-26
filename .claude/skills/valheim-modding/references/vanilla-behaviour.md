@@ -470,7 +470,7 @@ positions within a zone; they agree to the decimal.
 | 5 | (5,2) disc | 97 | 271.5 / 316.8 m | 386.7-429.3 m | 529.7-572.4 m | 64 / 181.0 m |
 | 6 | (6,2) disc | 137 | 344.7 / 386.7 m | 454.8-499.9 m | 595.2-640.0 m | 64 / 181.0 m |
 
-**Seen live** (2026-09-26, the user in a throwaway world with godmode and fly, through MobTracker, which lists
+**Seen live** (2026-09-26, the user in a throwaway world with god mode and flying on, through MobTracker, which lists
 exactly the loaded Characters): a tracked creature was dropped as unloaded at about 210 m. That fits the
 ordinary-creature bands of level 3 and of level 2 alike, so it confirms the order of magnitude (well beyond
 sight range, well short of the menu's "352 m") but does not show which level applied.

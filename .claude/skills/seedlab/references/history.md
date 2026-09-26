@@ -34,8 +34,8 @@ in `77b97ac` - the rounding probe finds Valheim only in `SEEDLAB_VALHEIM_DIR` or
 command shows `-ValheimDir`; `docs\benchmarking.md` says the search benchmark and `vseed profile`'s `t5` sections
 need `data\` (checked in `ProfileCommand`: only a `t5` section opens the location table); a test comment no longer
 cites a local note. **Left to the user:** the three commits' own messages carry no alpha note, and
-`5d94b63`..`0b31717` build as "0.1.0" (the note is in `1df6fa8`, `b4f28ec`, the README and CHANGES; changing it per
-commit rewrites six hashes, then another refresh and audit); a `__pycache__/` and `*.pyc` rule in `.gitignore`.
+`5d94b63` to `0b31717` build as "0.1.0" (the note is in `1df6fa8`, `b4f28ec`, the README and CHANGES; changing it per
+commit rewrites every commit from `f8a8f4d` on, then another refresh and audit); a `__pycache__/` and `*.pyc` rule in `.gitignore`.
 Own check the same day: the Release `vseed` (0.2.0a) `selftest` 15 ok, PASS, 2.91 s.
 
 ## 2026-09-26 - a tainted baseline profile, and the build kept for the A/B
