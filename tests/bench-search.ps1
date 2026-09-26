@@ -3,6 +3,7 @@
 #
 #   powershell -ExecutionPolicy Bypass -File tests\bench-search.ps1 [-Queries Q1,Q3] [-Quick] [-OutDir <folder>]
 #                                                                    [-Vseed <vseed.exe>] [-SkipDryRun] [-IntervalMs 250]
+#                                                                    [-TimeoutMinutes 60] [-AllowGame]
 #
 # Build first: dotnet build src\SeedLab.Cli -c Release. The script runs a fixed set of representative
 # searches with the BUILT vseed at --mode full (every core) and a fixed --seeds, so runs on different days
@@ -17,7 +18,12 @@
 #   Q7  preset custom --keep all --rotate 32MB --compress gz (not in the default set; the write-heavy path)
 #
 # Seed counts are multiples of 64 (16 workers x 4 blocks), so no worker is left with a short last block.
-# The whole default set takes about 12 to 15 minutes on a 16-thread machine; -Quick about 2 minutes.
+# The whole default set takes about 20 minutes on an 8-core / 16-thread machine (Q6 alone about half of
+# that); -Quick about 3 minutes. After the untimed dry runs the script prints vseed's own estimate for the
+# timed runs, a lower bound (vseed's quick calibration runs ahead of a real run).
+#
+# To stop a run, press Ctrl+C (it takes effect within half a second, and the vseed it started is ended
+# too), or close the window: Windows then ends that vseed as well. The folder keeps what was finished.
 #
 # For each query it watches the vseed process every -IntervalMs (processor time, working set, private
 # memory, page faults, bytes read and written), stamps every line vseed prints to the millisecond, reads
@@ -28,7 +34,8 @@
 #   plan             printing the plan, to the "Strategy" header
 #   open the run     results file created, workers started, to the first progress line
 #   scan             the search itself, to the end of its progress lines
-#   (a funnel instead: open stage 1, stage 1, survivor list + gate (the gate is measured on ONE thread),
+#   (a funnel instead: open stage 1, stage 1, survivor list + gate (vseed saves the seeds that passed and
+#    times a few location placements; its busy-cores column shows how many threads that used),
 #    open stage 2, stage 2)
 #   finish writing   the results file finished, to the "Result" header
 #   report and exit  the report, the session log closed, the process gone
@@ -46,6 +53,8 @@
 # A timing from a busy machine is not a measurement. A query is marked TAINTED when another vseed or
 # SeedLab program, Valheim, or a build tool (dotnet, VBCSCompiler, MSBuild) ran at any point, when other
 # processes used more than one core on average, or when vseed says it throttled itself for a running game.
+# The script will not start while Valheim runs (-AllowGame overrides that, for testing the script itself),
+# nor in a window running as administrator.
 
 param(
     [string[]]$Queries = @('Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'),
@@ -53,7 +62,9 @@ param(
     [string]$OutDir = '',
     [string]$Vseed = '',
     [switch]$SkipDryRun,
-    [int]$IntervalMs = 250
+    [int]$IntervalMs = 250,
+    [int]$TimeoutMinutes = 60,
+    [switch]$AllowGame
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +73,38 @@ $inv = [Globalization.CultureInfo]::InvariantCulture
 $utf8 = New-Object Text.UTF8Encoding($false)
 if ($Queries.Count -eq 1 -and $Queries[0].Contains(',')) { $Queries = $Queries[0].Split(',') }
 if ($IntervalMs -lt 50 -or $IntervalMs -gt 5000) { throw "-IntervalMs takes 50 to 5000." }
+if ($TimeoutMinutes -lt 1 -or $TimeoutMinutes -gt 1440) { throw "-TimeoutMinutes takes 1 to 1440." }
+
+# Not as administrator: "Run as administrator" can run this as ANOTHER Windows account, whose temporary
+# folder would then hold the report where you will not find it - and nothing here needs those rights.
+function Test-Elevated {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    return (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+function Test-UacOff {
+    try {
+        $v = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -ErrorAction Stop).EnableLUA
+        return ($v -eq 0)
+    } catch { return $false }
+}
+if ((Test-Elevated) -and -not (Test-UacOff)) {
+    Write-Host 'Stop: this window is running as administrator, and the benchmark refuses to run that way.'
+    Write-Host '"Run as administrator" can run it as a different Windows account, and the report would then go into'
+    Write-Host 'that account''s temporary folder. Nothing here needs administrator rights: close this window and'
+    Write-Host 'start PowerShell normally. Nothing was run.'
+    exit 2
+}
+
+# Not while the game runs: vseed then deliberately uses about a quarter of the cores, so every run would be
+# about 4 times slower and its timings meaningless.
+if (-not $AllowGame -and @(Get-Process | Where-Object { $_.ProcessName -eq 'valheim' }).Count -gt 0) {
+    Write-Host 'Stop: Valheim is running. While it runs, vseed deliberately uses about a quarter of the cores so'
+    Write-Host 'the game stays smooth, so the benchmark would take about 4 times as long and measure nothing useful.'
+    Write-Host 'Close the game and start the benchmark again (-AllowGame runs it anyway, to test the script).'
+    Write-Host 'Nothing was run.'
+    exit 2
+}
+
 if ($Vseed -eq '') { $Vseed = Join-Path $root 'src\SeedLab.Cli\bin\Release\net10.0\vseed.exe' }
 if (-not (Test-Path -LiteralPath $Vseed)) { throw "vseed.exe not found at $Vseed - build it first (dotnet build src\SeedLab.Cli -c Release) or pass -Vseed." }
 $Vseed = (Resolve-Path -LiteralPath $Vseed).Path
@@ -72,9 +115,25 @@ $OutDir = [IO.Path]::GetFullPath($OutDir)
 if (Test-Path -LiteralPath $OutDir) {
     if (@(Get-ChildItem -LiteralPath $OutDir -Force).Count -gt 0) { throw "-OutDir $OutDir is not empty; give a new folder." }
 }
+# data\ and groundtruth\ are only ever read - neither through their links in this checkout nor at the
+# folders the links point to.
 foreach ($guard in @('data', 'groundtruth')) {
-    $g = [IO.Path]::GetFullPath((Join-Path $root $guard)) + '\'
-    if (($OutDir + '\').StartsWith($g, [StringComparison]::OrdinalIgnoreCase)) { throw "-OutDir is inside $g, which is only ever read." }
+    $link = Join-Path $root $guard
+    $roots = @([IO.Path]::GetFullPath($link).TrimEnd('\') + '\')
+    if (Test-Path -LiteralPath $link) {
+        $item = Get-Item -LiteralPath $link -Force
+        if ($item.LinkType) {
+            foreach ($t in @($item.Target)) {
+                if ($t) {
+                    $target = ([string]$t) -replace '^\\\?\?\\', ''
+                    $roots += ([IO.Path]::GetFullPath($target).TrimEnd('\') + '\')
+                }
+            }
+        }
+    }
+    foreach ($g in $roots) {
+        if (($OutDir.TrimEnd('\') + '\').StartsWith($g, [StringComparison]::OrdinalIgnoreCase)) { throw "-OutDir is inside $g, which is only ever read." }
+    }
 }
 $cache = Join-Path $OutDir 'cache'
 $results = Join-Path $OutDir 'results'
@@ -137,12 +196,69 @@ namespace SeedLabBench
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool GetSystemTimes(out long idle, out long k, out long u);
 
+        // A job object that ends every vseed in it when its last handle closes. This PowerShell holds the
+        // only handle (it is not inheritable), so however PowerShell ends - Ctrl+C, the window closed, a
+        // crash - Windows ends the vseed it started instead of leaving it running on every core.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JobBasic
+        {
+            public long PerProcessUserTimeLimit, PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass, SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JobExtended
+        {
+            public JobBasic Basic;
+            public IoCounters Io;
+            public UIntPtr ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref JobExtended info, uint length);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        private const int JobObjectExtendedLimitInformation = 9;
+        private const uint JobObjectLimitKillOnJobClose = 0x2000;
+        private static IntPtr s_job = IntPtr.Zero;
+        private static string s_jobError;
+
+        private static IntPtr Job()
+        {
+            if (s_job != IntPtr.Zero || s_jobError != null) return s_job;
+            IntPtr j = CreateJobObject(IntPtr.Zero, null);
+            if (j == IntPtr.Zero)
+            {
+                s_jobError = "CreateJobObject failed, error " + Marshal.GetLastWin32Error();
+                return IntPtr.Zero;
+            }
+            JobExtended info = new JobExtended();
+            info.Basic.LimitFlags = JobObjectLimitKillOnJobClose;
+            if (!SetInformationJobObject(j, JobObjectExtendedLimitInformation, ref info, (uint)Marshal.SizeOf(typeof(JobExtended))))
+            {
+                s_jobError = "SetInformationJobObject failed, error " + Marshal.GetLastWin32Error();
+                return IntPtr.Zero;
+            }
+            s_job = j;
+            return j;
+        }
+
         private static readonly string[] Watched = { "vseed", "valheim", "dotnet", "VBCSCompiler", "MSBuild" };
 
         public List<Sample> Samples = new List<Sample>();
         public List<Segment> Out = new List<Segment>();
         public List<Segment> Err = new List<Segment>();
         public List<string> Seen = new List<string>();
+        public List<string> Errors = new List<string>();   // what went wrong on the helper's own threads
+        public string JobNote;                               // set when vseed could not be tied to this window
+        public bool TimedOut;
         public int ExitCode;
         public double ExitT;
         public double CreatedT;          // the process's creation, on the same clock (a little below 0)
@@ -179,6 +295,12 @@ namespace SeedLabBench
             _sw.Start();
             ClockZeroUtc = DateTime.UtcNow;
             Pid = _p.Id;
+            IntPtr job = Job();
+            if (job == IntPtr.Zero || !AssignProcessToJobObject(job, _p.Handle))
+            {
+                JobNote = "vseed (pid " + Pid + ") could not be tied to this window (" + (s_jobError ?? ("AssignProcessToJobObject failed, error "
+                          + Marshal.GetLastWin32Error())) + "): if this window is closed while it runs, end vseed in Task Manager";
+            }
             _p.StandardInput.Close();   // a question vseed asks is refused, never waited on
             long c, e, k, u;
             if (GetProcessTimes(_p.Handle, out c, out e, out k, out u)) CreatedT = (DateTime.FromFileTimeUtc(c) - ClockZeroUtc).TotalSeconds;
@@ -189,7 +311,23 @@ namespace SeedLabBench
             _tOut.Start(); _tErr.Start(); _tSample.Start();
         }
 
-        public void Wait()
+        /// <summary>
+        /// Waits up to ms for vseed to end; true once it has. The script waits in these short steps, so
+        /// Ctrl+C is honoured between them (a single long wait cannot be interrupted in PowerShell 5.1).
+        /// </summary>
+        public bool WaitStep(int ms)
+        {
+            return _p.WaitForExit(ms);
+        }
+
+        /// <summary>Ends vseed if it is still running (Ctrl+C, a timeout, an error in the script).</summary>
+        public void Kill()
+        {
+            try { if (!_p.HasExited) _p.Kill(); } catch (Exception) { }
+        }
+
+        /// <summary>After vseed has ended: the output drained, the sampler stopped, the final totals taken.</summary>
+        public void Finish()
         {
             _p.WaitForExit();
             ExitT = Now();
@@ -200,9 +338,19 @@ namespace SeedLabBench
             ExitCode = _p.ExitCode;
         }
 
+        private void NoteError(string what)
+        {
+            lock (Errors) Errors.Add(what);
+        }
+
         private void Pump(StreamReader r, List<Segment> list, string file)
         {
-            using (StreamWriter w = new StreamWriter(file, false, new UTF8Encoding(false)))
+            // Nothing here may end PowerShell: an exception on this thread would. A copy that cannot be
+            // written is given up, but the pipe is still drained - otherwise vseed would stop, blocked on it.
+            StreamWriter w = null;
+            try { w = new StreamWriter(file, false, new UTF8Encoding(false)); }
+            catch (Exception ex) { NoteError("cannot write " + file + ": " + ex.Message); }
+            try
             {
                 char[] buf = new char[8192];
                 StringBuilder cur = new StringBuilder();
@@ -211,8 +359,16 @@ namespace SeedLabBench
                 while ((n = r.Read(buf, 0, buf.Length)) > 0)
                 {
                     double now = Now();
-                    w.Write(buf, 0, n);
-                    w.Flush();
+                    if (w != null)
+                    {
+                        try { w.Write(buf, 0, n); w.Flush(); }
+                        catch (Exception ex)
+                        {
+                            NoteError("stopped copying vseed's output to " + file + ": " + ex.Message);
+                            try { w.Dispose(); } catch (Exception) { }
+                            w = null;
+                        }
+                    }
                     for (int i = 0; i < n; i++)
                     {
                         char ch = buf[i];
@@ -238,22 +394,31 @@ namespace SeedLabBench
                     lock (list) list.Add(s);
                 }
             }
+            catch (Exception ex) { NoteError("reading vseed's output stopped: " + ex.Message); }
+            finally
+            {
+                if (w != null) { try { w.Dispose(); } catch (Exception) { } }
+            }
         }
 
         private void SampleLoop()
         {
-            int tick = 0;
-            int perSecond = Math.Max(1, 1000 / _interval);
-            long next = 0;
-            while (true)
+            try
             {
-                Take(Now(), tick % perSecond == 0);
-                tick++;
-                next += _interval;
-                long wait = next - _sw.ElapsedMilliseconds;
-                if (wait < 0) wait = 0;
-                if (_stop.WaitOne((int)wait)) break;
+                int tick = 0;
+                int perSecond = Math.Max(1, 1000 / _interval);
+                long next = 0;
+                while (true)
+                {
+                    Take(Now(), tick % perSecond == 0);
+                    tick++;
+                    next += _interval;
+                    long wait = next - _sw.ElapsedMilliseconds;
+                    if (wait < 0) wait = 0;
+                    if (_stop.WaitOne((int)wait)) break;
+                }
             }
+            catch (Exception ex) { NoteError("the sampler stopped: " + ex.Message); }
         }
 
         private void Take(double t, bool slow)
@@ -440,6 +605,30 @@ namespace SeedLabBench
             return new double[] { ws, Math.Min(we, end), sum / bestLen };
         }
 
+        /// <summary>
+        /// The least-squares slope of y over x (seeds per second from progress lines), or NaN with fewer
+        /// than three points or when they span less than minSpan seconds. A constant lag in y - the
+        /// progress lines count the blocks already written, which trail the seeds already evaluated by the
+        /// blocks still in flight - moves the line, not its slope.
+        /// </summary>
+        public static double Slope(List<double> x, List<double> y, double minSpan)
+        {
+            int n = Math.Min(x.Count, y.Count);
+            if (n < 3) return double.NaN;
+            double mx = 0, my = 0;
+            for (int i = 0; i < n; i++) { mx += x[i]; my += y[i]; }
+            mx /= n; my /= n;
+            double sxx = 0, sxy = 0, lo = x[0], hi = x[0];
+            for (int i = 0; i < n; i++)
+            {
+                sxx += (x[i] - mx) * (x[i] - mx);
+                sxy += (x[i] - mx) * (y[i] - my);
+                lo = Math.Min(lo, x[i]); hi = Math.Max(hi, x[i]);
+            }
+            if (hi - lo < minSpan || sxx <= 0) return double.NaN;
+            return sxy / sxx;
+        }
+
         /// <summary>Every file under the folders, path to size.</summary>
         public static Dictionary<string, long> Inventory(string[] roots)
         {
@@ -527,11 +716,46 @@ function Invoke-Vseed([string]$name, [string[]]$vargs) {
     $outFile = Join-Path $stamped ($name + '.out.txt')
     $errFile = Join-Path $stamped ($name + '.err.txt')
     $r = [SeedLabBench.Runner]::new($Vseed, (ArgLine $vargs), $OutDir, $outFile, $errFile, [string[]]@($results, (Join-Path $cache 'checkpoints')), $IntervalMs)
-    $r.Start()
-    $r.Wait()
+    $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
+    $done = $false
+    try {
+        $r.Start()
+        if ($r.JobNote) { Write-Host ('  note: ' + $r.JobNote) }
+        # Short waits: Ctrl+C is honoured between them, and the finally below then ends vseed.
+        while (-not $r.WaitStep(500)) {
+            if (-not $r.TimedOut -and [DateTime]::UtcNow -gt $deadline) {
+                Write-Host ('  ' + $name + ': still running after ' + $TimeoutMinutes + ' min (-TimeoutMinutes) - stopping it')
+                $r.TimedOut = $true
+                $r.Kill()
+            }
+        }
+        $r.Finish()
+        $done = $true
+    } finally {
+        if (-not $done) { $r.Kill() }
+    }
+    foreach ($e in @($r.Errors)) { Write-Host ('  note: ' + $name + ': ' + $e) }
     $log = Join-Path $cache 'logs\vseed.log'
     if (Test-Path -LiteralPath $log) { Copy-Item -LiteralPath $log -Destination (Join-Path $logs ($name + '-vseed.log')) -Force }
     return $r
+}
+
+function Size([double]$b) {
+    if ($b -ge 1073741824) { return ($b / 1073741824).ToString('F2', $inv) + ' GiB' }
+    if ($b -ge 1048576) { return ($b / 1048576).ToString('F1', $inv) + ' MiB' }
+    if ($b -ge 1024) { return ($b / 1024).ToString('F1', $inv) + ' KiB' }
+    return ([long]$b).ToString($inv) + ' B'
+}
+
+# vseed's own estimate in a dry run's output: "this run  59.2 s for 512 seeds" (s, min, h or days).
+function Estimate-Seconds($segs) {
+    foreach ($s in $segs) {
+        if ($s.Text -match '^\s*this run\s+([\d.,]+) (s|min|h|days) for ') {
+            $v = [double]::Parse(($Matches[1] -replace ',', ''), $inv)
+            switch ($Matches[2]) { 's' { return $v } 'min' { return 60 * $v } 'h' { return 3600 * $v } 'days' { return 86400 * $v } }
+        }
+    }
+    return $null
 }
 
 # Log lines: "yyyy-MM-dd HH:mm:ss.fff zzz  LEVEL  <category> <text>", on the runner's clock.
@@ -569,14 +793,36 @@ $progressRx = '^\s*([\d,]+) / ([\d,]+) seeds \| ([\d.]+)/s \| ([\d,]+) hits'
 $stage1Rx = '^\s*stage 1: ([\d,]+) / ([\d,]+) seeds \| ([\d,]+) kept'
 $fieldRx = '^  (seeds evaluated|matches|wall clock|measured rate|thread time split|pre-generation|T5 placements|results file|what was kept|checkpoint|this run|threads|stage 1 scanned|stage 1 kept|survivor list|stage 2 will place|chosen)\s+(.*)$'
 
-function Seeds-At($segs, [string]$rx, [double]$t) {
-    # The seed count the progress lines showed at time t (the last line at or before it).
-    $n = 0.0
+function Rate-In($segs, [string]$rx, [double]$t0, [double]$t1, $lastSeg) {
+    # Seeds per second inside [t0, t1], from the progress lines. They count the blocks already WRITTEN, in
+    # order, so the count moves in steps (a block at a time, often several at once) and trails the seeds
+    # already evaluated by the blocks still in flight. Taken: the moments the count stepped up inside the
+    # window, and the slope of the counts over those moments - a steady lag moves that line, not its slope.
+    # Left out: lines at 0 (nothing written yet) and the scan's last line (it jumps to the total when the
+    # blocks in flight are flushed). No rate from fewer than three steps or less than a second.
+    $xs = New-Object 'System.Collections.Generic.List[double]'
+    $ys = New-Object 'System.Collections.Generic.List[double]'
+    $prev = -1.0
     foreach ($s in $segs) {
-        if ($s.Start -gt $t) { break }
-        if ($s.Text -match $rx) { $n = [double]($Matches[1] -replace ',', '') }
+        if (-not ($s.Text -match $rx)) { continue }
+        $n = [double]($Matches[1] -replace ',', '')
+        $stepped = ($n -ne $prev)
+        $prev = $n
+        if (-not $stepped -or $n -le 0) { continue }
+        if ($s.Start -lt $t0 -or $s.Start -gt $t1) { continue }
+        if ($null -ne $lastSeg -and [object]::ReferenceEquals($s, $lastSeg)) { continue }
+        $xs.Add([double]$s.Start); $ys.Add($n)
     }
-    return $n
+    $slope = [SeedLabBench.Measure]::Slope($xs, $ys, 1.0)
+    if ([double]::IsNaN($slope) -or $slope -le 0) { return $null }
+    return $slope
+}
+
+function Total-Of($seg, [string]$rx) {
+    # The seeds the scan covers: the "of" figure of its progress lines (N / TOTAL seeds). The last line
+    # itself may still show fewer, the blocks in flight at the end being written after it.
+    if ($null -ne $seg -and $seg.Text -match $rx) { return [double]($Matches[2] -replace ',', '') }
+    return $null
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -584,9 +830,10 @@ function Seeds-At($segs, [string]$rx, [double]$t) {
 # ---------------------------------------------------------------------------------------------------
 $ready = New-Object System.Collections.Generic.List[string]
 $first = $true
+$expected = 0.0; $unknown = 0
 foreach ($q in $Queries) {
     $c = $catalog[$q]
-    if ($SkipDryRun -and -not $first) { $ready.Add($q); continue }
+    if ($SkipDryRun -and -not $first) { $ready.Add($q); $unknown++; continue }
     $seeds = $(if ($Quick) { $c.QuickSeeds } else { $c.Seeds })
     $vargs = @('search', $c.Query, '--seeds', [string]$seeds, '--mode', 'full', '--yes', '--dry-run', '--calibrate', '1',
                '--progress', 'none', '--cache-dir', $cache, '--out', (Join-Path $results ($q + '-dry.jsonl'))) + $c.Extra
@@ -598,7 +845,14 @@ foreach ($q in $Queries) {
         Say ('  ' + $q + ': the dry run exited ' + $r.ExitCode + ' - skipped. ' + $tail)
         continue
     }
+    $est = Estimate-Seconds @($r.Out)
+    if ($null -ne $est) { $expected += $est } else { $unknown++ }
     $ready.Add($q)
+}
+if ($ready.Count -gt 0) {
+    Say ('  expected    at least ' + $(if ($expected -lt 90) { (F1 $expected) + ' s' } else { (F1 ($expected / 60)) + ' min' }) +
+         ' for the ' + $ready.Count + ' timed run(s)' + $(if ($unknown -gt 0) { ' (' + $unknown + ' without an estimate)' } else { '' }) +
+         ': vseed''s own calibration from the dry runs, which runs ahead of a real run, so the real time is longer')
 }
 Say ''
 
@@ -645,7 +899,7 @@ foreach ($q in $ready) {
     $stages = New-Object System.Collections.Generic.List[object]
     $bounds = New-Object System.Collections.Generic.List[object]
     function Add-Bound([string]$name, $start, $end) { if ($null -ne $start -and $null -ne $end -and $end -ge $start) { $bounds.Add(@($name, [double]$start, [double]$end)) } }
-    $scanName = 'scan'; $scanStart = $null; $scanEnd = $null; $scanRx = $progressRx
+    $scanName = 'scan'; $scanStart = $null; $scanEnd = $null; $scanRx = $progressRx; $scanLastSeg = $null
     Add-Bound 'start-up' $t['created'] $t['startup']
     Add-Bound 'preflight' $t['startup'] $t['preflight']
     if ($null -ne $sStrategy) { Add-Bound 'plan' $t['preflight'] $sStrategy.Start }
@@ -657,15 +911,15 @@ foreach ($q in $ready) {
         $s2Last = $(if ($null -ne $sResult) { Last-Segment $err $progressRx $sGate.Start $sResult.Start } else { Last-Segment $err $progressRx $sGate.Start 1e9 })
         if ($null -ne $sStrategy -and $null -ne $s1First) { Add-Bound 'open stage 1' $sStrategy.Start $s1First.Start }
         if ($null -ne $s1First -and $null -ne $s1Last) { Add-Bound 'stage 1' $s1First.Start $s1Last.End }
-        if ($null -ne $s1Last) { Add-Bound 'survivor list + gate (1 thread)' $s1Last.End $sGate.Start }
+        if ($null -ne $s1Last) { Add-Bound 'survivor list + gate' $s1Last.End $sGate.Start }
         if ($null -ne $s2First) { Add-Bound 'open stage 2' $sGate.Start $s2First.Start }
-        if ($null -ne $s2First -and $null -ne $s2Last) { Add-Bound 'stage 2' $s2First.Start $s2Last.End; $scanName = 'stage 2'; $scanStart = $s2First.Start; $scanEnd = $s2Last.End; $finishFrom = $s2Last.End }
-        $stage1 = @{ Start = $(if ($null -ne $s1First) { $s1First.Start } else { $null }); End = $(if ($null -ne $s1Last) { $s1Last.End } else { $null }) }
+        if ($null -ne $s2First -and $null -ne $s2Last) { Add-Bound 'stage 2' $s2First.Start $s2Last.End; $scanName = 'stage 2'; $scanStart = $s2First.Start; $scanEnd = $s2Last.End; $finishFrom = $s2Last.End; $scanLastSeg = $s2Last }
+        $stage1 = @{ Start = $(if ($null -ne $s1First) { $s1First.Start } else { $null }); End = $(if ($null -ne $s1Last) { $s1Last.End } else { $null }); Last = $s1Last }
     } else {
         $scanFirst = First-Segment $err $progressRx 0
         $scanLast = $(if ($null -ne $sResult) { Last-Segment $err $progressRx 0 $sResult.Start } else { Last-Segment $err $progressRx 0 1e9 })
         if ($null -ne $sStrategy -and $null -ne $scanFirst) { Add-Bound 'open the run' $sStrategy.Start $scanFirst.Start }
-        if ($null -ne $scanFirst -and $null -ne $scanLast) { Add-Bound 'scan' $scanFirst.Start $scanLast.End; $scanStart = $scanFirst.Start; $scanEnd = $scanLast.End; $finishFrom = $scanLast.End }
+        if ($null -ne $scanFirst -and $null -ne $scanLast) { Add-Bound 'scan' $scanFirst.Start $scanLast.End; $scanStart = $scanFirst.Start; $scanEnd = $scanLast.End; $finishFrom = $scanLast.End; $scanLastSeg = $scanLast }
     }
     if ($null -ne $finishFrom -and $null -ne $sResult) { Add-Bound 'finish writing' $finishFrom $sResult.Start }
     if ($null -ne $sResult) { Add-Bound 'report and exit' $sResult.Start $r.ExitT }
@@ -676,23 +930,33 @@ foreach ($q in $ready) {
         $stages.Add($g)
     }
 
-    # Steady state inside the scan (or stage 2), and stage 1 for a funnel.
+    # Steady state inside each scan: stage 1 first for a funnel, then the scan (or stage 2).
     $steady = @()
     $scans = @()
-    if ($null -ne $scanStart) { $scans += ,@($scanName, $scanStart, $scanEnd, $progressRx) }
-    if ($funnel -and $null -ne $stage1.Start -and $null -ne $stage1.End) { $scans += ,@('stage 1', $stage1.Start, $stage1.End, $stage1Rx) }
+    if ($funnel -and $null -ne $stage1.Start -and $null -ne $stage1.End) { $scans += ,@('stage 1', $stage1.Start, $stage1.End, $stage1Rx, $stage1.Last) }
+    if ($null -ne $scanStart) { $scans += ,@($scanName, $scanStart, $scanEnd, $progressRx, $scanLastSeg) }
     foreach ($sc in $scans) {
         $w = [SeedLabBench.Measure]::Steady($samples, $sc[1], $sc[2])
         if ($null -eq $w) { $steady += [ordered]@{ stage = $sc[0]; defined = $false }; continue }
-        $n0 = Seeds-At $err $sc[3] $w[0]; $n1 = Seeds-At $err $sc[3] $w[1]
         $len = $w[1] - $w[0]
+        $rate = Rate-In $err $sc[3] $w[0] $w[1] $sc[4]
+        # When the progress lines step too coarsely for a rate (few big blocks), an estimate instead: the
+        # scan's seeds per processor second times the window's busy cores - it assumes every seed costs the
+        # same processor time, and is labelled as an estimate.
+        $total = Total-Of $sc[4] $sc[3]
+        $scanStage = $stages | Where-Object { $_.Name -eq $sc[0] } | Select-Object -First 1
+        $cpuRate = $null
+        if ($null -eq $rate -and $null -ne $total -and $null -ne $scanStage -and $scanStage.Cpu -gt 0) { $cpuRate = $total / $scanStage.Cpu * $w[2] }
         $steady += [ordered]@{
             stage = $sc[0]; defined = $true; start_s = [Math]::Round($w[0] - $sc[1], 2); window_s = [Math]::Round($len, 2)
             outside_s = [Math]::Round(($sc[2] - $sc[1]) - $len, 2); busy_cores = [Math]::Round($w[2], 2)
             utilisation = [Math]::Round($w[2] / $cores, 4)
-            # The progress lines count seeds as the results are written, in block order: over a short
-            # window they may not move at all, and then there is no rate to give, not a rate of 0.
-            seeds_per_second = $(if ($len -gt 0 -and $n1 -gt $n0) { [Math]::Round(($n1 - $n0) / $len, 2) } else { $null })
+            # Absent, never 0, when it cannot be told.
+            seeds_per_second = $(if ($null -ne $rate) { [Math]::Round($rate, 2) } else { $null })
+            seeds_per_second_estimate = $(if ($null -ne $cpuRate) { [Math]::Round($cpuRate, 2) } else { $null })
+            rate_method = $(if ($null -ne $rate) { 'least-squares slope of the moments the progress count stepped up inside the window (the scan''s last line left out)' }
+                            elseif ($null -ne $cpuRate) { 'estimate: the progress lines stepped too coarsely inside the window, so the scan''s seeds per processor second x the window''s busy cores' }
+                            else { 'none' })
         }
     }
 
@@ -728,7 +992,8 @@ foreach ($q in $ready) {
 
     $entry = [ordered]@{
         id = $q; query = $(if ($c.Query.EndsWith('.json')) { Split-Path -Leaf $c.Query } else { $c.Query }); what = $c.What
-        arguments = (ArgLine $vargs); seeds = $seeds; exit_code = $r.ExitCode; funnel = $funnel
+        arguments = (ArgLine $vargs); seeds = $seeds; exit_code = $r.ExitCode; timed_out = $r.TimedOut; funnel = $funnel
+        helper_notes = @($r.Errors) + @($(if ($r.JobNote) { $r.JobNote } else { @() }))
         tainted = ($taint.Count -gt 0); taint_reasons = @($taint)
         selftest = $(if ($marks.ContainsKey('selftestStatus')) { $marks['selftestStatus'] } else { $null })
         process = [ordered]@{
@@ -753,25 +1018,37 @@ foreach ($q in $ready) {
     $threadsText = $(if ($fields.Contains('threads')) { $fields['threads'].Split(',')[0] + ' threads' } else { '? threads' })
     $funnelText = $(if ($funnel) { ', funnel' } else { '' })
     $taintText = $(if ($taint.Count -gt 0) { '  TAINTED: ' + ($taint -join '; ') } else { '' })
-    Say ('    ' + $seeds.ToString('N0', $inv) + ' seeds, ' + $threadsText + ', exit ' + $r.ExitCode + ', ' + (F1 $entry.process.wall_s) + ' s' + $funnelText + $taintText)
-    Say ('    {0,-32} {1,8} {2,8} {3,7} {4,7} {5,9} {6,9} {7,9} {8,9} {9,9}' -f 'stage', 'wall s', 'CPU s', 'cores', 'util %', 'peak WS', 'peak priv', 'written', 'read', 'faults')
-    Say ('    {0,-32} {1,8} {2,8} {3,7} {4,7} {5,9} {6,9} {7,9} {8,9} {9,9}' -f '', '', '(kernel)', 'busy', '', 'MiB', 'MiB', 'KiB', 'KiB', 'k')
+    Say ('    ' + $seeds.ToString('N0', $inv) + ' seeds, ' + $threadsText + ', exit ' + $r.ExitCode + ', ' + (F1 $entry.process.wall_s) + ' s' + $funnelText + $taintText +
+         $(if ($r.TimedOut) { '  STOPPED after ' + $TimeoutMinutes + ' min (-TimeoutMinutes)' } else { '' }))
+    $row = '    {0,-28} {1,8} {2,13} {3,7} {4,7} {5,9} {6,9} {7,9} {8,9} {9,9}'
+    Say ($row -f 'stage', 'wall s', 'CPU s', 'cores', 'util %', 'peak WS', 'peak priv', 'written', 'read', 'faults')
+    Say ($row -f '', '', '(kernel s)', 'busy', '', 'MiB', 'MiB', 'KiB', 'KiB', 'thousand')
+    $estimated = $false
     foreach ($g in $stages) {
-        Say ('    {0,-32} {1,8} {2,8} {3,7} {4,7} {5,9} {6,9} {7,9} {8,9} {9,9}' -f $g.Name, (F2 $g.Wall), ((F1 $g.Cpu) + ' (' + (F1 $g.Kernel) + ')').PadLeft(8),
-             (F1 $g.BusyCores), (F1 (100 * $g.Utilisation)), (MiB $g.PeakWorkingSet), (MiB $g.PeakPrivate),
+        # A stage shorter than two samples has its cores and peaks from the samples around it: marked ~.
+        $m = $(if ($g.SamplesInside -lt 2) { '~' } else { '' })
+        if ($m) { $estimated = $true }
+        Say ($row -f $g.Name, (F2 $g.Wall), ((F1 $g.Cpu) + ' (' + (F1 $g.Kernel) + ')'),
+             ((F1 $g.BusyCores) + $m), ((F1 (100 * $g.Utilisation)) + $m), ((MiB $g.PeakWorkingSet) + $m), ((MiB $g.PeakPrivate) + $m),
              ($g.WriteBytes / 1024).ToString('N0', $inv), ($g.ReadBytes / 1024).ToString('N0', $inv), ($g.PageFaults / 1000).ToString('N0', $inv))
+    }
+    if ($estimated) {
+        Say ('    ~ the stage was shorter than two samples (' + $IntervalMs + ' ms apart): its cores, share and peaks are estimated from the samples on either side')
     }
     foreach ($s in $steady) {
         if ($s.defined) {
-            $rateText = $(if ($null -ne $s.seeds_per_second) { ', ' + (F1 $s.seeds_per_second) + ' seeds/s' } else { '' })
+            $rateText = $(if ($null -ne $s.seeds_per_second) { ', ' + (F1 $s.seeds_per_second) + ' seeds/s' }
+                          elseif ($null -ne $s.seeds_per_second_estimate) { ', about ' + (F1 $s.seeds_per_second_estimate) + ' seeds/s (estimated from processor time: the progress lines step too coarsely here)' }
+                          else { ' (no seed rate: too few progress steps in it)' })
             Say ('    steady ' + $s.stage + ': ' + (F1 $s.window_s) + ' s at ' + (F1 $s.busy_cores) + ' busy cores (' + (F1 (100 * $s.utilisation)) + ' %)' +
                  $rateText + '; ramp-up and tail ' + (F1 $s.outside_s) + ' s')
         } else {
             Say ('    steady ' + $s.stage + ': too short to find one at a ' + $IntervalMs + ' ms sampling interval')
         }
     }
-    Say ('    peak on disk (results + checkpoints) ' + (MiB $peakDisk) + ' MiB; the process wrote ' + (MiB $last.WriteBytes) + ' MiB and read ' +
-         (MiB $last.ReadBytes) + ' MiB (every read and write call: files, pipes, the console)')
+    Say ('    peak on disk (results + checkpoints) ' + (Size $peakDisk) + '; the process wrote ' + (Size $last.WriteBytes) + ' and read ' +
+         (Size $last.ReadBytes) + ' (every read and write call: files, pipes, the console)')
+    foreach ($e in @($r.Errors)) { Say ('    note   ' + $e) }
     foreach ($f in $left) {
         $hashText = $(if ($f.Contains('sha256')) { ', sha256 ' + $f['sha256'].Substring(0, 16) } else { '' })
         Say ('    left   ' + $f.path + '  ' + ([double]$f.bytes).ToString('N0', $inv) + ' bytes (' + $f.state + $hashText + ')')
