@@ -115,6 +115,15 @@ public static Vector3 MapSpaceToWorldSpace(BiomePointCoordinate v)
     => new Vector3(MapSpaceToWorldSpace(v.x), 0f, MapSpaceToWorldSpace(v.y));
 ```
 
+> **Correction (2026-09-26): both are evaluated in double.** The IL of `WorldSpaceToMapSpace`
+> (`ldarg.0; ldc.r4 6; sub; ldc.r4 12; div; ldc.r4 1024; add; conv.i4`) never narrows, and the game's
+> Mono (`-O=-float32`) keeps the whole chain at R8, so `conv.i4` truncates
+> `((double)x - 6.0) / 12.0 + 1024.0`. The float-per-step reading of the C# above puts a point a float
+> step or so below a grid line at `12k + 6` into the next cell (`-8190.00048828125` → 341 instead of the
+> game's 340), which in `GetBiomeSector` can change the alt-biome sector filter 10 reads. Measured on the
+> game's own runtime with the game's IL; `MapSpaceToWorldSpace` was already corrected the same way on
+> 2026-09-23 (57 of 938 sector centres wrong at float precision).
+
 `WorldSpaceToMapSpace` uses a **C-style truncating cast**, not a floor: the expression goes negative only
 for `x < 6 - 12*1024 = -12282`, and there it truncates toward zero. In practice the argument is always
 non-negative inside the world, so it behaves as a floor there. `WorldGenerator.GetBiomeSector(int, int,
@@ -757,7 +766,9 @@ private static Vector2s GetZoneCenter(Vector2s id) => new Vector2s(id.x * 64, id
 ```
 
 The `(double)` promotion then narrowing to `float` before `FloorToInt` is observable at zone boundaries;
-port it literally.
+port it literally. **Corrected 2026-09-26:** `FloorToInt`'s own add is done in double by the game's
+Mono (`(int)((double)f + 64000.0) - 64000`), not in float as the comment above reads; see
+05-validation.md §1.4.
 
 `WorldGenerator.GetBiomeArea(Vector2s point)` — this is the **Vector2s overload**, not the Vector3 one:
 

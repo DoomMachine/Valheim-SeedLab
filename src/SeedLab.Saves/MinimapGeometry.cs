@@ -116,10 +116,15 @@ namespace SeedLab.Saves
         /// px = Utils.RoundToInt(p.x / m_pixelSize + (float)num);
         /// py = Utils.RoundToInt(p.z / m_pixelSize + (float)num);
         /// </code>
-        /// <b>Uses <see cref="ValheimRounding.RoundToInt"/>, not <c>Math.Round</c>.</b> Because the
-        /// bias is added in float, this is only round-half-up to within about 1/128 of a pixel; do not
-        /// substitute an exact rounding rule (05-validation.md section 1.4). The result is not
-        /// clamped, exactly as in the game - it can fall outside [0, N).
+        /// <b>Uses <see cref="ValheimRounding.RoundToInt"/>, not <c>Math.Round</c></b>, and computes its
+        /// argument the way the game's Mono (<c>-O=-float32</c>) does: IL
+        /// <c>ldfld x; ldfld m_pixelSize; div; ldloc.0; conv.r4; add; call Utils::RoundToInt(Single)</c>,
+        /// so the divide and the add are done in DOUBLE and the sum is narrowed to float once, as the
+        /// float argument (measured on the game's runtime with a copy of this IL shape: for
+        /// <c>x = 5.999988f</c> the pixel is 1025, which only the narrowed argument gives - kept wide it
+        /// would be 1024). Until 2026-09-26 both steps and the bias were float (<c>WorldToPixel(5.976f)</c>
+        /// gave column 1025; the game gives 1024). The result is not clamped, exactly as in the game -
+        /// it can fall outside [0, N).
         /// <para>
         /// <b>Correction to 05-validation.md section 1.4.</b> The spec states that
         /// "<c>WorldToPixel(centre of pixel k) == k</c> holds". <b>It does not.</b> For the sample
@@ -145,8 +150,8 @@ namespace SeedLab.Saves
         public void WorldToPixel(float worldX, float worldZ, out int col, out int row)
         {
             int num = HalfTextureSize;
-            col = ValheimRounding.RoundToInt(worldX / PixelSize + (float)num);
-            row = ValheimRounding.RoundToInt(worldZ / PixelSize + (float)num);
+            col = ValheimRounding.RoundToInt((float)((double)worldX / (double)PixelSize + (double)(float)num));
+            row = ValheimRounding.RoundToInt((float)((double)worldZ / (double)PixelSize + (double)(float)num));
         }
 
         /// <summary><see cref="WorldToPixel"/> plus a bounds check.</summary>

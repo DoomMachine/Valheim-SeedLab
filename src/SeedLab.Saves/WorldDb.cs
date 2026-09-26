@@ -62,15 +62,17 @@ namespace SeedLab.Saves
         ///     return new Vector2s(x, y);            // Vector2s(int,int) narrows with (short)
         /// }
         /// </code>
-        /// <b>Not <c>MathF.Floor((X + 32f) / 64f)</c>, twice over:</b> the divide is done in double and
-        /// narrowed to float once, and the floor is <see cref="ValheimRounding.FloorToInt"/>, whose
-        /// float bias quantises the fraction to 1/512 at this magnitude. For <c>x in (31.875, 32)</c>
-        /// the exact <c>(x+32)/64</c> is in <c>(0.998046875, 1)</c>, <c>+64000f</c> rounds up to
-        /// exactly <c>64001f</c>, and the game returns <b>1</b> where <c>MathF.Floor</c> returns
-        /// <b>0</b> - a 0.125 m band at every zone boundary. No instance in the ground-truth saves
-        /// falls in such a band (max <c>|pos - 64*zone|</c> = 28.85), which is exactly why a wrong
-        /// implementation would pass the fixtures and fail silently on arbitrary query points
-        /// (05-validation.md section 5.0).
+        /// <b>Not <c>MathF.Floor((X + 32f) / 64f)</c>:</b> the divide is done in double and narrowed to
+        /// float once (IL <c>conv.r4</c>), and the floor is <see cref="ValheimRounding.FloorToInt"/>,
+        /// which the game computes in double. So the boundary is where the NARROWED quotient reaches an
+        /// integer: the largest float below 32 is zone 1 (its quotient <c>1 - 2^-25</c> narrows to
+        /// <c>1f</c>), while <c>x = 31.9</c> is zone 0.
+        /// <para><b>Corrected 2026-09-26.</b> This used to say that the float bias of
+        /// <c>FloorToInt</c> makes <c>x in (31.875, 32)</c> zone 1 - "a 0.125 m band at every zone
+        /// boundary". That band was .NET's float arithmetic, not the game's (see
+        /// <see cref="ValheimRounding"/>); the game has none. No instance in the ground-truth saves sits
+        /// near a boundary (max <c>|pos - 64*zone|</c> = 28.85), which is why no gate could tell the two
+        /// apart (05-validation.md section 5.0).</para>
         /// </summary>
         public (short X, short Y) Zone => (
             (short)ValheimRounding.FloorToInt((float)(((double)X + 32.0) / 64.0)),

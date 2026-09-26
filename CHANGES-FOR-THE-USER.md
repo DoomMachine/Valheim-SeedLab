@@ -606,6 +606,38 @@ a new `note` changed. The 1.0.15 recording stays in git (the file at `ded6c94`),
 **Proof:** `vseed selftest --report` now ends `PASS - ... all 40 compared world digests bit for bit`
 (it said 24), with `L4-L5: computed with game data 1.0.16-96cfc004`.
 
+## Three rounding helpers now compute at the game's precision (2026-09-26)
+
+The 1.0.16 audit found that three small game functions - `Utils.FloorToInt`, `Utils.RoundToInt` and
+`AltBiomeWorldData.WorldSpaceToMapSpace` - were ported so that .NET rounded to float at each step,
+while the game's Mono runs with an option (`-O=-float32`, a string inside `UnityPlayer.dll`) that keeps
+the arithmetic in double. The two disagree only for a point a hair from a boundary. Now SeedLab computes
+them as the game does:
+
+- **Location placement:** the alt-biome sector a candidate point falls in (filter 10) is looked up with
+  the game's rounding. A point within about a millimetre below a 12 m grid line used to be put in the
+  next cell; in a rare world that could change which location lands where.
+- **`vseed at`** no longer prints the neighbouring zone for points up to 0.125 m below a zone edge, and
+  the save reader's zone of each stored location uses the same rule.
+- **Map pixels** (`MinimapGeometry.WorldToPixel`, the exploration overlay's mapping) round as the game
+  does, including computing the divide and add in double before the rounding.
+
+**What did not change:** every gate on the four 1.0.16 worlds passes with the same numbers (the location
+gate's 12,182 / 12,314 / 12,287 / 12,228 instances, the terrain acceptance, GoldenCheck, the natives),
+and the 64 reference seeds' world fingerprints are identical (320 of 320 digests), so the reference was
+not re-recorded. None of those worlds has a point in the band.
+
+**Not changed:** the web page's point panel computes its zone its own way (an exact floor of
+`(x + 32) / 64`, without the game's narrowing to float), so for a point within a float step (a few
+micrometres) below a zone edge it can still show the neighbouring zone. It is left for the web work,
+which is paused and changes the same file.
+
+**Proof:** `dotnet run -c Release --project tests\SeedLab.Tests -- rounding` - **196 checks**. Its
+expected values were produced by the game's own IL on the game's own Mono runtime with that option (the
+probe that ran them is kept with the fix's report), and for every "a hair from a boundary" input the test
+also checks that the old float formula gave a different answer; run against the old code, 46 of its
+checks fail.
+
 ## Still not implemented — named so you do not go looking
 
 - **GPU.** Still rejected after CPU SIMD delivered 6.03× bit-exactly. A GPU path could only ever be

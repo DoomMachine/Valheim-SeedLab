@@ -62,8 +62,10 @@ Examples:
             bool inForest = WorldGeneratorPort.InForest(x, 0f, z);
 
             // ZoneSystem.GetZone: the divide happens in double and is narrowed to float once, and the
-            // floor is Utils.FloorToInt (a float +64000 bias), not MathF.Floor. Both matter at a
-            // boundary, so the game's own helpers are used rather than an "equivalent".
+            // floor is Utils.FloorToInt (the +64000 bias added in double by the game's Mono, then
+            // truncated), not MathF.Floor. Both matter at a boundary, so the game's own helpers are
+            // used rather than an "equivalent". (Until 2026-09-26 the bias was added in float here,
+            // which printed the next zone for points up to 0.125 m below a zone edge.)
             int zx = ValheimRounding.FloorToInt((float)(((double)x + 32.0) / 64.0));
             int zy = ValheimRounding.FloorToInt((float)(((double)z + 32.0) / 64.0));
 

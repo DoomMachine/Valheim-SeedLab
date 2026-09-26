@@ -77,8 +77,9 @@ namespace SeedLab.Saves
     /// <para>
     /// <b>The exploration grid is the same grid as the minimap cache</b>: pixel
     /// <c>k = row*N + col</c> with <c>col = Utils.RoundToInt(x/12f + 1024f)</c> and
-    /// <c>row = Utils.RoundToInt(z/12f + 1024f)</c> - the <c>(int)(f + 64000.5f) - 64000</c> form, not
-    /// <c>Math.Round</c> (<c>Minimap.WorldToPixel</c>, and <c>Minimap.Explore(int,int)</c> indexing
+    /// <c>row = Utils.RoundToInt(z/12f + 1024f)</c> - the <c>(int)(f + 64000.5f) - 64000</c> form, which
+    /// the game evaluates in double (<see cref="ValheimRounding"/>), not <c>Math.Round</c>
+    /// (<c>Minimap.WorldToPixel</c>, and <c>Minimap.Explore(int,int)</c> indexing
     /// <c>m_explored[y * m_textureSize + x]</c>, line 1859). So an "overlay my exploration" feature is
     /// a direct per-pixel AND with the cache, with no resampling
     /// (05-validation.md section 5.4). Use <see cref="Geometry"/> for the mapping.

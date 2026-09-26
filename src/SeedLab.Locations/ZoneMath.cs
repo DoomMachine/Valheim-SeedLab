@@ -24,14 +24,34 @@ namespace SeedLab.Locations
         public const float ZoneAcceptRadius = 10000f;
 
         /// <summary>
-        /// <c>Utils.FloorToInt(float)</c> (assembly_utils, line 1222): <c>(int)(f + 64000f) - 64000</c>.
-        /// <b>Not <c>MathF.Floor</c>.</b> The bias is added in float, so the fraction is quantised
-        /// before truncation - near 64000 the float spacing is 2^-8. Identical to
-        /// <c>SeedLab.Saves.ValheimRounding.FloorToInt</c>; the two are duplicated rather than shared
-        /// because SeedLab.Locations must not depend on the save-file layer, and they must stay
-        /// character-for-character identical.
+        /// <c>Utils.FloorToInt(float)</c> (assembly_utils, line 1222), C# <c>(int)(f + 64000f) - 64000</c>,
+        /// IL <c>ldarg.0; ldc.r4 64000; add; conv.i4; ldc.i4 64000; sub; ret</c> (1.0.16).
+        ///
+        /// <para><b>The add is done in DOUBLE and the unrounded double is truncated.</b> Nothing narrows
+        /// between the <c>add</c> and the <c>conv.i4</c>, and the game's Mono runs with
+        /// <c>-O=-float32</c> (the option string in <c>UnityPlayer.dll</c>), under which every float
+        /// evaluation-stack value is an R8. So: <c>(double)f + 64000.0</c> (<c>64000f</c> is exact),
+        /// then <c>conv.i4</c> - truncation towards zero. Measured on the game's own
+        /// <c>mono-2.0-bdwgc.dll</c> with that option, running the IL of <c>Utils.FloorToInt</c> read
+        /// out of <c>assembly_utils.dll</c>: <c>FloorToInt(-0.0001f) == -1</c>,
+        /// <c>FloorToInt(0.99999994f) == 0</c>, <c>FloorToInt(-1e-10f) == -1</c> but
+        /// <c>FloorToInt(-1e-12f) == 0</c> (the double sum rounds to 64000.0 - so this is NOT an exact
+        /// floor either; see <c>tests\SeedLab.Tests -- rounding</c>).</para>
+        ///
+        /// <para><b>Corrected 2026-09-26.</b> Until then this was <c>(int)(f + 64000f) - 64000</c> in
+        /// C#, which .NET evaluates in float: the fraction was rounded to 2^-8 before the truncation,
+        /// giving a 1/512-zone (0.125 m) band below every zone boundary where the zone came out one too
+        /// high (and <c>FloorToInt(-0.0001f)</c> gave 0). That described .NET, not the game - the same
+        /// mistake <see cref="BiomeGrid.MapSpaceToWorldSpace"/> had already been corrected for (57 of 938
+        /// sector centres wrong at float precision, measured against the game's own dump).</para>
+        ///
+        /// <para>Identical to <c>SeedLab.Saves.ValheimRounding.FloorToInt</c>; the two are duplicated
+        /// rather than shared because SeedLab.Locations must not depend on the save-file layer, and they
+        /// must stay character-for-character identical. Domain: a finite <c>f</c> with
+        /// <c>|f + 64000| &lt; 2^31</c> - outside it .NET saturates where Mono's <c>cvttsd2si</c> gives
+        /// <c>int.MinValue</c>; no world coordinate comes near.</para>
         /// </summary>
-        public static int FloorToInt(float f) => (int)(f + 64000f) - 64000;
+        public static int FloorToInt(float f) => (int)((double)f + 64000.0) - 64000;
 
         /// <summary>
         /// <c>Utils.LengthXZ(Vector3)</c> (line 557): <c>Mathf.Sqrt(v.x * v.x + v.z * v.z)</c>.
@@ -62,8 +82,12 @@ namespace SeedLab.Locations
 
         /// <summary>
         /// <c>ZoneSystem.GetZone(Vector3)</c> (decomp 2973-2978). Note the double promotion and the
-        /// narrowing back to float before <see cref="FloorToInt"/> - port it literally, it is
-        /// observable at zone boundaries. The z component is the second argument.
+        /// narrowing back to float (IL <c>conv.r4</c> at IL_001b / IL_003c) before
+        /// <see cref="FloorToInt"/> - port it literally, it is observable at zone boundaries. The z
+        /// component is the second argument. With the double floor the zone boundary is where the
+        /// NARROWED quotient reaches an integer: <c>GetZone(31.9f, 0).x == 0</c> (it was 1 until
+        /// 2026-09-26), and the largest float below 32 is zone 1, because its quotient
+        /// <c>1 - 2^-25</c> narrows to <c>1f</c>.
         /// </summary>
         public static Vec2s GetZone(float px, float pz)
         {

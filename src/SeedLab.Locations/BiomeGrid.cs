@@ -105,11 +105,28 @@ namespace SeedLab.Locations
         public static float MapSpaceToWorldSpace(float v) => (float)(((double)v - 1024.0) * 12.0 + 6.0);
 
         /// <summary>
-        /// <c>AltBiomeWorldData.WorldSpaceToMapSpace(float)</c>: <c>(int)((x - 6f) / 12f + 1024f)</c>.
-        /// A C-style truncating cast, not a floor - it only goes negative below -12282 m, and callers
-        /// clamp afterwards anyway (<c>WorldGenerator.GetBiomeSector</c>).
+        /// <c>AltBiomeWorldData.WorldSpaceToMapSpace(float)</c>, C# <c>(int)((x - 6f) / 12f + 1024f)</c>,
+        /// IL <c>ldarg.0; ldc.r4 6; sub; ldc.r4 12; div; ldc.r4 1024; add; conv.i4; ret</c> (1.0.16).
+        ///
+        /// <para><b>Evaluated in double, with no narrowing at all</b> - the sister of
+        /// <see cref="MapSpaceToWorldSpace"/>, with the same IL shape and the same reason: the game's
+        /// Mono (<c>-O=-float32</c>) keeps the subtract, the divide and the add at R8, and
+        /// <c>conv.i4</c> truncates that double. Measured on the game's own <c>mono-2.0-bdwgc.dll</c>
+        /// with that option, running this method's IL read out of <c>assembly_valheim.dll</c>:
+        /// <c>WorldSpaceToMapSpace(-8190.00048828125f) == 340</c> and, for the float just below a grid
+        /// line, <c>WorldSpaceToMapSpace(5.9999995f) == 1023</c> and <c>(1001.99994f) == 1106</c>.</para>
+        ///
+        /// <para><b>Corrected 2026-09-26.</b> Until then this was the C# above, which .NET evaluates in
+        /// float per step: for a point a float step or so below a line at <c>12k + 6</c> the float add
+        /// rounded up to the next integer, so the grid cell - and in <c>GetBiomeSector</c> the alt-biome
+        /// sector that filter 10 reads - came out one cell too far (341, 1024, 1107 above). The fix
+        /// changes no placement in the location gate's four 1.0.16 worlds (every count is the same
+        /// before and after) nor in the 64 reference seeds' fingerprints.</para>
+        ///
+        /// <para>A C-style truncating cast, not a floor - it only goes negative below -12282 m, and
+        /// callers clamp afterwards anyway (<c>WorldGenerator.GetBiomeSector</c>).</para>
         /// </summary>
-        public static int WorldSpaceToMapSpace(float x) => (int)((x - 6f) / 12f + 1024f);
+        public static int WorldSpaceToMapSpace(float x) => (int)(((double)x - 6.0) / 12.0 + 1024.0);
 
         public BiomeIndex BiomeAt(int x, int y) => (BiomeIndex)PointBiomes[Index(x, y)];
         public float HeightAt(int x, int y) => PointHeights[Index(x, y)];

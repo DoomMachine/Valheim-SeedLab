@@ -186,6 +186,19 @@ Port them **literally**, as the two expressions above, everywhere `WorldToPixel`
 `ZoneSystem.GetZone` is reproduced. This also means `WorldToPixel` is only a round-half-up *to within
 ±1/256 of a pixel*; do not substitute an exact rounding rule.
 
+> **Correction (2026-09-26): the paragraph above describes .NET, not the game.** The `rv` probe ran the
+> expressions under .NET, which rounds each float operation to float. The game's Mono runs with
+> `-O=-float32` (the option string in `UnityPlayer.dll`), which keeps every float evaluation-stack value
+> at R8, and the IL (`ldarg.0; ldc.r4 64000.5|64000; add; conv.i4; ldc.i4 64000; sub`) never narrows
+> between the `add` and the `conv.i4`. So the bias is added in **double** and the unrounded double is
+> truncated: `(int)((double)f + 64000.5) - 64000`. Run on the game's own `mono-2.0-bdwgc.dll` with that
+> option, the game's IL gives `RoundToInt(100.4999f) == 100`, `RoundToInt(0.4999f) == 0`,
+> `FloorToInt(-0.0001f) == -1` (and `RoundToInt(2.5f) == 3` as before; `FloorToInt(163.999999f) == 164`
+> under both, because `163.999999f` is `164f`). There is no 1/256-pixel band. `WorldToPixel`'s argument
+> `p.x / m_pixelSize + (float)num` is likewise computed in double and narrowed to float once, at the call.
+> SeedLab ports both this way since that date (`SeedLab.Saves.ValheimRounding`,
+> `tests\SeedLab.Tests -- rounding`).
+
 ### 1.5 `m_textureSize` and `m_pixelSize` — measured, not assumed
 
 Both are serialized Unity fields whose **code defaults are wrong at runtime**:
@@ -955,6 +968,11 @@ that none of the 12 314 instances in `_main.3.db2` fall in such a band (`max |po
 fixtures and fail silently on arbitrary query points and on T8. Port `FloorToInt`/`RoundToInt`
 literally (§1.4).
 
+> **Correction (2026-09-26).** The worked example is .NET's arithmetic, not the game's (§1.4's
+> correction): in the game `+64000` is added in double, so for `x = 31.9` the zone is **0**, and the
+> 0.125 m band does not exist. What does remain is the `conv.r4` narrowing of the quotient: the largest
+> float below 32 is zone 1, because its quotient `1 - 2^-25` narrows to `1f`.
+
 ### 5.1 `_main.<N>.fwl2`
 
 ```
@@ -1222,7 +1240,10 @@ conditions *(Minimap.TryLoadMinimapTextureData)* and a mismatch means the cache 
    makes them disagree with the obvious implementations near every boundary. They drive
    `Minimap.WorldToPixel`, `Minimap.Explore` and `ZoneSystem.GetZone`, so getting them wrong corrupts
    zone assignment, the explore overlay and T8 — and the current fixtures would not catch it, because no
-   instance in `_main.3.db2` sits in a disagreement band. See §1.4 and §5.0.
+   instance in `_main.3.db2` sits in a disagreement band. See §1.4 and §5.0. **Corrected 2026-09-26:**
+   the game adds the bias in double (§1.4's correction), so the risk was real in the other direction -
+   SeedLab's literal float port was the wrong one, and no fixture could tell. `tests\SeedLab.Tests --
+   rounding` now pins both helpers to values the game's own IL gave on the game's own runtime.
 8. **Risk — the biome colours are prefab data.** A game update that re-tints the map breaks T2
    silently-looking (it will fail 100 %, which is loud, but the cause will look like a generation bug).
    Mitigate by dumping the live colour fields and by failing with a dedicated "colour table changed"

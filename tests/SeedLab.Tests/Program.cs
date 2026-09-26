@@ -58,6 +58,11 @@ namespace SeedLabTests
             // dotnet run -c Release --project tests\SeedLab.Tests -- groundtruth-completeness --work <scratch folder>
             if (args.Length > 0 && args[0] == "groundtruth-completeness") return GroundTruthCompleteness.Run(args);
 
+            // The game's rounding helpers at full precision, on inputs a hair from a boundary, against
+            // values the game's own IL gave on the game's own Mono runtime:
+            // dotnet run -c Release --project tests\SeedLab.Tests -- rounding
+            if (args.Length > 0 && args[0] == "rounding") return RoundingGoldens.Run(args);
+
             string world = (args.Length > 0 && !args[0].StartsWith("-")) ? args[0] : "asdasdasd";
             int seed = world switch
             {
