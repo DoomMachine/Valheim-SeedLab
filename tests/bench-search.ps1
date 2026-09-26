@@ -19,7 +19,8 @@
 #
 # Seed counts are multiples of 64 (16 workers x 4 blocks), so no worker is left with a short last block.
 # The whole default set takes about 20 minutes on an 8-core / 16-thread machine (Q6 alone about half of
-# that); -Quick about 3 minutes. After the untimed dry runs the script prints vseed's own estimate for the
+# that); -Quick about 3 minutes - projected from runs on a busy machine, not yet timed on a quiet one.
+# After the untimed dry runs the script prints vseed's own estimate for the
 # timed runs, a lower bound (vseed's quick calibration runs ahead of a real run).
 #
 # To stop a run, press Ctrl+C (it takes effect within half a second, and the vseed it started is ended

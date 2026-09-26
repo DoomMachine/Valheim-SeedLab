@@ -5,7 +5,7 @@ Three tools answer three questions:
 | question | tool | how long it takes |
 |---|---|---|
 | Where does one seed's time go, and what does each step use - processor, memory, disk - with every core busy? | `vseed profile --saturate` | about the seconds you ask for x the number of measurements, plus a pilot and a warm-up each (see below) |
-| What does each stage of a real search cost, from start to finish? | `tests\bench-search.ps1` | about 20 minutes (`-Quick`: about 3) |
+| What does each stage of a real search cost, from start to finish? | `tests\bench-search.ps1` | about 20 minutes (`-Quick`: about 3), projected |
 | Did a change to the river code change any value at all? | `river-golden` in `tests\SeedLab.Tests` | about half a minute per 64 worlds to write, the same to check |
 
 Build first: `dotnet build tests\SeedLab.Tests -c Release` (for the golden), then
@@ -128,7 +128,7 @@ It runs real `vseed search` commands at `--mode full` (every core) with fixed se
 | Q7 | `custom --keep all --rotate 32MB --compress gz` | every match written, split and compressed (not in the default set) | 409,600 (16,384) |
 
 The whole default set takes about 20 minutes on an 8-core, 16-thread machine, Q6 alone about half of
-that; `-Quick` about 3 minutes. Each query first has an untimed dry run (which also catches a query
+that; `-Quick` about 3 minutes (projected from runs on a busy machine; not yet timed on a quiet one). Each query first has an untimed dry run (which also catches a query
 vseed would refuse); after those the script prints vseed's own estimate for the timed runs - a lower
 bound, as vseed's quick calibration runs ahead of a real run.
 
