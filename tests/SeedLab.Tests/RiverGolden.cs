@@ -31,12 +31,16 @@ namespace SeedLabTests
     /// cell's key and point count, then every point's position, width and squared width); a digest of the
     /// same content sorted by cell, so a pure change of cell order is told apart from a change of content;
     /// the single-entry river cache as pre-generation left it; and river weights and heights at the cache
-    /// cell's centre, at the first point of every k-th cell and on a 21 x 21 lattice, asked of five
-    /// handles that reach the river points by different paths: the eager generator (a), a fork that
-    /// inherits its cache (d), a cold fork (e), a deferred generator whose first river query triggers
-    /// the pre-generation lazily (b), and a fork of a deferred generator, which pre-generates the parent
-    /// (c). The paths must agree with each other (checked every time, as invariants) and with the golden.
-    /// Each record carries its own SHA-256.</para>
+    /// cell's centre, at the first point of every k-th cell (in key order) and on a 21 x 21 lattice, asked
+    /// of five handles that reach the river points by different paths: the eager generator (a), a fork
+    /// that inherits its cache (d), a cold fork (e), a deferred generator whose first river query
+    /// triggers the pre-generation lazily (b), and a fork of a deferred generator, which pre-generates
+    /// the parent (c). Then, LATER - after (b) and (c) pre-generated and one more world of another seed
+    /// was generated on the same thread - the river data of (a), (b) and (c) are read again, and a fork
+    /// (f) that inherited a's cache at the start but was asked nothing until now, and two cold forks
+    /// taken now (g of a, h of b), are asked again: the case a per-worker reuse of the river memory would
+    /// break, where a finished generator's arrays end up in the next one. The paths must agree with each
+    /// other (checked every time, as invariants) and with the golden. Each record carries its own SHA-256.</para>
     ///
     /// <para><b>Size and time.</b> About 11 MB of raw bits per seed; stored as gzip with each value kept
     /// as its xor with the same field of the element before, it came to 2.1 MiB per seed (136 MiB for
@@ -51,7 +55,9 @@ namespace SeedLabTests
     public static class RiverGolden
     {
         private const string Magic = "SLRIVGLD";
-        private const int FormatVersion = 1;
+
+        /// <summary>2 (2026-09-26): probes taken in key order; the LATER re-reads. A format-1 golden is refused.</summary>
+        private const int FormatVersion = 2;
         private const int WorldGenVersion = 2;
 
         public static int Run(string[] args)
@@ -158,6 +164,7 @@ namespace SeedLabTests
             b.Add(CachePoints("a.cache.points", a));
             WorldGeneratorPort d = a.Fork(inheritRiverCache: true);
             WorldGeneratorPort e = a.Fork();
+            WorldGeneratorPort f = a.Fork(inheritRiverCache: true);   // asked nothing until the end (LATER below)
             b.Add(CacheBlock("d.cache", d));
             b.Add(CachePoints("d.cache.points", d));
             List<Block> data = DataBlocks(a);
@@ -205,6 +212,21 @@ namespace SeedLabTests
             b.Add(CachePoints("c.parent.cache.points", cp));
             b.Add(new Block("c.digest", DigestFields, DigestValues(DataBlocks(c))));
             b.Add(Probe("c.probe", c, probes));
+
+            // LATER: the handles read again after (b) and (c) pre-generated on this thread and one more
+            // world of another seed was generated here too - the situation a per-worker reuse of the
+            // river memory creates, where a finished generator's arrays could be handed to the next one.
+            // (f) inherited a's cache before anything was asked and has not been asked anything since.
+            WorldGeneratorPort other = new WorldGeneratorPort(seed ^ 0x5DEECE6, WorldGenVersion);
+            GC.KeepAlive(other);
+            b.Add(new Block("later.a.digest", DigestFields, DigestValues(DataBlocks(a))));
+            b.Add(new Block("later.b.digest", DigestFields, DigestValues(DataBlocks(bg))));
+            b.Add(new Block("later.c.digest", DigestFields, DigestValues(DataBlocks(c))));
+            b.Add(CacheBlock("later.f.cache", f));
+            b.Add(CachePoints("later.f.cache.points", f));
+            b.Add(Probe("later.f.probe", f, probes));
+            b.Add(Probe("later.g.probe", a.Fork(), probes));
+            b.Add(Probe("later.h.probe", bg.Fork(), probes));
 
             r.Seal();
             return r;
@@ -328,14 +350,18 @@ namespace SeedLabTests
         /// <summary>
         /// Where the handles are asked: the cache cell's centre first (the one query that can meet a stale
         /// cache), then the first point of every k-th cell (inside a channel, where the order of the
-        /// points in a cell changes the sum), then a 21 x 21 lattice 1 km apart.
+        /// points in a cell changes the sum), then a 21 x 21 lattice 1 km apart. The cells are taken in
+        /// the order of their keys, not the order the dictionary lists them in, so a change of that order
+        /// alone asks at the same places and the probes stay comparable with the golden.
         /// </summary>
         private static List<(float X, float Y)> ProbePoints(WorldGeneratorPort a, Vec2i cell)
         {
             List<(float, float)> p = new List<(float, float)> { (cell.x * 64f, cell.y * 64f) };
             IReadOnlyDictionary<Vec2i, WorldGeneratorPort.RiverPoint[]> pts = a.GetRiverPoints();
-            int every = Math.Max(1, pts.Count / 48), i = 0;
-            foreach (KeyValuePair<Vec2i, WorldGeneratorPort.RiverPoint[]> kv in pts)
+            List<KeyValuePair<Vec2i, WorldGeneratorPort.RiverPoint[]>> sorted = new List<KeyValuePair<Vec2i, WorldGeneratorPort.RiverPoint[]>>(pts);
+            sorted.Sort((u, v) => u.Key.x != v.Key.x ? u.Key.x.CompareTo(v.Key.x) : u.Key.y.CompareTo(v.Key.y));
+            int every = Math.Max(1, sorted.Count / 48), i = 0;
+            foreach (KeyValuePair<Vec2i, WorldGeneratorPort.RiverPoint[]> kv in sorted)
             {
                 if (i++ % every == 0 && kv.Value.Length > 0) p.Add((kv.Value[0].p.x, kv.Value[0].p.y));
             }
@@ -403,7 +429,7 @@ namespace SeedLabTests
         private static string Hex(byte[] h, int chars = 64) => Convert.ToHexString(h).ToLowerInvariant().Substring(0, chars);
 
         // =============================================================================================
-        // Invariants: the five paths agree
+        // Invariants: every path agrees, and still agrees LATER
         // =============================================================================================
 
         /// <summary>The ways into the river points that must agree on this build, whatever the golden says.</summary>
@@ -428,6 +454,17 @@ namespace SeedLabTests
             Same("c.parent.cache.points", "a.cache.points", "pre-generation through Fork leaves other cached points");
             Block? p = r.Get("b.pending");
             if (p == null || p.Values[0] != 1 || p.Values[1] != 1) bad.Add("the deferred generator started its pre-generation before a river query (b.pending)");
+
+            // Read again after two more pre-generations and another seed's world on the same thread.
+            const string later = " after other worlds were generated on the same thread";
+            if (!Equal(r.Get("later.a.digest")?.Values, own)) bad.Add("the eager generator's river data changed" + later + " (later.a.digest)");
+            if (!Equal(r.Get("later.b.digest")?.Values, own)) bad.Add("the deferred generator's river data changed" + later + " (later.b.digest)");
+            if (!Equal(r.Get("later.c.digest")?.Values, own)) bad.Add("the deferred generator's fork holds other river data" + later + " (later.c.digest)");
+            Same("later.f.cache", "a.cache", "a fork's inherited cache moved" + later);
+            Same("later.f.cache.points", "a.cache.points", "a fork's inherited cache holds other points" + later);
+            Same("later.f.probe", "a.probe", "a fork that inherited the cache answers differently" + later);
+            Same("later.g.probe", "e.probe", "a cold fork taken now answers differently" + later);
+            Same("later.h.probe", "e.probe", "a cold fork of the deferred generator answers differently" + later);
             return bad;
         }
 
@@ -462,12 +499,15 @@ namespace SeedLabTests
             Block? gc = golden.Get("cells"), gp = golden.Get("points"), nc = now.Get("cells"), np = now.Get("points");
             if (gc != null && gp != null && nc != null && np != null) orderOnly = Equal(SortedDigest(gc, gp), SortedDigest(nc, np));
 
+            // A change of cell order alone is noted and the comparison goes on: "order only" is the verdict
+            // only when every other block agrees too. Otherwise the first real difference is the verdict.
+            Difference? order = null;
             foreach (Block g in golden.Blocks)
             {
                 Block? n = now.Get(g.Name);
-                if (n == null) return new Difference { Block = g.Name, Text = "block " + g.Name + " is missing on this build" };
+                if (n == null) return AlsoOrder(new Difference { Block = g.Name, Text = "block " + g.Name + " is missing on this build" }, order);
                 if (string.Join(",", g.Fields) != string.Join(",", n.Fields))
-                    return new Difference { Block = g.Name, Text = "block " + g.Name + " has fields (" + string.Join(",", n.Fields) + "), the golden (" + string.Join(",", g.Fields) + ")" };
+                    return AlsoOrder(new Difference { Block = g.Name, Text = "block " + g.Name + " has fields (" + string.Join(",", n.Fields) + "), the golden (" + string.Join(",", g.Fields) + ")" }, order);
                 int len = Math.Min(g.Values.Length, n.Values.Length);
                 int first = -1;
                 for (int i = 0; i < len; i++)
@@ -481,19 +521,36 @@ namespace SeedLabTests
 
                 if (first < 0 && g.Values.Length == n.Values.Length) continue;
                 if (first < 0) first = len;
-                bool inOrder = orderOnly && (g.Name == "cells" || g.Name == "points");
                 Difference d = Describe(g.Name, g, n, first, golden, now);
-                d.OrderOnly = inOrder;
-                if (inOrder) d.Text += " - the cells' CONTENT is identical (same keys, counts and points sorted by cell): only the order the dictionary lists them in changed";
-                return d;
+                if (orderOnly && (g.Name == "cells" || g.Name == "points"))
+                {
+                    if (order == null)
+                    {
+                        d.OrderOnly = true;
+                        d.Text += " - the cells' CONTENT is identical (same keys, counts and points sorted by cell), and every other block "
+                                  + "agrees: only the order the dictionary lists them in changed";
+                        order = d;
+                    }
+
+                    continue;
+                }
+
+                return AlsoOrder(d, order);
             }
 
             foreach (Block n in now.Blocks)
             {
-                if (golden.Get(n.Name) == null) return new Difference { Block = n.Name, Text = "block " + n.Name + " is new on this build (the golden has none)" };
+                if (golden.Get(n.Name) == null) return AlsoOrder(new Difference { Block = n.Name, Text = "block " + n.Name + " is new on this build (the golden has none)" }, order);
             }
 
-            return null;
+            return order;
+        }
+
+        /// <summary>A real difference, noting that the cell order changed as well when it did.</summary>
+        private static Difference AlsoOrder(Difference d, Difference? order)
+        {
+            if (order != null) d.Text += " (and the dictionary also lists the cells in another order, from cell #" + order.Cell + ")";
+            return d;
         }
 
         private static Difference Describe(string name, Block g, Block n, int i, SeedRecord golden, SeedRecord now)
@@ -590,7 +647,11 @@ namespace SeedLabTests
             string magic = Encoding.ASCII.GetString(r.ReadBytes(8));
             if (magic != Magic) throw new InvalidDataException("not a river golden (no " + Magic + " header)");
             int v = r.ReadInt32();
-            if (v != FormatVersion) throw new InvalidDataException("a river golden of format " + v + "; this build reads format " + FormatVersion);
+            if (v != FormatVersion)
+            {
+                throw new InvalidDataException("a river golden of format " + v + "; this build reads format " + FormatVersion
+                                               + " - write a new golden with this build's --write (from the code before your change)");
+            }
             return new Header { Key = r.ReadUInt64(), From = r.ReadInt64(), Seeds = r.ReadInt32(), Text = r.ReadString() };
         }
 
@@ -668,20 +729,72 @@ namespace SeedLabTests
 
         private static string? Refused(string full)
         {
-            // data\ and groundtruth\ are the repository's evidence (and may be links to another checkout's): never written.
+            // data\ and groundtruth\ are the repository's evidence (and may be links to another checkout's):
+            // never written - neither through the link nor at the folder the link points to.
             DirectoryInfo? d = new DirectoryInfo(AppContext.BaseDirectory);
             while (d != null)
             {
                 foreach (string name in new[] { "data", "groundtruth" })
                 {
-                    string root = Path.Combine(d.FullName, name) + Path.DirectorySeparatorChar;
-                    if (Directory.Exists(root) && full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return "inside " + root;
+                    string link = Path.Combine(d.FullName, name);
+                    if (!Directory.Exists(link)) continue;
+                    foreach (string root in GuardRoots(link))
+                    {
+                        if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase) || full.Equals(root.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+                            return "inside " + root + (root.Equals(link + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ? "" : " (where " + link + " points)");
+                    }
                 }
 
                 d = d.Parent;
             }
 
+            // The path itself may go through a link: judge the folder it really lands in too.
+            string? dir = Path.GetDirectoryName(full);
+            if (dir != null && Directory.Exists(dir))
+            {
+                string real = FinalPath(dir);
+                if (!real.Equals(dir, StringComparison.OrdinalIgnoreCase)) return Refused(Path.Combine(real, Path.GetFileName(full)));
+            }
+
             return null;
+        }
+
+        /// <summary>A guarded folder as given and, when it is a link (a junction), the folder it finally points to.</summary>
+        private static IEnumerable<string> GuardRoots(string folder)
+        {
+            yield return Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string real = FinalPath(folder);
+            if (!real.Equals(Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+                yield return real + Path.DirectorySeparatorChar;
+        }
+
+        /// <summary>
+        /// Where a folder really is: every link (junction) on its path resolved, from the root down, since
+        /// a link anywhere on the path moves everything below it. The folder itself when there is none.
+        /// </summary>
+        private static string FinalPath(string folder)
+        {
+            string full = Path.GetFullPath(folder);
+            string? root = Path.GetPathRoot(full);
+            if (string.IsNullOrEmpty(root)) return full.TrimEnd(Path.DirectorySeparatorChar);
+            string current = root;
+            foreach (string part in full.Substring(root.Length).Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string next = Path.Combine(current, part);
+                try
+                {
+                    FileSystemInfo? target = Directory.Exists(next) ? Directory.ResolveLinkTarget(next, returnFinalTarget: true) : null;
+                    if (target != null) next = target.FullName;
+                }
+                catch (Exception)
+                {
+                    // Unreadable: judge the path as written.
+                }
+
+                current = next;
+            }
+
+            return current.Length > root.Length ? current.TrimEnd(Path.DirectorySeparatorChar) : current;
         }
 
         // =============================================================================================
@@ -753,7 +866,7 @@ namespace SeedLabTests
                 return 1;
             }
 
-            Console.WriteLine("PASS  written; the five ways into the river points agree on every seed");
+            Console.WriteLine("PASS  written; every way into the river points agrees on every seed, the later re-reads included");
             return 0;
         }
 
@@ -783,7 +896,17 @@ namespace SeedLabTests
             {
                 int n = Math.Min(threads, h.Seeds - start);
                 SeedRecord[] gold = new SeedRecord[n];
-                for (int i = 0; i < n; i++) gold[i] = ReadRecord(rd);
+                try
+                {
+                    for (int i = 0; i < n; i++) gold[i] = ReadRecord(rd);
+                }
+                catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException or IOException or ArgumentException)
+                {
+                    // A truncated or damaged file: a file error in plain words, not a crash.
+                    Console.WriteLine("river-golden: --check: the golden cannot be read past seed #" + start + " (" + ex.Message + "): the file is damaged or "
+                                      + "was not written to the end. " + same + " seed(s) before it were checked" + (differ + corrupt + invariants > 0 ? ", some differing" : "") + ".");
+                    return 2;
+                }
                 SeedRecord[] now = new SeedRecord[n];
                 Parallel.For(0, n, new ParallelOptions { MaxDegreeOfParallelism = threads }, i =>
                     now[i] = Build(gold[i].Index, SeedAt(h.Key, gold[i].Index)));
@@ -822,7 +945,7 @@ namespace SeedLabTests
 
             if (differ == 0 && corrupt == 0 && invariants == 0)
             {
-                Console.WriteLine("PASS  all " + same + " seeds are bit-identical to the golden, cell order included, and the five paths agree");
+                Console.WriteLine("PASS  all " + same + " seeds are bit-identical to the golden, cell order included, and every path agrees, the later re-reads included");
                 return 0;
             }
 
@@ -854,7 +977,7 @@ namespace SeedLabTests
             foreach (SeedRecord r in recs)
             {
                 List<string> bad = Invariants(r);
-                Ok(bad.Count == 0, "seed #" + r.Index + " (" + r.Seed + "): the five ways into the river points agree", bad.Count > 0 ? bad[0] : r.Get("cells")!.Count + " cells, " + r.Get("points")!.Count + " points");
+                Ok(bad.Count == 0, "seed #" + r.Index + " (" + r.Seed + "): every way into the river points agrees, the later re-reads included", bad.Count > 0 ? bad[0] : r.Get("cells")!.Count + " cells, " + r.Get("points")!.Count + " points");
             }
 
             SeedRecord again = Build(0, PilotSeedOrder.At(0));
@@ -946,6 +1069,51 @@ namespace SeedLabTests
             p6.Get("b.probe")!.Values[0] ^= 1u;
             List<string> inv = Invariants(p6);
             Ok(inv.Count == 1 && inv[0].Contains("lazily", StringComparison.Ordinal), "a lazily pre-generated handle that answers differently breaks an invariant", inv.Count > 0 ? inv[0] : "none");
+
+            // 7. A change of order AND a real change: the real one is the verdict, never "order only".
+            SeedRecord p7 = SwapCells(golden, 5, 6);
+            Block probe7 = p7.Get("e.probe")!;
+            int lattice7 = probe7.Count - 1;
+            probe7.Values[3 * lattice7 + 2] = F(AsFloat(probe7.Values[3 * lattice7 + 2]) + 1f);
+            p7.Seal();
+            Difference? d7 = Compare(golden, p7);
+            Ok(d7 != null && !d7.OrderOnly && d7.Block == "e.probe" && d7.Text.Contains("another order", StringComparison.Ordinal),
+               "a reordered dictionary with a changed height is reported as the height, not as order only", d7?.Text ?? "not found");
+
+            // 8. The LATER re-reads: a generator whose river data, or a fork whose inherited cache, changed
+            // after other worlds were generated on the same thread breaks an invariant.
+            SeedRecord p8 = Copy(golden);
+            p8.Get("later.a.digest")!.Values[0] ^= 1u;
+            p8.Get("later.f.cache")!.Values[0] ^= 1u;
+            List<string> inv8 = Invariants(p8);
+            Ok(inv8.Count == 2 && inv8.TrueForAll(x => x.Contains("after other worlds were generated on the same thread", StringComparison.Ordinal)),
+               "river data or an inherited cache changed after other worlds were generated on the thread breaks an invariant", inv8.Count > 0 ? inv8[0] : "none");
+
+            // 9. A damaged golden (cut short) is a file error, exit 2, in plain words - not a crash.
+            string cut = Path.Combine(Path.GetTempPath(), "seedlab-rivergolden-cut-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".bin");
+            try
+            {
+                using (FileStream fs = new FileStream(cut, FileMode.Create))
+                {
+                    using (GZipStream gz = new GZipStream(fs, CompressionLevel.Fastest, leaveOpen: true))
+                    using (BinaryWriter w = new BinaryWriter(gz, Encoding.UTF8, leaveOpen: true))
+                    {
+                        WriteHeader(w, new Header { Key = PilotSeedOrder.Key, Seeds = 2, Text = "self-test, cut short" });
+                        foreach (SeedRecord r in recs) WriteRecord(w, r);
+                    }
+
+                    fs.SetLength(fs.Length * 6 / 10);
+                }
+
+                Console.WriteLine("  (reading a golden cut to 60 % of its length; one seed is rebuilt on the way)");
+                int code = Check(cut, 1);
+                Ok(code == 2, "a golden cut short is refused as a damaged file (exit 2), not a crash", "exit " + code);
+            }
+            finally
+            {
+                try { File.Delete(cut); }
+                catch (Exception) { /* a temporary file */ }
+            }
 
             Console.WriteLine((_fail == 0 ? "PASS" : "FAIL") + "  river golden self-test: " + _pass + " passed, " + _fail + " failed");
             return _fail == 0 ? 0 : 1;
