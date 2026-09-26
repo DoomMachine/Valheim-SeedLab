@@ -12,7 +12,7 @@ namespace SeedLab.Cli.Infra
     /// </summary>
     public static class Verified
     {
-        public const string EngineVersion = "0.1.0";
+        public const string EngineVersion = "0.2.0a";
 
         /// <summary>The game build every SeedLab number was measured against.</summary>
         public const string GameVersion = "1.0.16";
