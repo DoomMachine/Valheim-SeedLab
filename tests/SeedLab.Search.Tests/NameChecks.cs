@@ -781,7 +781,8 @@ namespace SeedLab.SearchTests
             LocationPlan plan = oracle.Plan(prefabs, needSpawn: false);
 
             int worlds = 0;
-            foreach (string seedHex in new[] { "0480A34C", "B83592B8" })
+            // 1.0.15's fresh worlds (ClaudeTestWold2, run 6's throwaway) and 1.0.16's (run 7's Throwaway).
+            foreach (string seedHex in new[] { "0480A34C", "B83592B8", "BB9B7F96" })
             {
                 if (!data.Goldens.Has("goldens/locationinstances-" + seedHex + ".json")) continue;
                 worlds++;
