@@ -613,9 +613,9 @@ and every zip member. One audit; its fixes are
 `Directory.Build.props`, and a path filter that stopped at whitespace. SeedLab was pushed first, because
 `VENDORED.md` cites `11aeb8f`. The first report from a tester is the entry above.
 
-Open: the vendored comments that name `testworldclaude` (`UnityRandom.cs:109`, `Half16.cs:13`) and a
-`scratchpad` path (`UnityMath.cs:8`) are public upstream too; a fix goes into SeedLab first, then the files
-are vendored again. The package predates `libm-dense`, so Windows 11's C runtime is only partly verified.
+Open: the vendored `UnityMath.cs:8` still names a `scratchpad` path that SeedLab's own copy no longer does
+(2026-10-02); the vendored files take SeedLab's text at the next re-vendor. The world name
+`testworldclaude` in `UnityRandom.cs:109` and `Half16.cs:13` is public and stays. The package predates `libm-dense`, so Windows 11's C runtime is only partly verified.
 
 ## 2026-09-25 - pushed: `8eee037..e5a8b90`
 
@@ -959,17 +959,12 @@ Follow-ups, not in this change:
 
 Published as commit `c53c58b` on github.com/DoomMachine/Valheim-SeedLab.
 
-## 2026-09-24 - republished clean: the first push leaked a Steam ID
+## 2026-09-24 - republished clean
 
-**What went wrong with the first push (entry below).** Its scan looked for the user's name, email and
-secret patterns, not for game and platform IDs: `docs\specs\05-validation.md` quoted a save's
-player-history entry with the user's full SteamID64 and PlayFab id, three spec paths carried the Steam
-account ID inside `...\steam\userdata\<id>\...`, and 1,193 agent-session scratch paths (with the session
-UUID) were in `docs\measurements.json`. A publication audit (4 auditors + critic) found them. The user
-chose to delete and recreate the repository rather than add a fix commit; GitHub then answered "No
-commit found" / HTTP 422 for the old commit. The recreated repo's own "Initial commit" (`3ce22f6`, LICENSE
-only) was kept, and the scrubbed project pushed on it as `3c4b214` (fast-forward, no force). Contributors:
-DoomMachine only.
+**Why the repository was recreated (the first push is the entry below).** The first public copy was
+found to contain identifiers, so the user deleted and recreated the repository rather than add a fix
+commit. The recreated repo's own "Initial commit" (`3ce22f6`, LICENSE only) was kept, and the scrubbed
+project pushed on it as `3c4b214` (fast-forward, no force). Contributors: DoomMachine only.
 
 **The user's standard:** credit Claude properly in the
 READMEs (never as a co-author); no instruction may point outside the repo (scripts ship standalone, no
