@@ -19,3 +19,7 @@ build/
 # Local IDE state.
 .vs/
 *.user
+
+# Python bytecode (never part of the project).
+__pycache__/
+*.pyc
