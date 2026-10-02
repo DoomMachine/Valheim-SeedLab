@@ -17,8 +17,8 @@ have never installed a mod, from BepInEx to a checked `data\` folder and the dum
 
 It **has run seven times and is not installed.** Run 7 (2026-09-26, the first in Valheim 1.0.16: all
 three modes in one session - `seedlab_natives` and `seedlab_worldgen` at the main menu, the asset dump
-in the fresh world `Throwaway`) became `data\1.0.16-96cfc004\`, and the plugin was retired to
-`_ModSource\_retired\DoomMachine-SeedLabDumper-20260926-run7`. Run 6 (2026-09-24, Valheim 1.0.15,
+in the fresh world `Throwaway`) became `data\1.0.16-96cfc004\`, and the plugin was retired (moved out of
+`BepInEx\plugins\` into the author's archive). Run 6 (2026-09-24, Valheim 1.0.15,
 assets only: the dungeon doors' captions and the Vegvisir pins) was the last run for
 `data\1.0.15-59f53fb5\`. **F4** is free.
 
@@ -36,8 +36,8 @@ start and the end of run 6's asset dump, and of run 7's natives and worldgen dum
 `RandomGuard` struct whose constructor never ran zeroed Unity's global generator and made every new
 world's suggested seed `aaaaaaaaaa` for the rest of the session. `RandomGuard` is now a reference type with private constructors, a single
 `RandomStateSafe.Restore` is the assembly's only writer of `Random.state` and it refuses to write an
-all-zero state, and preflight gates hold the contract. The affected build is in
-`_ModSource\_retired\DoomMachine-SeedLabDumper-20260923\`.)
+all-zero state, and preflight gates hold the contract. The affected build is kept in
+the author's archive.)
 
 Making the data from your own copy of the game, step by step: [`game-data.md`](game-data.md).
 
@@ -63,7 +63,7 @@ stray press in a solo session starts a dump that hitches the game.
 
 **Deleting `dumper.enable` makes it inert** without uninstalling anything (`Awake` logs one line and
 returns before applying a patch). Moving the plugin folder out of `BepInEx\plugins\` removes it
-entirely (the author keeps retired copies in `_ModSource\_retired\`).
+entirely (the author keeps retired copies in an archive folder).
 Either is the user's call — no SeedLab command does it for you, and `vseed clean` deliberately never
 touches the game folder or the dumper's own output.
 
@@ -78,7 +78,7 @@ touches the game folder or the dumper's own output.
    `seedlab_worldgen MWd8eV6svz hnBd9gJf2G`.
 4. Enter a **throwaway single-player world**, press **F4**, wait for `asset dump DONE`.
 5. Quit, delete `dumper.enable`, and move the plugin folder out of `BepInEx\plugins\` (the author
-   keeps retired copies in `_ModSource\_retired\`).
+   keeps retired copies in an archive folder).
 
 Output goes to `%USERPROFILE%\AppData\valheim-dumper\`. Copy it into
 `data\<game version>-<first 8 hex of the assembly sha256>\`.

@@ -2,10 +2,10 @@
 
 > Target build: **Valheim 1.0.15**, network 40, Steam build 25390630,
 > `assembly_valheim.dll` sha256 `59f53fb55d99d22a33e8ed094eec8d21e9f133543bce92bc3d80dce44033adb1`
-> (`check-game-version.ps1`, exit 0 on 2026-09-22 — the knowledge base matches the installed build).
+> (`check-game-version.ps1`, exit 0 on 2026-09-22 — the published skills match the installed build).
 > Unity 6000.0.75f1, BepInEx 5.4.23.3, HarmonyX 2.9.0.0.
 >
-> Citations are `Type.Member` from the decompiled sources in `scratchpad\decomp\`, or a file plus an
+> Citations are `Type.Member` from the decompiled sources in `<work>\decomp\`, or a file plus an
 > offset for things read out of shipped data. Anything not settled by evidence is marked
 > **Unverified:** with what would settle it. Probe scripts are listed in Appendix A.
 
@@ -149,7 +149,7 @@ source list. Vanilla ships 25+33+35 = 93 vegetation entries from `LocationList`s
 `AltBiomeList.m_alts` (`AltBiomeList.cs`) is copied into the **static** `AltBiomeList.m_altBiomes` in
 `AltBiomeList.Awake`. Dump `m_altBiomes` in list order.
 
-**Settled here (the knowledge base currently marks this Unverified): vanilla 1.0.15 ships 28 AltBiomes
+**Settled here (the skills marked this Unverified when this was written): vanilla 1.0.15 ships 28 AltBiomes
 and all of them have `m_enabled = true`.** Evidence: a structural scan of the decompressed bundle
 `SoftRef/Bundles/d59cfac` found 28 contiguous `AltBiome` records at offsets 5156960–5181556 matching
 the pattern (`m_name` string, `m_enabled` = 1, `m_biome` a valid bitmask, three name strings,
@@ -158,6 +158,10 @@ the pattern (`m_name` string, `m_enabled` = 1, `m_biome` a valid bitmask, three 
 `probe/d59cfac.bin` (`probe/altbiome_decode.py`): 28 records, offsets 5 156 960 (Dark Meadows) –
 5 181 556 (BroodSwarm Mistlands), **`m_enabled = 1` on all 28**, `m_namePrefix` / `m_nameSuffix` /
 `m_nameOverride` all `""`, and `m_biome` exactly as grouped below.
+
+*Corrected later on 2026-09-22: vanilla 1.0.15 ships **32** alt biomes, all enabled. The bundle scan missed
+four - Mushroom, Lantern, Bones and Menhir; the game fills `AltBiomeList.m_altBiomes` from every
+`AltBiomeList.Awake`, and the dumper's `altbiomes.json` counts 32, all enabled, for 1.0.15 and 1.0.16.*
 
 **Notation:** `(×N)` below is `m_levelUpChanceMultiplier`, not a repeat count — every name in the table
 is one AltBiome, and the table therefore totals 6 + 7 + 4 + 3 + 3 + 5 = 28. Measured values:
@@ -457,7 +461,7 @@ Mode B is safe.
 ### 3.1 Identity and build
 
 ```
-_ModSource\ValheimDataDumper\
+ValheimDataDumper\
   ValheimDataDumper.csproj        copied from .claude\skills\valheim-modding\assets\plugin-template
   src\Plugin.cs  src\ModeA_Assets.cs  src\ModeB_GroundTruth.cs  src\Json.cs  src\RandomGuard.cs
   preflight.ps1
@@ -468,7 +472,7 @@ _ModSource\ValheimDataDumper\
 * `netstandard2.1`, `LangVersion latest`, game DLLs with `<Private>false</Private>`, HarmonyX 2.9.
 * **Build with `-p:DeployToGame=false` by default.** This plugin must not sit in `BepInEx\plugins\`
   during normal play; see §3.2. Deploy it deliberately, into its own folder, and remove it afterwards
-  (move to `_ModSource\_retired\`, never delete).
+  (move it to an archive folder, never delete).
 * Serialization: **do not use `JsonUtility`** — it will not serialize `Dictionary`, nested
   `List<List<>>`, or produce stable key order. `Newtonsoft.Json.dll` ships with the game
   (`valheim_Data\Managed\Newtonsoft.Json.dll`); reference it with `<Private>false</Private>` and
@@ -1349,7 +1353,7 @@ source for those names. Say so in the tool's UI rather than promising ore locati
 
 ## Appendix A — probes run for this document
 
-All in `scratchpad\probe\`, all read-only with respect to game and save data.
+All in `<work>\probe\`, all read-only with respect to game and save data.
 
 | Script | What it established |
 |---|---|
@@ -1361,15 +1365,15 @@ All in `scratchpad\probe\`, all read-only with respect to game and save data.
 | `cabmap.py` | header-only scan of all 799 bundles → CAB name → bundle id index |
 | `scan.py`, `scanbig.py` | streaming needle search across bundles; located `d59cfac` |
 | `hashmap.py` | maps every location hash in `asdasdasd\_main.<N>.db2` to a manifest prefab name (176 distinct, 0 unknown) |
-| `starttemple_decode.py` | **added by review.** Byte-exact decode of all 40 `ZoneLocation` fields of `StartTemple` at offset 1 513 248 in `main_unity.bin`; terminates on `"Eikthyrnir"` at 1 513 444, which proves the field layout. Source of the corrected §3.5 example. |
-| `altbiome_decode.py` | **added by review.** Decodes `m_name`/`m_enabled`/`m_biome`/3 name strings/`m_levelUpChanceMultiplier` for all 28 AltBiome records in `d59cfac.bin`; 28/28 clean, all `m_enabled = 1`. |
-| `missing19_assetids.py` | **added by review.** Parses the SoftRef manifest, then searches `main_unity.bin`/`d59cfac.bin` for each prefab's 16-byte `AssetID`. Settles §4.4: all 19 "missing" names are present as `AssetID`s, absent as strings. |
-| `chk_rev.py` | **added by review.** Independent `GetStableHashCode` implementation; confirms `"StartTemple" → -1544986047` and `"MWd8eV6svz" → -1772362158`, and the `AssetID` uint/hex round trip. |
+| `starttemple_decode.py` | **added.** Byte-exact decode of all 40 `ZoneLocation` fields of `StartTemple` at offset 1 513 248 in `main_unity.bin`; terminates on `"Eikthyrnir"` at 1 513 444, which proves the field layout. Source of the corrected §3.5 example. |
+| `altbiome_decode.py` | **added.** Decodes `m_name`/`m_enabled`/`m_biome`/3 name strings/`m_levelUpChanceMultiplier` for all 28 AltBiome records in `d59cfac.bin`; 28/28 clean, all `m_enabled = 1`. |
+| `missing19_assetids.py` | **added.** Parses the SoftRef manifest, then searches `main_unity.bin`/`d59cfac.bin` for each prefab's 16-byte `AssetID`. Settles §4.4: all 19 "missing" names are present as `AssetID`s, absent as strings. |
+| `chk_rev.py` | **added.** Independent `GetStableHashCode` implementation; confirms `"StartTemple" → -1544986047` and `"MWd8eV6svz" → -1772362158`, and the `AssetID` uint/hex round trip. |
 
 Mono.Cecil (via PowerShell) was used for: `SoftReference\`1::get_Name` and `Shared::GetFileName` IL,
 the `Version.*` enums, and the `ldstr` scan of `assembly_valheim.dll` for location names.
 
-## Appendix B — facts settled here, for the knowledge base
+## Appendix B — facts settled here, for the published skills
 
 1. `Minimap.m_textureSize = 2048`, `m_pixelSize = 12.0` in the shipped prefab (code defaults 256 / 64).
    Evidence: cache file sizes + the Ashlands fit. Corroborated by `AltBiomeWorldData.c_textureSize`/
@@ -1427,19 +1431,19 @@ the `Version.*` enums, and the `ldstr` scan of `assembly_valheim.dll` for locati
 |---|---|---|
 | Zone `Heightmap.m_width` / `m_scale` | prefab data; not derivable from code, and the zone prefab was not located in the bundles for this document | one Mode A dump (H5), or the offline reader |
 | Which vanilla locations have a non-zero `DungeonGenerator` local offset | prefab data inside 213 SoftRef prefabs | Mode A prefab walk (§3.3) |
-| ~~Why 19 manifest names have no literal in `main.unity`/`d59cfac`~~ | **CLOSED by review, §4.4.** They are referenced by `AssetID` only; their `m_name`/`m_prefabName` strings do not spell the prefab name. Evidence: `probe/missing19_assetids.py` (19/19 AssetIDs present once in `d59cfac`, 0 name-string hits), plus the refutation of the string-table hypothesis from the `StartTemple` decode. | — |
+| ~~Why 19 manifest names have no literal in `main.unity`/`d59cfac`~~ | **CLOSED, §4.4.** They are referenced by `AssetID` only; their `m_name`/`m_prefabName` strings do not spell the prefab name. Evidence: `probe/missing19_assetids.py` (19/19 AssetIDs present once in `d59cfac`, 0 name-string hits), plus the refutation of the string-table hypothesis from the `StartTemple` decode. | — |
 | `DN_Bossroom`'s boss identity | the bundle only exposes `…Boss…` strings | load the prefab in Mode A and read the component/creature names |
 | Whether two `LocationList`s share an `m_sortOrder` (unstable-sort hazard) | the log does not print sort orders | Mode A dump records them (§1.4); manifest flag `sortOrderTies` |
 | Exact `m_quantity` for every type | only the failing ones appear in the log | Mode A dump |
-| `m_locations.Count` and `m_vegetation.Count` after `SetupLocations` | **added by review.** The manifest example asserted 213/118; neither is measured, and 213 is the SoftRef *prefab* count, not the entry count. §3.5 | Mode A dump (H1) |
-| Enumeration order of `AltBiomeWorldData.Biomes` (`Dictionary<Heightmap.Biome, BiomeTypeInfo>`) | **added by review.** It drives the order of `GenerateAltBiomes`' `InitState`/`Shuffle` passes. Insertion order = `Enum.GetValues` order in practice, but `Dictionary` enumeration order is not a documented contract. §1.3 | Mode A / H2 records the observed key order; a port must then hard-code it, not re-derive it |
-| Whether `m_enable` / `m_quantity` are non-zero for `HalfBurried_ForestCrypt`, `HotSpring1/2/3`, `TheDarkestHole` | **narrowed by review.** All are serialized entries (AssetID evidence, §4.4/§5.3); only the two flags are unknown, and a disabled or zero-quantity entry would explain their absence from the save | Mode A dump |
+| `m_locations.Count` and `m_vegetation.Count` after `SetupLocations` | **added.** The manifest example asserted 213/118; neither is measured, and 213 is the SoftRef *prefab* count, not the entry count. §3.5 | Mode A dump (H1) |
+| Enumeration order of `AltBiomeWorldData.Biomes` (`Dictionary<Heightmap.Biome, BiomeTypeInfo>`) | **added.** It drives the order of `GenerateAltBiomes`' `InitState`/`Shuffle` passes. Insertion order = `Enum.GetValues` order in practice, but `Dictionary` enumeration order is not a documented contract. §1.3 | Mode A / H2 records the observed key order; a port must then hard-code it, not re-derive it |
+| Whether `m_enable` / `m_quantity` are non-zero for `HalfBurried_ForestCrypt`, `HotSpring1/2/3`, `TheDarkestHole` | **narrowed.** All are serialized entries (AssetID evidence, §4.4/§5.3); only the two flags are unknown, and a disabled or zero-quantity entry would explain their absence from the save | Mode A dump |
 
 ---
 
 ## Verification
 
-Independent adversarial check of this document against the decompiled sources in `scratchpad\decomp`,
+Independent adversarial check of this document against the decompiled sources in `<work>\decomp`,
 the shipped data in `valheim_Data`, the user's read-only ground truth, and `BepInEx\LogOutput.log`.
 Every claim below was re-derived from the source or from the bytes, not taken from the text it checks.
 
@@ -1575,4 +1579,4 @@ as the game does.
 * §3.6.3 still states spec 03's requirements as an assumed interface contract. Spec 03 now exists
   (`specs/03-unity-natives.md`); its list was not diffed against §3.6.3 in this review.
 
-*— checked by an independent reviewer, 2026-09-22*
+*— independently checked, 2026-09-22*

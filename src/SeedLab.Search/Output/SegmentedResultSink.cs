@@ -191,7 +191,7 @@ namespace SeedLab.Search.Output
             if (!_segmentOpen || _file == null)
             {
                 // No segment open - the last rotation closed it - but its manifest write may have
-                // failed, and nothing else would write it again before Finish (review of 2026-09-24).
+                // failed, and nothing else would write it again before Finish.
                 if (_manifestPending) WriteManifest(complete: false);
                 return;
             }
@@ -355,7 +355,7 @@ namespace SeedLab.Search.Output
             // the run reports (2026-09-24). Throwing from here would have ended the run from inside the
             // collector's Add.
             //
-            // One attempt, no wait (review of 2026-09-24): the next flush retries anyway, and each
+            // One attempt, no wait: the next flush retries anyway, and each
             // rotation spent the quick schedule's 1.6 s here with the collector - and so every worker
             // at the pending cap - standing still. Measured: 31.3 s for a 6,000-seed run whose manifest
             // was held, against 2.1 s unheld.

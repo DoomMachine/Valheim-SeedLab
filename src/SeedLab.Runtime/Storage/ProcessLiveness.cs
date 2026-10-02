@@ -57,7 +57,7 @@ namespace SeedLab.Runtime.Storage
         /// read AND it is the recorded one. For a file that says "a server is running here" - the web
         /// servers' registry - where a wrong "alive" locks the user out rather than protecting anything.
         ///
-        /// <para><b>Why the scratch reaper's bias is wrong there</b> (review of 2026-09-25). A registry file
+        /// <para><b>Why the scratch reaper's bias is wrong there</b>. A registry file
         /// left by a server that was ended without cleaning up (Task Manager, a power cut) names a pid the
         /// operating system later gives to something else - after a reboot, often a system process whose
         /// start time this account cannot read. <see cref="IsSameProcess"/> called that "alive", so the

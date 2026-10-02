@@ -6,7 +6,7 @@ namespace SeedLab.Cli.Infra
 {
     /// <summary>
     /// A hidden window that hears Windows end the session - signing out, shutting down, restarting - for
-    /// <c>vseed serve</c> (review of 2026-09-25).
+    /// <c>vseed serve</c>.
     ///
     /// <para><b>Why a window, in a console program.</b> A console program is told about a shutdown or a
     /// sign-out through its console handler (CTRL_SHUTDOWN_EVENT, CTRL_LOGOFF_EVENT) - but not once it has

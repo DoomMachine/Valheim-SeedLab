@@ -231,7 +231,7 @@ namespace SeedLab.Search.Execution
         /// cannot be read because another program holds it is retried on <paramref name="retry"/> and
         /// then thrown as a <see cref="FileAccessException"/> naming it.
         ///
-        /// <para><b>Why not <see cref="PeekKeptSnapshot"/></b> (review of 2026-09-24). "Cannot read it"
+        /// <para><b>Why not <see cref="PeekKeptSnapshot"/></b>. "Cannot read it"
         /// is not "it names nothing". A save that took the one for the other wrote the first generation,
         /// <c>&lt;ckpt&gt;.top</c> - which was, half the time, the very snapshot the unreadable
         /// checkpoint named - and the checkpoint's own rename then failed against the same holder:

@@ -4,7 +4,7 @@
 `coastline-verdict.md`), `shore*`, `rank.py`, `dist.py`, `sweep.py`, `floors.py`, `join.py`,
 `margin.py` and are not described here.)
 
-All under `scratchpad\metrictruth\`. Nothing was written under `_ModSource\SeedLab`.
+All under `<work>\metrictruth\`. Nothing was written under `<SeedLab folder>`.
 
 ## How the sample was drawn
 

@@ -21,7 +21,7 @@
     "target": "net10.0",
     "avx2": "default (DOTNET_EnableAVX2 not set)"
   },
-  "source_control": "none - E:\\SteamLibrary\\steamapps\\common\\Valheim is not a git repository, so there is no commit id. The build is identified by the SHA-256 of the binaries below.",
+  "source_control": "none - the game folder the build ran from is not a git repository, so there is no commit id. The build is identified by the SHA-256 of the binaries below.",
   "binaries": [
     {
       "name": "vseed.exe",

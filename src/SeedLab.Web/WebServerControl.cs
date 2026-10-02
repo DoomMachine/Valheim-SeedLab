@@ -54,7 +54,7 @@ namespace SeedLab.Web
     /// the page is told, the registry file is deleted, and <c>RunAsync</c> returns 0. It is bounded - a
     /// few seconds - because closing a console window gives the process about five. On Windows a sign-out
     /// or shutdown reaches it through the host's hidden session-end window (WM_ENDSESSION), not a console
-    /// handler: Windows sends those no console event once user32.dll is loaded (review of 2026-09-25).</para>
+    /// handler: Windows sends those no console event once user32.dll is loaded.</para>
     /// </summary>
     public sealed class WebServerControl
     {

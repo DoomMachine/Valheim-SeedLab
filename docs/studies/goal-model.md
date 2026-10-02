@@ -1,9 +1,9 @@
 # SeedLab — the complete goal model, its costs, and its two front ends
 
 Analysis written 2026-09-23. **Read-only:** nothing under
-`E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab` was edited. Every binary run came from a
+`<SeedLab folder>` was edited. Every binary run came from a
 private copy of the Release output at
-`...\scratchpad\searchanalysis\bin\vseed.exe`
+`<work>\searchanalysis\bin\vseed.exe`
 so that no build of the live tree was blocked (`docs\web.md`: a running `vseed` locks `bin\Release\`).
 
 ## 0. Measurement conditions — read this before trusting any millisecond here
@@ -1145,7 +1145,7 @@ Read-only analysis, so nothing was edited. The touch points, with why:
 1. **Absolute per-seed costs.** Everything here was measured on a machine at 96–100 % load from other
    agents, and the same calibration varied 2.0x across ten minutes. *Settled by:* re-running
    `vseed search <q> --dry-run --calibrate 32` for each of the queries in
-   `...\scratchpad\searchanalysis\q-*.json` on an idle machine. The query files are there and the
+   `<work>\searchanalysis\q-*.json` on an idle machine. The query files are there and the
    ratios in this document should reproduce.
 2. **How much of a T5 seed is the 2048² biome-point grid.** Prefix 1 costing the same as prefix 32
    proves the fixed cost dominates, but not what fraction it is. *Settled by:* a stopwatch around the

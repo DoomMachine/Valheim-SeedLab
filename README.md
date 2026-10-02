@@ -84,8 +84,9 @@ this README mentions are kept on the author's machine on purpose:
   `vseed`: on x64 the built-in machine self-test is self-contained, and only another CPU architecture
   would need `groundtruth\natives` to prove itself.
 
-Paths in the documentation such as `E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab` are
-where the project lives on the author's machine; SeedLab itself does not depend on them.
+In the documentation, `<Valheim folder>` stands for the game's install folder, `<SeedLab folder>` for this
+repository's folder on the author's machine, and `<work>` for the temporary working folder an investigation ran
+in (its files are not in this repository); SeedLab itself depends on none of them.
 
 ---
 
@@ -1250,7 +1251,7 @@ refuse rather than quietly produce coordinates from a stale table. `docs\dumper.
 Installed game
 --------------------------
   verdict               MATCH - this data describes the installed game
-  install               E:\SteamLibrary\steamapps\common\Valheim
+  install               <Valheim folder>
   assembly_valheim      96cfc004f7f4a6f30d070bef39eafd79c466a137121c4665a2f19fb9c15c6127
   the installed game is the build this data was dumped from (Valheim 1.0.16, assembly_valheim 96cfc004).
 

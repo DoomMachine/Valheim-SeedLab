@@ -44,7 +44,7 @@ namespace SeedLab.Search.Evaluation
     /// than a convention is one implementation - which also makes it testable, since no test project
     /// references the web assembly.</para>
     ///
-    /// <para><b>What it must not claim</b> (review of 2026-09-24): that another rung "decides the same
+    /// <para><b>What it must not claim</b>: that another rung "decides the same
     /// seeds" - the grid is in the run hash, and a shuffled sample with no <c>search.key</c> takes its
     /// permutation key from that hash, so another rung visits different seeds; the ladder says only
     /// that each seed gets the same must-have verdict. That the query has must-haves or location goals

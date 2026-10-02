@@ -94,7 +94,7 @@ namespace SeedLab.Seeds
         /// <summary>
         /// max w_5 for this alphabet, if it has been computed exhaustively - 81 = 3^4 for both A62
         /// and A59 (spec 06 section 3.3, confirmed exhaustively for n = 1..5 by two implementations,
-        /// and again by the reviewer in section 11).
+        /// and again in section 11).
         ///
         /// It is the rejection constant of the uniform 10-character sampler. The sampler stays exactly
         /// uniform for ANY sound upper bound - too large only costs probes - so when this is null

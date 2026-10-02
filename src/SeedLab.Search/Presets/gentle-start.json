@@ -21,7 +21,7 @@
   // sub-score was the same 0.365 for every seed the preset ever scored: it ranked nothing. It is
   // replaced by the AREA of Black Forest within 1.2 km, which is the same intent ("copper in reach")
   // measured on something that varies: median 1,617,336 m2 over 512 seeds at G12, CV 0.183
-  // (measured 2026-09-23, scratchpad\safe\calib).
+  // (measured 2026-09-23, <work>\safe\calib).
   //
   // THE FIFTH. `meadows-close` asked for 500,000 m2 of Meadows within 1 km. The MINIMUM over those
   // same 512 seeds is 1,028,448 m2 - more than twice the threshold - so that must-have passed 512 of

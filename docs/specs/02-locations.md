@@ -5,7 +5,7 @@ from the decompiled members cited as `Type.Member`. Anything that could not be s
 marked **Unverified:** with what would settle it. Do not "fix" anything here that looks like a bug —
 several of the bugs are load-bearing for reproducing the game's output.
 
-Source files read (already dumped, `scratchpad/decomp/`): `ZoneSystem.cs`, `AltBiomeWorldData.cs`,
+Source files read (already dumped, `<work>/decomp/`): `ZoneSystem.cs`, `AltBiomeWorldData.cs`,
 `BiomeSector.cs`, `AltBiome.cs`, `AltBiomeList.cs`, `LocationList.cs`, `WorldGenerator.cs`,
 `Heightmap.cs`, `Utils.cs`, `StringExtensionMethods.cs`, `UnityEngine.Random.cs`. Additionally read for
 this spec: `ZNet.ServerLoadWorld` (re-decompiled and confirmed verbatim), `BiomeHelpers`
@@ -13,7 +13,7 @@ this spec: `ZNet.ServerLoadWorld` (re-decompiled and confirmed verbatim), `Biome
 `Vector2s`, `BiomePointCoordinate`, `BiomeTypeInfo`, `BiomePoint`, `SoftReferenceableAssets.AssetID` and
 `SoftReference<T>.get_Name` were checked with Mono.Cecil against `assembly_utils.dll`,
 `assembly_valheim.dll` and `SoftReferenceableAssets.dll` — note that
-`scratchpad/decomp/Vector2s.cs` is **not** source: that dump failed and the file contains a PowerShell
+`<work>/decomp/Vector2s.cs` is **not** source: that dump failed and the file contains a PowerShell
 "type not found" error. Do not read it.
 
 Prerequisite: **spec 01** (WorldGenerator: `GetBiome`, `GetHeight`/`GetBiomeHeight`, `GetForestFactor`,
@@ -473,7 +473,7 @@ foreach (var kv in Biomes) {                                  // dictionary orde
   unreachable; `j=8` Ocean bit → rejects a **BlackForest(8)** neighbour; `j=9` Mistlands bit →
   `(Biome)9`, unreachable.
 * **Settled, replacing the earlier "Unverified": vanilla 1.0.15 ships 28 `AltBiome`s and every one has
-  `m_enabled = true`.** This was already established in the knowledge base
+  `m_enabled = true`.** This had been established in the skills
   (`.claude\skills\valheim-worldgen\references\zones-locations-vegetation.md` §3.4, verified
   2026-09-22) by a structural scan of the decompressed shipped bundle
   `valheim_Data\StreamingAssets\SoftRef\Bundles\d59cfac`, which holds 28 contiguous `AltBiome` records
@@ -482,8 +482,11 @@ foreach (var kv in Biomes) {                                  // dictionary orde
   Pinetree, Blueberry, Kalhygge · Swamp: Hut, Bog, Bat, Abomination · Mountain: Wolf, Drake, Fortress ·
   Plains: Lox, Goblin, Death · Mistlands: Rockless, Trees, Swords, Hare, BroodSwarm. **§2.9 and filters
   10a/10b in §5.4 must be implemented in full.**
+  *Corrected later on 2026-09-22: vanilla 1.0.15 ships **32** alt biomes, all enabled. The bundle scan missed
+  four - Mushroom, Lantern, Bones and Menhir; the game fills `AltBiomeList.m_altBiomes` from every
+  `AltBiomeList.Awake`, and the dumper's `altbiomes.json` counts 32, all enabled, for 1.0.15 and 1.0.16.*
 * Independent corroboration from this machine's log
-  (`E:\SteamLibrary\steamapps\common\Valheim\BepInEx\LogOutput.log`, line 507, 2026-09-22 20:37:19,
+  (`<Valheim folder>\BepInEx\LogOutput.log`, line 507, 2026-09-22 20:37:19,
   fresh world `testworldclaude`):
   `Loading: Placed 0/1-2 of 'Fortress Mountain' altbiome. (Valid, sectors: 0, combos: 2)`.
   That string comes only from `GenerateAltBiomes`'s trailing loop, and only on the `ZLog.LogWarning`
@@ -1342,10 +1345,10 @@ worlds no matter how many seed strings exist, and distinct strings can collide o
 
 ## 14. Verification
 
-Independent adversarial check of this document against `scratchpad/decomp/`, the live
+Independent adversarial check of this document against `<work>/decomp/`, the live
 `assembly_valheim.dll` / `assembly_utils.dll` / `SoftReferenceableAssets.dll` (via Mono.Cecil and
 `.claude\skills\valheim-modding\scripts\decompile.ps1`), and
-`E:\SteamLibrary\steamapps\common\Valheim\BepInEx\LogOutput.log`. Every quoted code excerpt in §§1–6 was
+`<Valheim folder>\BepInEx\LogOutput.log`. Every quoted code excerpt in §§1–6 was
 re-read against the real file rather than trusted.
 
 **Confirmed correct, re-derived rather than trusted** (no change made):
@@ -1459,7 +1462,7 @@ re-read against the real file rather than trusted.
     "console `genloc` calls `GenerateLocations()` again" was correct.)
 15. §2.2 — `GetBiomeSector(int, int, bool)`'s `clamp` parameter is never read (the body always clamps),
     and the three `BiomeSector.Empty*` statics it can return have empty `AltBiomes` lists.
-16. Header — `scratchpad/decomp/Vector2s.cs` is a failed dump containing a PowerShell "type not found"
+16. Header — `<work>/decomp/Vector2s.cs` is a failed dump containing a PowerShell "type not found"
     error, not source; the type was verified with Mono.Cecil instead.
 17. §8(c) — a console `genloc` is not merely "different", it is **non-deterministic**: it leaves
     `LocationsGenerated` true, so `ZoneSystem.Update` keeps spawning zones and `PlaceVegetation` clears
@@ -1472,4 +1475,4 @@ count in §5.5 is an assumption about where the state advances, not a measured f
 `Range(0, 0)` or on `insideUnitCircle`'s consumption will desynchronise each per-location stream from its
 first divergence while still producing plausible-looking output.
 
-*checked by an independent reviewer*
+*independently checked*

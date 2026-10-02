@@ -5,8 +5,8 @@ Target: a local, cross-platform reimplementation of Valheim 1.0.15 world generat
 20,000-seed ceiling (what valheim.gaming.tools/seeds does, without its limit).
 
 Evidence rules used here: every factual claim cites either a decompiled member (`Type.Member`), a
-knowledge-base section, or a probe that was run on this machine (probe scripts are listed in
-Appendix A and live in `scratchpad\probe\`). Anything not settled is marked **Unverified:** with the
+section of the published skills, or a probe that was run on this machine (probe scripts are listed in
+Appendix A and live in `<work>\probe\`). Anything not settled is marked **Unverified:** with the
 reason. A constant guessed wrong here silently corrupts every answer the tool will ever give, so a
 plausible number is never written as a fact.
 
@@ -29,7 +29,7 @@ m_worldGenVersion = 2;
 
 For terrain and biomes `WorldGenerator` reads only `m_world.m_seed` (int32), `m_world.m_worldGenVersion`
 and `m_world.m_menu` (`WorldGenerator..ctor`, `VersionSetup`; valheim-worldgen/world-generator.md §3
-and §9). *Correction (reviewer): it also reads `m_world.m_biomeData` — `GetBiomeSector` (WorldGenerator.cs:847)
+and §9). *Correction: it also reads `m_world.m_biomeData` — `GetBiomeSector` (WorldGenerator.cs:847)
 returns `BiomeSector.EmptyBlackForest` when it is null, and `GetBiomeHeight` calls it at
 WorldGenerator.cs:1023 but never uses the result (dead local). `m_biomeData` is itself built from the
 seed by `AltBiomeWorldData.GenerateBiomePoints`, so the conclusion is unchanged; the word "only" was
@@ -37,7 +37,7 @@ not.* Nothing else about the text reaches generation. Therefore:
 
 - **The complete space of distinct Valheim worlds is 2^32 = 4,294,967,296.** The 8.5e17 seed-text
   space collapses by a factor of ~198.6 million: on average 198,618,130 different seed texts produce
-  the identical world (re-derived by the reviewer: 853,058,371,866,181,866 / 2^32 = 198,618,129.80).
+  the identical world (re-derived: 853,058,371,866,181,866 / 2^32 = 198,618,129.80).
   **Unverified:** that *every* int32 is reachable as some `GetStableHashCode` — 207/207 sampled
   targets were solved and the expected preimage count per target is ~987, so a gap would be
   extraordinary, but surjectivity was not established exhaustively (the sumset check is 4.2e12 pairs).
@@ -72,7 +72,7 @@ alphabet A–Z a–z 0–9):
 
 With 4+4 (an 8-character seed text) the expected number of preimages per int32 target is
 2,058,466² / 2^32 ≈ **987**. Probe A3 solved **207 of 207** targets (200 random int32 plus 0, ±1,
-int.MinValue, int.MaxValue, and the user's own world seed) with zero failures, at 0.4 ms per target
+int.MinValue, int.MaxValue, and the development world's seed) with zero failures, at 0.4 ms per target
 in *Python* — in C# with a prebuilt lane table this is microseconds.
 
 Worked example, cross-checked against real data: the user's world `asdasdasd` has seed text
@@ -226,8 +226,8 @@ Three mechanisms, all cheap:
 
 ### 2.1 What cannot be derived from code and must be dumped
 
-Everything below is serialized asset/prefab data. The knowledge base marks all of it **Unverified**
-precisely because it is not in the IL.
+Everything below is serialized asset/prefab data. The skills marked all of it **Unverified** when this was
+written, precisely because it is not in the IL.
 
 | Dump item | Source member | Why it is needed |
 |---|---|---|
@@ -240,7 +240,7 @@ precisely because it is not in the IL.
 | `Location.m_exteriorRadius/m_interiorRadius/m_hasInterior`, `DungeonGenerator.m_useCustomInteriorTransform` and generator local offsets | location prefabs | placement filters; dungeon seed offsets |
 | `GuiInputField.characterLimit` on `FejdStartup.m_newWorldSeed` | FejdStartup prefab | whether an inverted seed text is typeable (§0.1) |
 
-*Correction (reviewer): the row "Version constants (`Version.World`, network version, `Version.CachedMinimap`)"
+*Correction: the row "Version constants (`Version.World`, network version, `Version.CachedMinimap`)"
 was removed from this table — those are `const`/enum members in IL, not serialized asset data, and are
 already readable from the decompiled `Version` class: `c_networkVersion = 40u`, `c_WorldVersion =
 World.DeepNorth = 41`, `c_WorldGenVersion = 2`, `c_CachedMinimapVersion = CachedMinimap.Original = 1`
@@ -274,7 +274,7 @@ data/
 ```
 
 `manifest.json` carries a stamp in exactly the format `check-game-version.ps1` already uses, so the
-tool and the knowledge base can be compared by eye:
+tool and the published skills can be compared by eye:
 
 ```
 DATA-STAMP game-version=1.0.15 network=40 steam-build=25390630 \
@@ -342,7 +342,7 @@ This is the part that decides whether the tool is right or merely plausible.
 - **`GetBaseHeight`'s 10,490 m edge uses `Utils.LerpStep`, not `DUtils.LerpStep`** — an all-float
   `Clamp01((v−l)/(h−l))` (Utils.cs:311) at WorldGenerator.cs:924, while the 10,000 m lerp one line
   earlier (:919) uses the double `DUtils.LerpStep`. Two identically named helpers, different precision,
-  ten lines apart. *(Added by the reviewer; it was missing from this list.)*
+  ten lines apart. *(It was missing from this list.)*
 - **`DUtils.MathfLikeSmoothStep` returns a float-rounded double**: its body is
   `return (float)(to * t + from * (1.0 - t));` (DUtils.cs:69–74; the IL ends `add; conv.r4; conv.r8; ret`,
   world-generator.md §9, verified 2026-09-22). A port must write `(double)(float)(...)` — writing the
@@ -350,15 +350,15 @@ This is the part that decides whether the tool is right or merely plausible.
   (:1398) and at three call sites inside `GetAshlandsHeight` — :1224, :1238 (inside the 5-iteration
   cellular fBm loop, so it runs 5× per call, 2× when `cheap`) and :1248 — and
   both gap functions additionally cast their clamped input with `(float)` before calling.
-  *(Added by the reviewer; it was missing from this list and it moves every Ashlands and Deep North
+  *(It was missing from this list, and it moves every Ashlands and Deep North
   coastline.)*
 - Associativity is part of the spec, not a detail: Meadows and DeepNorth evaluate
   `(h−0.15) * ((1−k)*0.75)` while Plains evaluates `((h−0.15)*(1−k)) * 0.75` with a *float*
-  `h − 0.15` (`GetMeadowsHeight`/`GetPlainsHeight` IL; re-checked by the reviewer against
+  `h − 0.15` (`GetMeadowsHeight`/`GetPlainsHeight` IL; re-checked against
   WorldGenerator.cs:1107, :1178 and the DeepNorth copy at :1373). A "tidy-up" refactor here is a
   silent bug — which is exactly what the regression digests in §5.4 exist to catch.
 - **Unity's `Vector2` is part of the port surface and is not interchangeable with `DUtils`.**
-  *(Added by the reviewer — the spec did not mention `Vector2` at all.)*
+  *(The spec did not mention `Vector2` at all.)*
   - `Vector2.magnitude`/`Distance`/`SqrMagnitude` do `mul; mul; add` on **float32** and only then
     `conv.r8; Math.Sqrt; conv.r4` (Vector2.get_magnitude IL_000d–IL_001d, world-generator.md §9,
     verified 2026-09-22). `DUtils.Length(float,float)` squares and sums in **double** (DUtils.cs:6–9).
@@ -402,10 +402,10 @@ changes float behaviour. `<AllowUnsafeBlocks>` is off in this project.
 |---|---|---|
 | `Mathf.PerlinNoise` — `[FreeFunction("PerlinNoise::NoiseNormalized")] extern`. Partial evidence: Ken Perlin's reference permutation table (151,160,137,91,90,15,…, 512 int32 = the 256 table twice) exists in `UnityPlayer.dll` at file offset 0x1BE0BC0 on this build (byte search, KB §9). **Unverified:** gradient set, fade curve, output normalisation, and that this table is the one `NoiseNormalized` uses. | must be reverse-engineered and proven bit-exact | **yes — everything** |
 | `UnityEngine.Random` — `InitState`, `RandomRangeInt` (behind `Range(int,int)`), `Range(float,float)` and `GetRandomUnitCircle` (behind `insideUnitCircle`) are extern; `Random.State` is four ints (consistent with xorshift128) (UnityEngine.Random, decompiled). **Unverified:** seeding recurrence and the range mapping of both overloads. Note `Range(int,int)` is max-**exclusive** and `Range(float,float)` max-**inclusive** (parameter names in UnityEngine.CoreModule), so `m_riverSeed`/`m_streamSeed` can never be `int.MaxValue`. | must be reverse-engineered and proven bit-exact | **yes — even biomes**, because the 5 offsets and the 2 river/stream seeds come from 7 `Random.Range(int,int)` draws after `InitState(m_seed)` |
-| `Mathf.FloatToHalf` — `[FreeFunction(IsThreadSafe = true)] public static extern ushort FloatToHalf(float)` (UnityEngine.Mathf, decompiled). It is what writes `cacheMinimapHeight` (`Utils.FloatsToCompressedHalfBuffer`, Utils.cs:1420–1428). **Unverified:** that it rounds identically to .NET's `(Half)f` (round-to-nearest-even) rather than truncating. | dump ~10^5 (float, half) pairs in M0 | no, but the **M1 acceptance bar in §5.2 is defined in terms of it**, so until it is settled that bar is only as good as the assumption. *(Row added by the reviewer.)* |
+| `Mathf.FloatToHalf` — `[FreeFunction(IsThreadSafe = true)] public static extern ushort FloatToHalf(float)` (UnityEngine.Mathf, decompiled). It is what writes `cacheMinimapHeight` (`Utils.FloatsToCompressedHalfBuffer`, Utils.cs:1420–1428). **Unverified:** that it rounds identically to .NET's `(Half)f` (round-to-nearest-even) rather than truncating. | dump ~10^5 (float, half) pairs in M0 | no, but the **M1 acceptance bar in §5.2 is defined in terms of it**, so until it is settled that bar is only as good as the assumption. |
 | `Math.Sin` / `Atan2` / `Pow` last bit under Mono vs .NET | measure the delta, bound the blast radius | no, but must be quantified |
 
-*Correction (reviewer): "whether `Range(20f,20f)` consumes a draw" was listed here as an open unknown.
+*Correction: "whether `Range(20f,20f)` consumes a draw" was listed here as an open unknown.
 It is **already resolved and immaterial** (world-generator.md §9, 2026-09-22): `RenderRivers` is the
 last RNG consumer inside `PlaceRivers` and `PlaceStreams`, both of which restore `Random.state`
 immediately afterwards (WorldGenerator.cs:448–449 and :371–372), so its draws can never shift a later
@@ -437,8 +437,8 @@ The first code written is the dumper, not the port.
    WorldGenerator.cs:384, :401–402, :436–437, :559) and — needed for M2, not M1 —
    **`Random.insideUnitCircle`**, which `WorldGenerator.GetTerrainDelta` consumes 10 times per
    candidate location point from the *seeded* per-location stream (WorldGenerator.cs:1427;
-   zones-locations-vegetation.md §3.3 filter 6). *(The `insideUnitCircle` requirement was missing;
-   added by the reviewer. Without it M2's location prediction cannot be exact, whatever the offsets do.)*
+   zones-locations-vegetation.md §3.3 filter 6). *(The `insideUnitCircle` requirement was missing
+   and is added here. Without it M2's location prediction cannot be exact, whatever the offsets do.)*
 2. **Perlin.** `Mathf.PerlinNoise` over (a) the exact float coordinate pairs the generator actually
    produces for 4 seeds on a 128 m world grid, and (b) a stress grid including negative inputs,
    integer lattice points, values near 2^23, and the `+0.123f/+0.15123f/+0.321f/+0.231f` offsets used
@@ -457,7 +457,7 @@ The first code written is the dumper, not the port.
 
 - 1,024 Perlin (in,out) pairs including the awkward cases
 - the 7 constructor draws for 256 seeds — the **five** offsets `m_offset0..4` plus `m_riverSeed` and
-  `m_streamSeed` (*corrected by the reviewer: the original read "the 7 offsets … + the two
+  `m_streamSeed` (*corrected: the original read "the 7 offsets … + the two
   river/stream seeds", which counts nine. `WorldGenerator` has exactly five `m_offsetN` fields,
   WorldGenerator.cs:60–68, and seven ctor draws, :223–229*)
 - 4,096 (seed, x, z) → (biome, height float32) tuples, deliberately sampled from biome boundaries,
@@ -536,8 +536,8 @@ Derived estimate (not measured end-to-end; the loop structure is verified, the p
 
 - `FindLakes`: the loop walks a 157×157 grid (`for wy = −10000; wy <= 10000; wy += 128`, twice), but
   `GetBaseHeight` is called only **inside** the circle — the `&&` short-circuits on
-  `new Vector2(wx,wy).magnitude > 10000f` first (WorldGenerator.cs:290). Exact count, computed by the
-  reviewer over the real float32 grid: **19,175 of 24,649** points (77.8%) reach `GetBaseHeight`, so
+  `new Vector2(wx,wy).magnitude > 10000f` first (WorldGenerator.cs:290). Exact count, computed
+  independently over the real float32 grid: **19,175 of 24,649** points (77.8%) reach `GetBaseHeight`, so
   ≈ **1.2 ms** at the measured 64 ns, not 1.6 ms. *(Appendix C's 1.6 ms benchmarked the full square;
   the 19,175 figure is, coincidentally, the same as the 128 m full-world scan in §4.1 — it is the same
   grid.)*
@@ -549,7 +549,7 @@ Derived estimate (not measured end-to-end; the loop structure is verified, the p
   `GetBiome` (measured 113 ns, §4.1) **plus** a biome height function that calls `GetBaseHeight` a
   second time and adds ~6 more Perlin calls — ≈ **250 ns** (WorldGenerator.GetPregenerationHeight →
   GetBiome + GetBiomeHeight, :1011–1016). Worst case 3,000 × 2 × 201 ≈ 1.2 M probes ≈ **300 ms**;
-  a realistic 10-probe start gives ≈ **165 ms**. *(Corrected by the reviewer: the original 120 ns/probe
+  a realistic 10-probe start gives ≈ **165 ms**. *(Corrected: the original 120 ns/probe
   contradicted this document's own measured 113 ns for `GetBiome` alone.)*
 - **Both stream passes re-seed from the same `m_streamSeed`** (`PlaceStreams` opens with
   `InitState(m_streamSeed)` and closes by restoring the saved state, :344–345 and :372), so the second
@@ -557,12 +557,12 @@ Derived estimate (not measured end-to-end; the loop structure is verified, the p
   `GetDeepNorthHeightPregenerate`'s `+0.1f`. The second pass's returned list is discarded — only
   `m_streams` from the first pass is kept, while both passes merge their points into `m_riverPoints`
   via `RenderRivers` (:262–264, :371). A port that seeds the second pass from anything else, or that
-  keeps the second list, is wrong. *(Added by the reviewer.)*
+  keeps the second list, is wrong.
 
 So **pregeneration is ~150–350 ms per seed (derived, not measured) against 0.14 ms for a coarse biome
 scan — a ~1,000–2,500x step**. Fully generating all 2^32 seeds on 16 threads is
 2^32 × t / 16: **311 days (0.85 years) at 100 ms**, 155 days at 50 ms, 1.7 years at 200 ms, 2.6 years
-at 300 ms. *(Corrected by the reviewer: the original said "~850 years", which is 1000× too large and
+at 300 ms. *(Corrected: the original said "~850 years", which is 1000× too large and
 contradicted this section's own "160 seeds/s ≈ 13.8 M seeds/day" — 4.295e9 / 13.8e6 = 311 days.)*
 The architecture follows directly:
 
@@ -600,7 +600,7 @@ Coarse sampling must respect the geometry: the wobble term `A = WorldAngle(x,z)*
 ripples with 20 lobes (`sin(atan2(x,y)*20)`, so 20 periods around the circle), and the Swamp band is
 an **annulus between 2,000 m and 6,000 m** from the origin (8,000 m for `m_worldGenVersion` ≤ 1) whose
 interior is carved out by a 0.001-scale Perlin mask, so a "biome exists" criterion sampled at 512 m can
-miss thin features. *(Corrected by the reviewer: "2,000–6,000 m wide" described a 4,000 m-wide annulus
+miss thin features. *(Corrected: "2,000–6,000 m wide" described a 4,000 m-wide annulus
 as a width. Also note Swamp is the **one band with no wobble** — `GetBiome`'s swamp test is
 `num > 2000f && num < maxMarshDistance` with no `A` term (WorldGenerator.cs:812), while Mistlands
 (`6000+A…10000`, :816), Plains (`3000+A…8000`, :820), BlackForest (`600+A…6000`, :824) and the
@@ -623,7 +623,7 @@ because the output still looks like a valid world.
 | `m_riverPoints` | `Dictionary<Vector2i, RiverPoint[]>` instance | the rendered river/stream point set; the dominant per-seed allocation | per-seed; pool the arrays; **size Unverified — measure in M1** and use it to set worker count |
 | `m_noiseGen` | `private static FastNoise` (:90) | **the one static that is safe to share** | one process-wide readonly instance |
 
-**Correction (reviewer) — the river cache must be replicated, not disabled.** The original text said
+**Correction — the river cache must be replicated, not disabled.** The original text said
 "do not cache during pregeneration (the KB records a stale-cache edge case there)". That is a
 deliberate divergence from the game and would silently produce different worlds. The KB's finding is
 the opposite instruction: the single-entry cache (`m_cachedRiverGrid`/`m_cachedRiverPoints`) is *not*
@@ -713,7 +713,7 @@ outside the world circle**: `AltBiomeWorldData.GenerateBiomePoints` short-circui
 (AltBiomeWorldData.cs:113–117), while `Minimap.GenerateWorldMap` evaluates `GetBiome`/`GetBiomeHeight`
 at every pixel and therefore stores the `−400` sentinel out there (WorldGenerator.cs:1032). Note also
 the index order differs — the minimap writes `array[i * 2048 + j]` with `j → wx`
-(Minimap.cs:1963–1973), the AltBiome grid writes `PointBiomes[j, i]`. *(Caveat added by the reviewer;
+(Minimap.cs:1963–1973), the AltBiome grid writes `PointBiomes[j, i]`. *(Caveat:
 the original claimed the two grids were identical.)*
 
 Acceptance bars:
@@ -731,7 +731,7 @@ Acceptance bars:
   (`Minimap.GetPixelColor`, Minimap.cs:2092–2105 — `m_meadowsColor`, `m_ashlandsColor`,
   `m_blackforestColor`, `m_deepnorthColor`, `m_heathColor` for **Plains**, `m_swampColor`,
   `m_mountainColor`, `m_mistlandsColor`; `Ocean => Color.white` is the only one in code), never by
-  guessing RGB values. Re-verified by the reviewer on the real cache: seed −1772362158 contains
+  guessing RGB values. Re-verified on the real cache: seed −1772362158 contains
   exactly **7** distinct RGBA values (white 1,651,812 px; (123,32,32) 1,361,539; (51,51,51) 402,651;
   (231,171,120) 327,479; (107,116,63) 307,927; (146,167,92) 80,277; (163,114,88) 62,619). Since the
   palette has nine entries, **this seed exercises only seven of them** — the colour→biome decode must
@@ -759,7 +759,7 @@ and its failures are informative, because the KB explains exactly which parts ar
   `return -2f * GetHeightMultiplier()` with `GetHeightMultiplier() = 200f`, WorldGenerator.cs:1032,
   :1450–1453); base height monotone against the documented edge lerps; **rivers only ever lower
   terrain** — `AddRivers` only assigns when `h > target` and lerps toward it (WorldGenerator.cs:937–957).
-  *Correction (reviewer): its targets are 0.12–0.14 in normalised units, which is 24–28 m only where the
+  *Correction: its targets are 0.12–0.14 in normalised units, which is 24–28 m only where the
   height multiplier is the full 200; inside the Ashlands/Deep North gaps `GetBiomeHeight` multiplies by
   `GetHeightMultiplier() * CreateAshlandsGap * CreateDeepNorthGap` (:1021), so assert the normalised
   invariant, not "24–28 m".*
@@ -773,13 +773,13 @@ and its failures are informative, because the KB explains exactly which parts ar
 64 seeds — 0, −1772362158, ±1, int.MinValue, int.MaxValue, and seeds chosen so that every
 biome including Mistlands, Ashlands and DeepNorth is well represented — each reduced to a canonical
 digest: SHA-256 over {the 7 constructor draws, lake count, river count, stream count, and biome+height
-on a fixed 512 m grid}. *(Two corrections by the reviewer: "the 7 offsets" is five offsets plus two
+on a fixed 512 m grid}. *(Two corrections: "the 7 offsets" is five offsets plus two
 river/stream seeds, WorldGenerator.cs:223–229; and seed 0 is **not** the menu world — `m_menu` is an
 independent `World` flag (`World.GetMenuWorld()` sets it on a world whose empty seed text happens to
 give `m_seed = 0`, World.cs:73, :150–156) and it switches the generator onto entirely different code:
 `menuTerrain: true`, `GetMenuHeight`, and `Pregenerate()` skipped (WorldGenerator.cs:230–233,
 GetBiome :781–788). The corpus needs both an ordinary seed-0 world and a separate menu-world case.)* Digests are committed as text. Any change fails CI and must be explained in the
-commit message; `--update-digests` requires a reviewer. This is what stops a "harmless" reassociation
+commit message; `--update-digests` requires a second person's sign-off. This is what stops a "harmless" reassociation
 in `GetPlainsHeight` from quietly moving every Plains boundary in every world.
 
 The same digests must match across `win-x64`, `linux-x64` and `osx-arm64` (§3.6) — the cheapest
@@ -873,7 +873,7 @@ Someone who has used a website that searches 20,000 seeds in a second may expect
 Reality (measured, §4.1): a 512 m full-world biome sweep of the entire seed space is ~0.9 days; at
 128 m it is ~13.7 days; anything needing rivers/heights for every seed is **most of a year to a few
 years** — 311 days at 100 ms/seed, ~1.7 years at the corrected ~250 ms/seed, on 16 threads.
-*(Corrected by the reviewer: "centuries" followed from §4.2's "~850 years", which was wrong by 1000×.
+*(Corrected: "centuries" followed from §4.2's "~850 years", which was wrong by 1000×.
 The honest number is bad enough to make the same product point without being false.)*
 *Mitigation:* quote the budget **before** the run from a 10,000-seed pilot; require confirmation for
 long runs; make resumability real; publish the table in the README so expectations are set by numbers
@@ -934,8 +934,8 @@ PowerShell 5.1 mangling UTF-8; C# heredocs in bash breaking on apostrophes. All 
 ### M0 — Go/no-go spike (before the architecture is committed to)
 **Build:** `Valheim.Dumper` only, plus a throwaway comparison harness.
 Dump: 512-seed `UnityEngine.Random` traces (7 draws + state words, plus `Range(float,float)` and
-`insideUnitCircle` traces — reviewer); 10^7 `Mathf.PerlinNoise` samples; ~10^5 `Mathf.FloatToHalf`
-(float → ushort) pairs covering the height range and the half-ULP midpoints (reviewer);
+`insideUnitCircle` traces); 10^7 `Mathf.PerlinNoise` samples; ~10^5 `Mathf.FloatToHalf`
+(float → ushort) pairs covering the height range and the half-ULP midpoints;
 `Math.Sin/Atan2/Pow` at the exact `WorldAngle`/Mistlands/Ashlands arguments; `GetBiome`/`GetHeight`
 float32 grids for 4 seeds; the asset tables of §2.1 (including `GuiInputField.characterLimit`).
 **Acceptance (all must hold, no partial credit):**
@@ -999,7 +999,7 @@ All under `<work>\probe\`.
 - **A4/B** `minimapcache.py`, `pixelsize.py` — read-only decode of the game-written cache (below).
 - **C** `perf\` — .NET 10 throughput benchmark (below).
 
-## Appendix B — new facts settled here (evidence for the knowledge base)
+## Appendix B — new facts settled here (evidence for the published skills)
 
 1. **`Minimap.m_textureSize = 2048` and `m_pixelSize = 12` on build 1.0.15** — previously
    "Unverified: serialized prefab values; code defaults 256 / 64" (world-generator.md §8 and its
@@ -1015,12 +1015,12 @@ All under `<work>\probe\`.
    value-identical**: `AltBiomeWorldData.GenerateBiomePoints` stores `Ocean`/`−1000f` for every point
    with `sqrMagnitude > 110250000f` without calling the generator (AltBiomeWorldData.cs:113–117),
    where the cache holds the generator's own `−400` sentinel; and the two use opposite index order
-   (`array[i*2048 + j]` vs `PointBiomes[j, i]`). *(Caveat added by the reviewer.)*
+   (`array[i*2048 + j]` vs `PointBiomes[j, i]`).
 3. **`cacheMinimapMeta` layout** (8 bytes): `int32 m_seed`, `int32` cache version. The writer writes
    the literal `1` (`Minimap.SaveMapTextureDataToDisk`, Minimap.cs:2005–2007); the reader casts it to
    `Version.CachedMinimap` and requires `Original` = 1 (`TryLoadMinimapTextureData`, Minimap.cs:779–784),
    and also refuses the cache unless `ZNet.World.m_worldVersion == Version.World.DeepNorth` (=41,
-   Minimap.cs:767). Re-verified read-only by the reviewer on the real file: 8 bytes, seed −1772362158
+   Minimap.cs:767). Re-verified read-only on the real file: 8 bytes, seed −1772362158
    (= `"MWd8eV6svz".GetStableHashCode()`, recomputed independently), version 1; the three buffers
    decompress to exactly 8,388,608 / 16,777,216 / 16,777,216 bytes = 2048² halves and 2048² `Color32`
    twice; the `−400` sentinel first appears at radius 10500.0103 m (875.00086 px) and the last
@@ -1042,7 +1042,7 @@ All under `<work>\probe\`.
 
 ## Appendix C — measured throughput (this machine, 2026-09-22)
 
-`scratchpad\probe\perf\` — .NET 10.0.401, Release, server GC, `Vector<float>.Count = 8`,
+`<work>\probe\perf\` — .NET 10.0.401, Release, server GC, `Vector<float>.Count = 8`,
 hardware-accelerated. Perlin here is improved-Perlin with Ken Perlin's reference table: a **cost**
 model, not the verified algorithm.
 
@@ -1066,18 +1066,18 @@ Pregeneration (rivers/streams) is **derived, not measured end-to-end**: **~150�
 verified loop structure (`FindLakes` **19,175** base-height samples inside the circle, not 24,649 —
 the benchmark row above walked the whole square; `PlaceStreams` 3,000 attempts × two passes × up to
 201 height probes at ≈250 ns each, because a `GetPregenerationHeight` probe is a `GetBiome` **plus** a
-biome height function) times the measured per-call costs. *(Corrected by the reviewer; the original
+biome height function) times the measured per-call costs. *(Corrected; the original
 read ~50–150 ms/seed at 120 ns/probe, which is less than the measured cost of `GetBiome` alone.)*
 Measure it for real in M1 — the whole two-stage design rests on the ratio.
 
 ---
 
-## Open questions (added by the reviewer)
+## Open questions
 
 These are material, were not settled from the evidence available here, and are not covered by the
 spike list in §3.3 / §7.
 
-1. **`Vector2s` was never decompiled.** The file `scratchpad\decomp\Vector2s.cs` contains a
+1. **`Vector2s` was never decompiled.** The file `<work>\decomp\Vector2s.cs` contains a
    decompiler error (`type not found: Vector2s`), not source. It is the key type of
    `s_cachedBiomeAreas`/`s_cachedBiomes` and of `ZoneSystem`'s zone identity, and `GetZoneCenter(id) =
    new Vector2s(id.x * 64, id.y * 64)` (ZoneSystem.cs:3091–3094) narrows an `int` product into it.
@@ -1106,13 +1106,13 @@ spike list in §3.3 / §7.
 
 ## Verification
 
-Checked by an independent reviewer on 2026-09-22 against
-`scratchpad\decomp\` (WorldGenerator, World, StringExtensionMethods, DUtils, FastNoise, Minimap,
+Independently checked on 2026-09-22 against
+`<work>\decomp\` (WorldGenerator, World, StringExtensionMethods, DUtils, FastNoise, Minimap,
 AltBiomeWorldData, Heightmap, Utils, UnityEngine.Random, UnityEngine.Mathf, Version, FejdStartup,
-ZoneSystem), the knowledge base (`valheim-worldgen/references/world-generator.md` §3/§8/§9/§10,
+ZoneSystem), the published skills (`valheim-worldgen/references/world-generator.md` §3/§8/§9/§10,
 `zones-locations-vegetation.md` §3.2/§3.3/§3.5/§4/§10, `seeds-and-world-files.md`,
 `valheim-modding/references/pitfalls.md` §1/§3, `environment.md`), and two probes run for this review
-(`scratchpad\probe\review_check.py`, `scratchpad\probe\minimap_recheck.py` — the latter read-only
+(`<work>\probe\review_check.py`, `<work>\probe\minimap_recheck.py` — the latter read-only
 against the user's `worlds_local\asdasdasd\` cache; nothing was written to any save location).
 
 **Re-derived and confirmed correct** (independently recomputed, not taken from the text):
@@ -1160,4 +1160,4 @@ agreement; all serialized asset values; `Vector2s` (its decompilation failed —
 and every measured number in Appendix C, which was taken as reported and only checked for internal
 consistency and for the arithmetic derived from it.
 
-*Checked by an independent reviewer.*
+*Independently checked.*

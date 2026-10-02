@@ -41,8 +41,7 @@ namespace SeedLab.Runtime.Storage
     {
         /// <summary>
         /// "in_use", "read_only", "no_permission", ... The terminal used these while the page sent the
-        /// enum's own name ("InUse") for the same field, so a script reading both needed two spellings
-        /// (review of 2026-09-24).
+        /// enum's own name ("InUse") for the same field, so a script reading both needed two spellings.
         /// </summary>
         public static string Name(FileProblem p) => p switch
         {

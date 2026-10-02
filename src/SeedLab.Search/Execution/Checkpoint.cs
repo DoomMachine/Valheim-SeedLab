@@ -222,7 +222,7 @@ namespace SeedLab.Search.Execution
         /// sample run with a different <c>--seeds</c> leaves its own file. Adopting from either would
         /// print "from the checkpoint being resumed" for a plan nothing resumes, and a real stage-two
         /// file left by a QA run (sequential, blocks of 4, limit 2,308) would have cut a 6,000-seed
-        /// stage one into 1,500 blocks of 4 (design review of 2026-09-24).</para>
+        /// stage one into 1,500 blocks of 4.</para>
         /// </summary>
         public bool MatchesExceptBlockSize(Query q, ScanPlan plan, string queryHash)
             => QueryHash == queryHash

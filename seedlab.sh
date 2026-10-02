@@ -387,7 +387,7 @@ seedlab_at() {
 
 # Only two kinds of address are ever opened: SeedLab's own page on this computer, and Microsoft's pages
 # for the SDK. open and xdg-open open whatever they are given, and a server's address comes from vseed
-# reading a file in the cache folder (review of 2026-09-25).
+# reading a file in the cache folder.
 open_url() {
     case $1 in
         http://127.0.0.1:[0-9]|http://127.0.0.1:[0-9][0-9]|http://127.0.0.1:[0-9][0-9][0-9]|http://127.0.0.1:[0-9][0-9][0-9][0-9]|http://127.0.0.1:[0-9][0-9][0-9][0-9][0-9]) ;;
@@ -820,7 +820,7 @@ block_is_whole() {
 # leaves every other line as it was. The file is rewritten in place (cat >), so its permissions,
 # owner and any symlink to it are kept.
 #
-# ONLY when the block is whole (review of 2026-09-25): the awk below drops everything from a BEGIN line
+# ONLY when the block is whole: the awk below drops everything from a BEGIN line
 # to its END line, so a block whose END line was edited or deleted would take every line after it - a
 # conda setup, the user's own aliases - with it. Such a file is left exactly as it is, and the user is
 # told which lines to take out by hand.
@@ -1225,7 +1225,7 @@ do_shell() {
 
 # What SeedLab puts in a cache folder: vseed's category folders and a web server's registry folder,
 # and in each only files of the kinds SeedLab writes there. A folder in a SEEDLAB_CACHE_DIR folder
-# counts as SeedLab's only when BOTH its name and everything in it fit (review of 2026-09-25): a name
+# counts as SeedLab's only when BOTH its name and everything in it fit: a name
 # alone - "logs", "maps" - or any "*.log" also matched a person's own files, which uninstall then
 # offered to remove. Nothing at the top of the folder but these folders is SeedLab's.
 # $1 = the folder (a path), with no trailing slash.
@@ -1647,8 +1647,7 @@ EOF
     show_kept
     say ''
     # Blocked: something of SeedLab's is still running, or a startup file could not be changed safely, so
-    # something was left in place. That is not "finished", and remove-build must not go on as if it were
-    # (review of 2026-09-25).
+    # something was left in place. That is not "finished", and remove-build must not go on as if it were.
     if [ -n "$du_blocked" ]; then
         say 'The uninstall did NOT finish: something above was left in place (a vseed that is still running,'
         say 'or a startup file this script would not change). Deal with it as said above, then run the'

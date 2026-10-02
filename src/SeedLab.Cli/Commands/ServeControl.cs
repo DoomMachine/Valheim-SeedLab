@@ -33,7 +33,7 @@ namespace SeedLab.Cli.Commands
     /// (the question was declined, or refused because nothing could answer it, or the server did not answer
     /// within 10 seconds and <c>--force</c> was not given).</para>
     ///
-    /// <para><b>A file is not a server</b> (review of 2026-09-25). A registry file counts only while its
+    /// <para><b>A file is not a server</b>. A registry file counts only while its
     /// process is provably the one that wrote it (<see cref="ProcessLiveness.IsSameProcessStrict"/>), and a
     /// server that answers says its own pid, which must be the file's: a left-over file whose port another
     /// program has taken is not reported as SeedLab, asked to stop or opened. A left-over file is named, so
@@ -181,7 +181,7 @@ namespace SeedLab.Cli.Commands
                 if (state != null && state.Pid != r.Pid)
                 {
                     // Its port answers for another process: the file is left over, and that other program is
-                    // not asked to stop with this file's token (review of 2026-09-25).
+                    // not asked to stop with this file's token.
                     impostors.Add((r, state.Pid));
                     continue;
                 }
@@ -272,7 +272,7 @@ namespace SeedLab.Cli.Commands
             string what = (searches.Count == 1 ? "A search is" : searches.Count + " searches are") + " running: "
                           + ServeConsole.Describe(searches) + ".";
 
-            // What stopping costs, said for EACH search (review of 2026-09-25): "the finished part is saved"
+            // What stopping costs, said for EACH search: "the finished part is saved"
             // only beside a search that has a resume point, and "loses its work" beside one in a funnel's
             // first stage - never one sentence for all of them, which promised a command it then did not print.
             if (!interactive)

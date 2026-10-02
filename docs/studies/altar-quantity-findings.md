@@ -5,7 +5,7 @@ boss to have fewer than the listed number of altars ... these are fixed, so for 
 has 3 altars all within the min/max range"* — from the decompiled generator first, then from a
 uniformly drawn sample of the seed space.
 
-Nothing under `_ModSource\SeedLab` was written by this work. Everything here lives in this scratchpad
+Nothing under `<SeedLab folder>` was written by this work. Everything here lived in a temporary working
 folder; section 6 is the patch to apply afterwards.
 
 **The answer in four lines.**
@@ -32,7 +32,7 @@ Build under test: `DATA-STAMP game-version=1.0.15 assembly_valheim-sha256=59f53f
 ### 1.1 The loop, stated exactly
 
 `ZoneSystem.GenerateLocationsTimeSliced(ZoneLocation, Stopwatch, ZPackage)` —
-`scratchpad\decomp\ZoneSystem.cs:1877`. The whole of the per-type run is:
+`<work>\decomp\ZoneSystem.cs:1877`. The whole of the per-type run is:
 
 ```csharp
 int seed = WorldGenerator.instance.GetSeed() + location.m_prefab.Name.GetStableHashCode();  // 1880
@@ -809,10 +809,10 @@ Nothing here was applied; the repository was left untouched. In order:
 8. **The GUI count control** (section 4.4) - default a `location:` / `group:` count goal to
    `count_within`, bound the radius slider to the target's derived annulus, and put the bare `count`
    behind an explicit "whole world" switch.
-9. **The knowledge base.** The facts in section 1 that are new go to
+9. **The published skills.** The facts in section 1 that are new go to
    `.claude\skills\valheim-worldgen\references\` (the placement-budget and candidate-draw facts, the
    `maxRadius == 32` zone-centre consequence, the empty-biome fallback and crash) with their
-   `Type.Member:line` evidence and a line in the knowledge base's changelog (not published here); the
+   `Type.Member:line` evidence; the
    measured rates go to the seedlab skill's `references/`, marked as a sample with its size and key.
 
 **Order matters between 2 and 5.** D3 and V5b decide on `m_quantity`, which is already shipped, so

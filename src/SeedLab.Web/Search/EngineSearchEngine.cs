@@ -264,7 +264,7 @@ namespace SeedLab.Web.Search
             string? refusal = AccessRefusal(p);
             if (refusal != null) throw new SearchRefusedException(pf, "refused", refusal);
 
-            // ---- a resume point a stop promised to keep (review of 2026-09-25) ---------------------
+            // ---- a resume point a stop promised to keep ---------------------
             //
             // The checkpoint is named by the query's hash, so pressing Find seeds again on the query a
             // stop has just ended - what anyone does after 'SeedLab 2 - Open web page' - used to start at
@@ -1093,7 +1093,7 @@ namespace SeedLab.Web.Search
                     blocksDone = res.BlocksDone,
 
                     // Stage one runs the full plan, so its block size is the plan's - carried like on
-                    // every other done event (it was missing here, review of 2026-09-24).
+                    // every other done event (it was missing here).
                     blockSize = _plan.BlockSize,
                     complete = false,
                     stoppedByWall = res.StoppedByWall,
@@ -1196,7 +1196,7 @@ namespace SeedLab.Web.Search
                     // A finished run whose results could not be finished off - a rotated run's manifest
                     // another program held through the patient wait - is still a finished run: every
                     // record is on disk. It used to throw from here into the catch below and be
-                    // published as a failed search (review of 2026-09-24); now it is a warning, and the
+                    // published as a failed search; now it is a warning, and the
                     // done event carries it.
                     string? resultsError = null;
                     try
@@ -1418,8 +1418,8 @@ namespace SeedLab.Web.Search
                     if (o == null || o.CheckpointError == null)
                     {
                         // Said from what is true now, not as "nothing to save": a second tab, or this one
-                        // after a reload, can still show the error an earlier Retry already cleared
-                        // (review of 2026-09-24), and its user needs to hear that it is saved.
+                        // after a reload, can still show the error an earlier Retry already cleared,
+                        // and its user needs to hear that it is saved.
                         return new SearchRetryResult
                         {
                             Saved = true,
@@ -1492,7 +1492,7 @@ namespace SeedLab.Web.Search
                     path = e.Path,
                     checkpoint = e.CheckpointPath,
                     // The terminal's spelling ("in_use"), not the enum's ("InUse"): one field, one set
-                    // of values, whichever front end a script reads (review of 2026-09-24).
+                    // of values, whichever front end a script reads.
                     problem = FileProblems.Name(e.Problem),
                     runBlock = e.RunBlock,
                     onDiskBlock = e.OnDiskBlock >= 0 ? e.OnDiskBlock : (long?)null,
@@ -1506,7 +1506,7 @@ namespace SeedLab.Web.Search
             /// one. "Another program may have it open" is said only of the failures that can mean that -
             /// an access denial and a sharing or lock violation, as the terminal does - and a full drive is
             /// said as one; any other file error used to get the same access-denied advice, a full disk
-            /// and a missing folder included (review of 2026-09-24).
+            /// and a missing folder included.
             /// </summary>
             private static string PlainMessage(Exception ex)
             {

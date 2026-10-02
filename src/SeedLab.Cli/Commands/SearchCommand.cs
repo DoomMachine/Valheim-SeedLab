@@ -307,7 +307,7 @@ a terminal offers '[r]etry / [g]ive up'. Everything is also in the session log
             Func<double, WorkerPlan> planner = grid => rt.Plan(tier, grid);
 
             // The checkpoint goes in the cache root, one file per query hash - not 'vseed-search.ckpt'
-            // in whatever directory the user happened to be standing in (audit defect 5). Two searches
+            // in whatever directory the user happened to be standing in. Two searches
             // running side by side therefore cannot overwrite each other's resume point, and --cache-dir
             // moves all of it together. One expression, used for the resume peek below and for the
             // path the run opens, so the two cannot name different files - and, since 2026-09-24, for a
@@ -435,8 +435,8 @@ a terminal offers '[r]etry / [g]ive up'. Everything is also in the session log
             // Two kinds, and the header says which. Most refusals say the run would not answer the
             // question honestly; a resume that cannot continue the checkpoint that is there - a block
             // size that differs from its own, or a funnel over a sample run's file at stage two's own
-            // path - would answer it perfectly well, and the old single header told the user otherwise
-            // (review of 2026-09-24). A path in the sentence is kept on one line (Wrap's `unbroken`): it
+            // path - would answer it perfectly well, and the old single header told the user otherwise.
+            // A path in the sentence is kept on one line (Wrap's `unbroken`): it
             // can hold a space, and split at it the path could not be copied.
             string? blockRefusal = session.BlockDecision.Refusal;
             string? collision = sampleLeftover != null
@@ -784,7 +784,7 @@ a terminal offers '[r]etry / [g]ive up'. Everything is also in the session log
                         // The run finished its scan and every record is on disk; only a file written
                         // at the very end - a rotated run's manifest - could not be. That is said and
                         // offered again below, after the report is known to be printable, instead of
-                        // escaping as the command's error with no report (review of 2026-09-24).
+                        // escaping as the command's error with no report.
                         finishError = ex;
                     }
                     catch (Exception ex) when (outcome == null)
@@ -1356,7 +1356,7 @@ a terminal offers '[r]etry / [g]ive up'. Everything is also in the session log
         /// <see cref="Wrap(string, string, int)"/>, keeping <paramref name="unbroken"/> - a file path -
         /// whole, on a line of its own. A path can hold a space ("C:\Users\First Last\..."), and the
         /// word wrap split the "delete &lt;checkpoint&gt;" advice there, half on each line, where it
-        /// could not be copied (review of 2026-09-24). Null, or not in the text, is a plain wrap.
+        /// could not be copied. Null, or not in the text, is a plain wrap.
         /// </summary>
         internal static string Wrap(string text, string indent, string? unbroken, int width = 94)
         {

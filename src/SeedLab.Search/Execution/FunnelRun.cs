@@ -112,7 +112,7 @@ namespace SeedLab.Search.Execution
         /// it adds stage two's own bound under the gate: the plan's budget line was worked out for
         /// stage one's blocks, and a stage two cut into bigger blocks - fewer survivors on fewer
         /// threads, or a checkpoint written on fewer - can run further past the budget than that
-        /// line said (review of 2026-09-24).
+        /// line said.
         /// </summary>
         public TimeSpan Wall;
 
@@ -186,7 +186,7 @@ namespace SeedLab.Search.Execution
                          + (EffectiveWorkers == 1 ? "" : "s");
 
             // Nothing to place is nothing to spread: at zero survivors this said "0 survivors at a
-            // block size of 1 is 1 block over 1 of 8 threads" (review of 2026-09-24).
+            // block size of 1 is 1 block over 1 of 8 threads".
             long blocks = Resumed ? Decision.RemainingBlocks : Blocks;
             if (ToPlace > 0 && (EffectiveWorkers < Threads || BusiestWorkerSeeds * EffectiveWorkers != ToPlace))
             {

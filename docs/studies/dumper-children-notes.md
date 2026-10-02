@@ -165,7 +165,7 @@ them:
 
 1. *Inside a location prefab.* Then the hit's `kind` is `location`, and the arithmetic below applies
    as written.
-2. *Inside a dungeon/camp ROOM prefab* - the reviewer's hypothesis, and the reason section 7 exists.
+2. *Inside a dungeon/camp ROOM prefab* - the second hypothesis, and the reason section 7 exists.
    Then `kind` is `room`, the hit names the room list and `RoomData.m_theme`, and the arithmetic is
    the room one in section 7: a different seed, from the room's placement position, which comes out of
    a dungeon layout that is rolled once and saved to a ZDO.

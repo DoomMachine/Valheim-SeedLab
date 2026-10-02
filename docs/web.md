@@ -72,7 +72,7 @@ design they confirmed, as built:
   THAT search - the command that continues it, and **Stop anyway** / **Keep running**. A funnel still
   in its first stage has no resume point (a stop throws its survivors away), and there the dialog,
   `--status`, `--stop` and the first Ctrl+C say that stopping loses its work, and never that anything
-  is saved (review of 2026-09-25: one shared sentence used to promise both). After a stop the page
+  is saved (one shared sentence used to promise both). After a stop the page
   covers itself with "SeedLab has stopped. You can close this tab." and what became of each search,
   with its checkpoint and the command; every control behind it is inert. Another tab, or a stop from
   the window or a script, is found by the page's polling: "SeedLab is not answering" after two failed
@@ -147,7 +147,7 @@ design they confirmed, as built:
   (`SessionEndWindow`, class `SeedLabWebServerSessionEnd`, never shown): `WM_QUERYENDSESSION` is
   answered "yes" at once and stops nothing (another program may still cancel), and `WM_ENDSESSION` with
   "the session is ending" runs the graceful stop inside the message, before Windows ends the process.
-  Found by review 2026-09-25: before it, a shutdown ended the server abruptly - up to 30 s of a search
+  Found on 2026-09-25: before it, a shutdown ended the server abruptly - up to 30 s of a search
   lost, the registry file left behind.
 - **After the stop, the window waits** when a search it stopped left a checkpoint: `The command above
   continues the stopped search. It is kept in the session log too (...). Press Enter to close this
@@ -172,7 +172,7 @@ written atomically once the port is bound (before the first line that says the s
 deleted when it stops - `{pid, process_started_utc, port, url, started_utc, version, token}`. A file
 counts as a running server only while its pid is alive AND that process's start time can be read AND
 matches; a start time this account cannot read means the pid now belongs to a system process or
-another account's, never to the user's own server (review of 2026-09-25: the lenient check the scratch
+another account's, never to the user's own server (the lenient check the scratch
 reaper uses called such a file "live", which locked the user out - "already running", a `--stop` that
 could not stop it, an uninstall that refused). A server that answers must also say its own pid, and a
 file is read only when its `url` is exactly `http://127.0.0.1:<its port>` - the url is opened in the
@@ -330,7 +330,7 @@ CLI-only operations."* The panel is not a simplified front end onto a subset:
   spells it (`in_use`, `read_only`, ...), and `onDiskUnreadable` is true when the checkpoint on disk
   is there but was held so that it could not be read: it is still the resume point, and the resume
   command is kept.
-- **What a tab that comes back is shown** (review of 2026-09-24). The server replays a run to every
+- **What a tab that comes back is shown**. The server replays a run to every
   tab that opens its stream. Only the `result` lines are capped (4,000); every `warning`, the latest
   best-of table and progress, and the `done` event - always last - are replayed however long the run
   was (the cap used to drop them all after 4,000 events, and such a tab reconnected for as long as it

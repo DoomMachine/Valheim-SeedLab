@@ -49,7 +49,7 @@ Four things make it usable rather than a slot machine:
   beside an older checkpoint, and the resume duplicated 12 and lost 12 of 50 kept records.) Which
   generation the checkpoint on disk names is known, never guessed: a resumed run takes it from the
   checkpoint it loaded, and a fresh run reads the stale file it replaces - a held one that cannot be
-  read fails that save before anything is written (review of 2026-09-24: guessing wrote over the
+  read fails that save before anything is written (guessing wrote over the
   named snapshot, and the next `--resume` was refused).
 - **The block is the resume granularity, and ONE worker computes a whole block.** A block's wall
   time is `block size × per-seed cost`; the thread count does not divide it. At 12 m over the whole

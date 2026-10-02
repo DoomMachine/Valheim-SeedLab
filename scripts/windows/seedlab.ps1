@@ -622,7 +622,7 @@ function Test-SeedLabAt([int]$port) {
 
 # Only two kinds of address are ever opened: SeedLab's own page on this computer, and Microsoft's SDK
 # download page. Start-Process runs whatever it is given, and a server's address comes from a file in
-# the cache folder (review of 2026-09-25).
+# the cache folder.
 function Open-Url([string]$url) {
     if (-not ($url -match '^http://127\.0\.0\.1:\d{1,5}/?$') -and $url -ne $SdkPage) {
         Say-Warn ('Not opened, because it is not an address of SeedLab''s page: ' + $url)
@@ -719,7 +719,7 @@ function Get-ServeStatus([string]$root) {
             Searches = $searches
         }
     }
-    # Files in serve\ that name no running server (review of 2026-09-25): said, so a person can see them.
+    # Files in serve\ that name no running server: said, so a person can see them.
     foreach ($f in @(Get-JsonProp $j 'left_over_files')) { if ($f) { $o.LeftOver += [string]$f } }
     foreach ($u in @(Get-JsonProp $j 'unregistered')) {
         if ($u -eq $null) { continue }
@@ -763,7 +763,7 @@ function Show-RegisteredServer($s) {
 # is about this very server; 'but' - the lines above said none is running, and this is the exception.
 # Registry files that name no running SeedLab web server: left by one that was ended without stopping
 # (Task Manager, a power cut), or not SeedLab's. vseed ignores them and the next server removes them;
-# they are named so that nothing is hidden (review of 2026-09-25).
+# they are named so that nothing is hidden.
 function Show-LeftOver($files) {
     if (@($files).Count -eq 0) { return }
     Say ''
@@ -1065,7 +1065,7 @@ function Invoke-Build($sdk) {
     Say-Title 'Step 2 of 4: build SeedLab'
 
     # Built by these scripts from exactly this source: there is nothing to build, and nothing to stop for
-    # it (review of 2026-09-25). This used to ask to stop a running web server even then, and "no" ended
+    # it. This used to ask to stop a running web server even then, and "no" ended
     # the install before the vseed command and the check - on a run that had nothing to do.
     if ((Get-BuildState) -eq 'current') {
         Say 'SeedLab is already built from exactly this source - nothing to build.'
@@ -1569,7 +1569,7 @@ function Get-ChosenCacheDir {
 
 # What SeedLab puts in a cache folder: vseed's category folders and a web server's registry folder,
 # and in each only files of the kinds SeedLab writes there. A folder in a SEEDLAB_CACHE_DIR folder counts
-# as SeedLab's only when BOTH its name and everything in it fit (review of 2026-09-25): a name alone -
+# as SeedLab's only when BOTH its name and everything in it fit: a name alone -
 # "logs", "maps" - or any "*.log" also matched a person's own files, which uninstall then offered to
 # remove as "SeedLab's own folders". Nothing at the top of the folder but these folders is SeedLab's.
 #   <name> = the file-name patterns allowed directly inside it
@@ -1966,7 +1966,7 @@ function Do-Uninstall {
     Show-Kept
     Say ''
     # Blocked: something of SeedLab's is still running, so what it uses was left in place. That is not
-    # "finished", and "SeedLab 6 - Remove the build" must not go on as if it were (review of 2026-09-25).
+    # "finished", and "SeedLab 6 - Remove the build" must not go on as if it were.
     if ($blocked) {
         Say-Warn 'The uninstall did NOT finish: vseed is still running (see above), so the folders it uses were'
         Say-Warn 'left in place. Stop it - "SeedLab 3 - Stop web page", or in its own window - and run the'

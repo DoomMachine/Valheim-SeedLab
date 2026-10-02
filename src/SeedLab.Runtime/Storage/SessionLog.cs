@@ -505,7 +505,7 @@ namespace SeedLab.Runtime.Storage
         /// "written by process" line, and only believed when the file really is held and that process is
         /// alive and started when the line says - a pid on its own is reused.
         ///
-        /// <para><b>The last one, not the first</b> (review of 2026-09-25). A session that could not replace
+        /// <para><b>The last one, not the first</b>. A session that could not replace
         /// vseed-prev.log appends to vseed.log, so the file can hold several sessions, oldest first; its first
         /// line then names a writer that ended long ago, and a live server writing below it was not recognised
         /// - a concurrent command waited out the rename's retries and logged the wrong cause.</para>

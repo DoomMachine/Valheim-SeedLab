@@ -23,7 +23,7 @@ namespace SeedLab.Seeds
 
         /// <summary>
         /// The shortest length at which EVERY int32 is reachable, for both A62 and A59
-        /// (spec 06 section 5.2, exact sumset computation reproduced by an independent reviewer).
+        /// (spec 06 section 5.2, exact sumset computation reproduced independently).
         /// </summary>
         public const int ShortestUniversalLength = 7;
 
@@ -92,8 +92,8 @@ namespace SeedLab.Seeds
             => LaneTables.For(alphabet).LevelCount(n);
 
         /// <summary>
-        /// |E_n| for n = 0..5 as computed in spec 06 section 3.3 and independently reproduced by the
-        /// reviewer (section 11). n = 5 is here because materialising E_5 costs 64 M entries / 256 MB
+        /// |E_n| for n = 0..5 as computed in spec 06 section 3.3 and independently reproduced
+        /// (section 11). n = 5 is here because materialising E_5 costs 64 M entries / 256 MB
         /// and the tool never needs it; n = 1..4 can and should be checked against
         /// <see cref="LaneReachableCount"/>.
         ///

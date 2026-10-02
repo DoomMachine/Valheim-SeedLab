@@ -27,7 +27,7 @@ namespace SeedLab.Seeds
     /// </code>
     ///
     /// The IL uses plain <c>add</c> / <c>mul</c> / <c>shl</c>, never the <c>.ovf</c> forms, so every
-    /// operation wraps at 32 bits (spec 06 section 1, re-verified from the assembly by the reviewer).
+    /// operation wraps at 32 bits (spec 06 section 1, re-verified from the assembly).
     /// The <c>unchecked</c> blocks below make that explicit rather than relying on the project's
     /// default overflow setting.
     ///

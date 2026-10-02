@@ -352,7 +352,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
             {
                 // A full drive is a condition the user can fix, not a fault in the tool - it used to fall
                 // to the handler below and print "IOException: There is not enough space on the disk"
-                // above "this is a bug" (review of 2026-09-24). Named by the file the message names.
+                // above "this is a bug". Named by the file the message names.
                 FileDiagnosis? d = FileRetry.DiagnoseEscaped(ex);
                 Console.Error.WriteLine("vseed " + cmd + ": " + (d != null
                     ? SearchCommand.WrapPaths(d.Message, "       ", new[] { d.Path })
@@ -395,7 +395,7 @@ A seed token that parses as an int32 is read as the INT; pass --text to read it 
                 // A server's window that was made for it closes the moment vseed ends. After a failure - a
                 // port that is taken, a self-test that failed - that would take the explanation with it, so
                 // such a window waits for Enter first (ten minutes at most). So does one whose stop left a
-                // search's checkpoint (review of 2026-09-25): the lines above say where it is and the command
+                // search's checkpoint: the lines above say where it is and the command
                 // that continues it, and a stop from this window, a script or --stop left them nowhere else on
                 // screen. Any other clean stop closes at once.
                 if (cmd == "serve" && ServeConsole.Prepared)

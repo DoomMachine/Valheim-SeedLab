@@ -368,7 +368,7 @@ namespace SeedLab.Search.Execution
 
             // The wall budget, as the bound it really is: an OVERRUN, never a floor. It is checked only
             // when a worker is about to claim a block (SearchRun.Worker), and a claimed block is always
-            // finished. The old wording - docs and knowledge base alike - was "a budget cannot stop a
+            // finished. The old wording - docs and published skills alike - was "a budget cannot stop a
             // run sooner than one block per worker", and that is false: each worker builds its
             // evaluator before its first check, so a worker whose first check comes after the wall
             // never claims at all (measured 2026-09-24: --budget 0.001s --seeds 512 evaluated 0 seeds;
@@ -502,8 +502,8 @@ namespace SeedLab.Search.Execution
         /// list - in each of those two grids visit the same seeds, and saying otherwise would be the
         /// same kind of false sentence this note replaced. A shuffled whole-range run with a
         /// <c>budget.wall</c> is the exception to the third: the budget can stop it part-way through a
-        /// permutation whose key comes from the hash, so it gets a "can visit different seeds" clause
-        /// (review of 2026-09-24). The CLI's <c>--budget</c> flag reaches it too: it sets
+        /// permutation whose key comes from the hash, so it gets a "can visit different seeds" clause.
+        /// The CLI's <c>--budget</c> flag reaches it too: it sets
         /// <c>q.Search.Wall</c> (not part of the canonical JSON, so no hash moves) since the block-size
         /// change of the same day, which is when a run limited by that flag alone got this clause.</para>
         /// </summary>
@@ -553,7 +553,7 @@ namespace SeedLab.Search.Execution
         ///
         /// <para><b>The block named is the largest one left</b>, <c>min(block size, seeds left)</c>:
         /// <c>--seeds 3 --block-size 256</c> is one block of 3, and the line used to name a block of
-        /// 256 beside "at most 1 block (3 seeds) in progress" (review of 2026-09-24).</para>
+        /// 256 beside "at most 1 block (3 seeds) in progress".</para>
         ///
         /// <para><b>The start-up and the final write come on top.</b> Each worker builds its evaluator
         /// before it first looks at the clock, and a run ends by writing its results and checkpoint:

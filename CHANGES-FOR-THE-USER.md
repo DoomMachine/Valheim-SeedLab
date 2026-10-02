@@ -119,7 +119,7 @@ generator changed: all five gates still pass with the same counts.
 ## Try these first
 
 ```powershell
-cd E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab
+cd <SeedLab folder>
 dotnet build src\SeedLab.Cli\SeedLab.Cli.csproj -c Release
 Set-Alias vseed .\src\SeedLab.Cli\bin\Release\net10.0\vseed.exe
 
@@ -462,7 +462,7 @@ search indexer, a spreadsheet or an image viewer — and the same sentence also 
   engine underneath, including a resumed run whose checkpoint could not even be read - run against
   the guessing save, that test fails twice: the snapshot changed, and the resume refused),
   `SeedLab.Runtime.Tests` section 7, and three new rows in `vseed serve --selftest`. On 2026-09-24,
-  after the review's fixes:
+  after the fixes:
   Search.Tests 443/443 (571 s), Runtime.Tests 173/173, `vseed serve --selftest` 15 PASS rows and 3
   MEASURED, `vseed selftest` 13 checks PASS, the proofs `refuse`, `policy` and `blocks` exit 0, and the
   kill tests 3/3 IDENTICAL both bounded and `keep all`.
@@ -765,8 +765,8 @@ checks fail.
 
 ## One thing only you can do
 
-1. Done: **run 6 of the dumper** ran on 2026-09-24 and the plugin is retired again to
-   `_ModSource\_retired\DoomMachine-SeedLabDumper-20260924-run6`; F4 is free.
+1. Done: **run 6 of the dumper** ran on 2026-09-24 and the plugin is retired again (moved out of
+   `BepInEx\plugins\` into the author's archive); F4 is free.
 2. **Type `y` once.** The confirmation prompt has only ever been exercised with stdin redirected,
    which proves the refusal-and-name-`--yes` path but not the interactive one. Run
    `vseed search gentle-start --all` in a real terminal, answer `n`, then `y`, and you will have

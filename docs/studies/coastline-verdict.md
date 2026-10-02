@@ -1,14 +1,14 @@
 # The fate of `coastline_length`, and a sweep of every other metric for the same defect
 
-Measurement and design only. Nothing under `E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab`
+Measurement and design only. Nothing under `<SeedLab folder>`
 was written to. All harness output is in this directory.
 
 ## Sources
 
 | what | where | n |
 |---|---|---|
-| existing resolution study | `scratchpad\searchanalysis\study.csv` | 2,560 seeds x 9 grids |
-| new shore-metric harness | `scratchpad\metrictruth\shore.csv` (harness `shore\Program.cs`, SeedLab's own `SeedSampler`/`WorldMeasurement` copied verbatim) | 512 seeds x 9 grids |
+| existing resolution study | `<work>\searchanalysis\study.csv` | 2,560 seeds x 9 grids |
+| new shore-metric harness | `<work>\metrictruth\shore.csv` (harness `shore\Program.cs`, SeedLab's own `SeedSampler`/`WorldMeasurement` copied verbatim) | 512 seeds x 9 grids |
 | analysis scripts | `rank.py` `dist.py` `sweep.py` `floors.py` `shore_an.py` `join.py` `margin.py` | - |
 | raw outputs | `sweep.txt` `floors.txt` `margin.txt` | - |
 
@@ -176,7 +176,7 @@ comparison; it needs nothing the T3 pass has not already computed.
 {
   // Coastal builder - a buildable shoreline right where you spawn.
   //
-  // MEASURED, 512 seeds (scratchpad\metrictruth\shore.csv, 2026-09-23): shore_area_within is the
+  // MEASURED, 512 seeds (<work>\metrictruth\shore.csv, 2026-09-23): shore_area_within is the
   // area of land within 100 m of water inside the disc. At radius 1,000 m it is statistically
   // INDEPENDENT of land_area_within at the same radius (Spearman -0.034), so the two goals below
   // ask different questions. The old 'shoreline' goal used coastline_length, a fractal whose
@@ -298,7 +298,7 @@ applied top to bottom without re-deciding anything.
 ## 6. Out of scope, but the user asked
 
 The user's second question - whether a boss can ever have fewer than its `m_quantity` altars - is not
-this task's, but the evidence already in `scratchpad\constraints\sample.jsonl` bears on it. Over 240
+this task's, but the evidence already in `<work>\constraints\sample.jsonl` bears on it. Over 240
 seeds, placed == m_quantity in **every** seed for Eikthyrnir (3), GDKing (4), Bonemass (5),
 Dragonqueen (3), GoblinKing (4), FaderLocation (3), Vendor_BlackForest (10) and BogWitch_Camp (10);
 `Hildir_camp` fell short in **1 of 240**. That is a measurement over 240 seeds, not a proof, and it

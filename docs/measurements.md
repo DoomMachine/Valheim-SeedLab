@@ -18,7 +18,7 @@ Earlier sessions quoted 4.6 days, 28 days, 4.42 days and 2.3 days for the same k
 | **AVX2** | default (DOTNET_EnableAVX2 not set) |
 | **Results volume** | C: (598.6 GiB free) |
 | **Project volume** | E: (3,098.2 GiB free) |
-| **Source control** | none - E:\SteamLibrary\steamapps\common\Valheim is not a git repository, so there is no commit id. The build is identified by the SHA-256 of the binaries below. |
+| **Source control** | none - the game folder the build ran from is not a git repository, so there is no commit id. The build is identified by the SHA-256 of the binaries below. |
 
 ### Build identity
 

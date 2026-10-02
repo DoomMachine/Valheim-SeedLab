@@ -639,7 +639,7 @@ namespace SeedLab.Web
         // request from another origin also forces a CORS preflight, which this server never answers - so
         // another page cannot even send the request, let alone know the token. The guard is against WEB
         // PAGES: a program on this computer, or another account on it, can read /api/meta like the page
-        // does and stop the server (review of 2026-09-25) - no worse than closing its window, which the
+        // does and stop the server - no worse than closing its window, which the
         // same account can do anyway.
         // -------------------------------------------------------------------------------------------
         private void MapServer(WebApplication app)
@@ -717,7 +717,7 @@ namespace SeedLab.Web
             {
                 return Results.Json(new
                 {
-                    // Not "nothing else can" (review of 2026-09-25): GET /api/meta hands the token to anything on
+                    // Not "nothing else can": GET /api/meta hands the token to anything on
                     // this computer that can reach 127.0.0.1. What it keeps out is other web pages.
                     error = "refused: this request did not carry SeedLab's token. SeedLab's own page and 'vseed serve --stop' send it; "
                             + "other web pages cannot read it.",
@@ -910,7 +910,7 @@ namespace SeedLab.Web
                 // pages: another page cannot read this reply (there is no CORS), and it is what the page sends
                 // back in the X-SeedLab-Token header, which another page could not send without a preflight
                 // this server never answers. NOT a secret from programs or other accounts on this computer,
-                // which can ask for this reply themselves (review of 2026-09-25).
+                // which can ask for this reply themselves.
                 server = new
                 {
                     token = _token,

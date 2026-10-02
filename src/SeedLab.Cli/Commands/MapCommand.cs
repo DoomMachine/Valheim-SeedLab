@@ -135,7 +135,7 @@ Examples:
             WorkerPlan plan = rt.Plan(WorkTier.HeightsRivers, grid.Spacing);
             int threads = plan.Workers;
 
-            // Audit defect 6. 'vseed map <seed>' used to write map-<seed>.png into whatever directory
+            // 'vseed map <seed>' used to write map-<seed>.png into whatever directory
             // the user happened to be standing in - 3.2 MB at the default size, with a name derived
             // from the seed, so repeated renders accumulated silently in source trees and home
             // directories. The default is now the cache root, which 'vseed clean' can empty and which
@@ -267,7 +267,7 @@ Examples:
         /// meanwhile. Null when the file is written; the exit code when the user gave up. With --json or
         /// no keyboard a file still held throws the diagnosis (exit 3).
         ///
-        /// <para><b>Why</b> (review of 2026-09-24). The start check passes a viewer that has the file open
+        /// <para><b>Why</b>. The start check passes a viewer that has the file open
         /// while letting others write to it, and that viewer still blocks the rename. The write used the
         /// quick schedule, so a hold of more than about 1.6 s threw the finished render away with its
         /// temp file - measured: exit 3 after a 1024 px render, only the old file left. It now waits on

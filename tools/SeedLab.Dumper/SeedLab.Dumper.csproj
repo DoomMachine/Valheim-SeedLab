@@ -4,7 +4,7 @@
     SeedLab game-data dumper: the only project in this tree that touches Unity or the game.
     Based on .claude\skills\valheim-modding\assets\plugin-template\ExampleMod.csproj.
 
-    Build (from _ModSource\SeedLab):
+    Build (from the repository root):
       dotnet build tools\SeedLab.Dumper\SeedLab.Dumper.csproj -v quiet
     (an XML comment cannot contain a double hyphen, so the nologo switch is not spelled out here)
 

@@ -704,7 +704,7 @@ namespace SeedLab.Search.Evaluation
             //    spawn_island_area must-have under screen: off, or a river must-have beside a nice
             //    nearest-biome goal). The first cut of this warning stayed silent here, and the records'
             //    highest_peak_m and largest_island_km2 at G384 went unmentioned - HEAD's generic
-            //    sentence had covered them (review of 2026-09-24).
+            //    sentence had covered them.
             // A query that samples biomes alone (all-traders, compact-progression) gets nothing: its
             // only side metric is ocean_share, which is comparable (GridPolicy.SideMetricsClause).
             if (sampling == 0)

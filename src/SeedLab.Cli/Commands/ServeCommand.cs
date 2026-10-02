@@ -205,7 +205,7 @@ Examples:
         /// the newest one of this cache root; with <c>--port N</c>, the one on port N; with <c>--port 0</c>,
         /// none - that asks for a new server on a new port.
         ///
-        /// <para><b>Only a server that answers as itself</b> (review of 2026-09-25): its registry file must name
+        /// <para><b>Only a server that answers as itself</b>: its registry file must name
         /// a process that is provably the one that wrote it, and <c>GET /api/server/state</c> on its address
         /// must answer with that pid. A left-over file used to be enough to say "already running" and start
         /// nothing - for good, when its pid had gone to a system process.</para>
@@ -241,7 +241,7 @@ Examples:
             }
 
             // Read() admits only http://127.0.0.1:<its port>; checked again here because this string goes to
-            // the shell, which would open or run whatever it named (review of 2026-09-25).
+            // the shell, which would open or run whatever it named.
             if (set.Browser && SeedLab.Runtime.Storage.ServerRegistry.IsServerUrl(r.Url, r.Port))
             {
                 WebServer.OpenBrowser(r.Url, line => Console.Out.WriteLine(line));
@@ -1195,7 +1195,7 @@ Examples:
 
         /// <summary>
         /// The events a tab that rejoins a run is handed: a run past the replay cap still replays every
-        /// warning and its end (review of 2026-09-24). The cap used to apply to every event, so a run that
+        /// warning and its end. The cap used to apply to every event, so a run that
         /// had streamed 4,000 results - under three minutes of a cheap query - lost its later warnings and
         /// its <c>done</c> from the replay, and a page that reloaded never saw the failed last save and
         /// reconnected for as long as it stayed open.

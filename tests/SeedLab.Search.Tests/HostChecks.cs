@@ -254,7 +254,7 @@ namespace SeedLab.SearchTests
             check(same, "and its results file is byte-identical to the unheld run's", same ? "identical" : "DIFFERS");
 
             // Held since before the run, and only the checkpoint's FOLDER was checked: nothing changed, so
-            // nothing may be said to have (review of 2026-09-24: it said "so something changed after that").
+            // nothing may be said to have (it said "so something changed after that").
             check(text.Contains("another program has it open", StringComparison.Ordinal)
                   && !text.Contains("so something changed after that", StringComparison.Ordinal),
                   "the warning claims no change since the start check, which looked only at the checkpoint's folder",

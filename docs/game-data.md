@@ -234,7 +234,7 @@ You should see `Build succeeded.` and `0 Error(s)`. The result is two files in
 How the build finds the game: the plugin is compiled against the game's own DLLs, which it reads from
 `ValheimDir\valheim_Data\Managed`, and against BepInEx's DLLs, which it reads from `BepInExCore`. It
 copies none of them. Without `-p:ValheimDir`, the project looks for the game in the folder where it
-is installed on the author's machine (`E:\SteamLibrary\steamapps\common\Valheim`). So always pass it.
+is installed on the author's machine. So always pass it.
 
 `-p:BepInExCore` is the one setting that is **not** in the plugin README's build command. With BepInEx
 in the game folder it changes nothing. With a mod manager it points the build at the profile's

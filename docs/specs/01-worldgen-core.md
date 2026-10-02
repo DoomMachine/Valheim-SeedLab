@@ -2,14 +2,14 @@
 
 **Target build.** Valheim 1.0.15, network 40, Steam build 25390630,
 `assembly_valheim.dll` SHA-256 `59f53fb55d99d22a33e8ed094eec8d21e9f133543bce92bc3d80dce44033adb1`
-(`check-game-version.ps1`, run 2026-09-22, exit 0 — identical to the build the knowledge base was
+(`check-game-version.ps1`, run 2026-09-22, exit 0 — identical to the build the published skills were
 verified against).
 
 **Evidence basis.** Every statement below is taken either from the ILSpy decompilation in
-`scratchpad\decomp\` (`WorldGenerator.cs`, `DUtils.cs`, `FastNoise.cs`, `Utils.cs`, `World.cs`,
+`<work>\decomp\` (`WorldGenerator.cs`, `DUtils.cs`, `FastNoise.cs`, `Utils.cs`, `World.cs`,
 `Heightmap.cs`, `HeightmapBuilder.cs`, `ZoneSystem.cs`, `Minimap.cs`) or from raw IL read with
-Mono.Cecil in this session (`scratchpad\probe\WorldGenerator.il.txt`, `DUtils.il.txt`, `Utils.il.txt`,
-`Vector2.il.txt`, `Mathf.il.txt`, `Random.il.txt`; produced by `scratchpad\probe\dump-il.ps1`).
+Mono.Cecil (`<work>\probe\WorldGenerator.il.txt`, `DUtils.il.txt`, `Utils.il.txt`,
+`Vector2.il.txt`, `Mathf.il.txt`, `Random.il.txt`; produced by `<work>\probe\dump-il.ps1`).
 Citations are of the form `(Type.Member / IL IL_xxxx)`. Anything that could not be settled is marked
 **Unverified:** with the reason.
 
@@ -17,15 +17,15 @@ Citations are of the form `(Type.Member / IL IL_xxxx)`. Anything that could not 
 are in `assembly_utils.dll`; `Mathf`, `Vector2`, `Vector3`, `Color`, `Random` are in
 `UnityEngine.CoreModule.dll`.
 
-**Two points that were corrected in the knowledge base earlier the same day** (both re-verified against
-IL by the reviewer; `valheim-worldgen/references/world-generator.md` already carries them — lines
+**Two points that were corrected in the published skills earlier the same day** (both re-verified against
+IL; `valheim-worldgen/references/world-generator.md` already carries them — lines
 120–126 for (1) and the numerics bullet for (2), both stamped 2026-09-22, so they are no longer
 outstanding corrections *from* this document):
 
 1. The near-spawn mountain cap is **not** `clamp01((h-0.28)/0.1)`. The IL divisor
    is `0.099999994039535522`, i.e. the double widening of the float `0.38f - 0.28f`, **not** `(double)0.1f`
    (`0.10000000149011612`). (`GetBaseHeight` / IL_04f1 `ldc.r8 0.099999994039535522`, `div` at IL_04fa;
-   re-read from the IL by the reviewer. `world-generator.md` now carries this at its lines 119–126.)
+   re-read from the IL. `world-generator.md` now carries this at its lines 119–126.)
 2. Unity's multi-op float chains (`Vector2.magnitude`, `Distance`,
    `SqrMagnitude`) were listed as **Unverified** in earlier KB revisions. They are settled: the IL performs `mul/mul/add` on float32
    stack values and only then widens for `Math.Sqrt` (`Vector2.get_magnitude` / IL_000d–IL_001d,
@@ -179,7 +179,7 @@ construction:
 | `m_cellularReturnType` | `Distance` (2) | `SetCellularReturnType(2)` |
 | `m_cellularJitter` | **0.45f** (field default) → widened to `0.44999998807907104` at use | field init; `SingleCellular` casts `(double)m_cellularJitter` |
 
-**Correction (reviewer, evidence: `FastNoise.m_cellularJitter` / decompiled line 114 `private float m_cellularJitter = 0.45f;`, and a computed check):** the widened value is
+**Correction (evidence: `FastNoise.m_cellularJitter` / decompiled line 114 `private float m_cellularJitter = 0.45f;`, and a computed check):** the widened value is
 `(double)0.45f = 0.449999988079071044921875`, whose shortest round-trip form is **`0.44999998807907104`**.
 The value `0.449999988079071` written in the first draft of this table parses to a *different* double,
 one ulp lower (`0.449999988079070989410723768742172978818416595458984375`). Copying that literal into the
@@ -372,7 +372,7 @@ Band terms: `dist > (float)(6000.0 + (double)A)` — the sum is formed in double
 (6000 / 8000 / 10000) and the Swamp band (2000 … `maxMarshDistance`) carry **no** wobble.
 
 All comparisons use the unordered forms (`ble.un`, `bge.un`, `bgt.un`), so a NaN operand fails the test
-and falls through. **Corrected by the reviewer:** with a NaN coordinate `dist = DUtils.Length(wx,wy)` is
+and falls through. **Corrected:** with a NaN coordinate `dist = DUtils.Length(wx,wy)` is
 NaN, so *every* distance test is false and `Swamp`, `Mistlands`, `Plains`, `BlackForest` (both the noise
 branch at IL_01e1 and the `dist > 5000 + A` fallback at IL_01f3) and `DeepNorth` are all unreachable —
 `BlackForest` in particular cannot be produced. What remains is `Ocean` (if `base <= oceanLevel`),
@@ -774,7 +774,7 @@ double A = (double)WorldAngle((float)x, (float)y) * 100.0;
 // ridge band around a circle 1200 m SOUTH of the AshLands ring (deeper into AshLands):
 // the ring centre moves from (0, +4000) to (0, +2800), so at x = 0 the ridge crest sits at
 // z = 2800 - (12000 + A) ~ -9200, while the biome boundary is at z = 4000 - (12000 + A) ~ -8000.
-// (corrected by the reviewer; GetAshlandsHeight / decompiled 1221 vs IsAshlands / decompiled 751-755)
+// (corrected; GetAshlandsHeight / decompiled 1221 vs IsAshlands / decompiled 751-755)
 double r = DUtils.Length(x, y + (double)ashlandsYOffset - (double)ashlandsYOffset * 0.3)  // == y - 2800
          - ((double)ashlandsMinDistance + A);                       // DOUBLE Length overload
 r = Math.Abs(r) / 1000.0;
@@ -901,7 +901,7 @@ Consumers:
 - **`HeightmapBuilder.Build`** writes the mask per vertex into `data.m_baseMask`, blending the
   four corner biomes' masks with `Color.Lerp` when the corners disagree (`HeightmapBuilder.Build` /
   decompiled lines 174–207). That becomes `Heightmap.m_paintMask`.
-  **Corrected by the reviewer:** the blend is *not* plain bilinear — both weights are smoothstepped
+  **Corrected:** the blend is *not* plain bilinear — both weights are smoothstepped
   first: `t2 = DUtils.SmoothStep(0f, 1f, (float)((double)l / (double)data.m_width))` across x and
   `t = DUtils.SmoothStep(0f, 1f, (float)((double)k / (double)data.m_width))` across y, and the four
   heights are combined with the same two weights via `DUtils.Lerp`
@@ -910,7 +910,7 @@ Consumers:
 - **`Heightmap.GetVegetationMask(pos)`** returns `m_paintMask.a` at the vertex for `pos` shifted by
   `(−0.5, −0.5)` in x/z — so Mistlands `mask.a` suppresses
   vegetation, and AshLands `mask.a` doubles as the lava amount (`Heightmap.GetVegetationMask` /
-  decompiled 925–931). **Corrected by the reviewer:** `Heightmap.IsLava(pos, lavaValue = 0.6f)` is not
+  decompiled 925–931). **Corrected:** `Heightmap.IsLava(pos, lavaValue = 0.6f)` is not
   the mask test alone — it is
   `GetBiome(pos) == AshLands && !IsBiomeEdge() && GetVegetationMask(pos) > lavaValue`
   (`Heightmap.IsLava` / decompiled 958–969), so a heightmap patch that straddles a biome edge reports no
@@ -922,12 +922,12 @@ Consumers:
   `[m_minimumVegetation, m_maximumVegetation]` (`ZoneSystem` / decompiled ~2020).
 - **`Heightmap.GetCultivationMask`/`IsCultivated`** read `m_paintMask.g` (`> 0.5` = cultivated,
   `Heightmap.IsCultivated` / decompiled 946–950), which is what Deep North's `mask.g` feeds.
-  **Corrected by the reviewer:** that range is **[0.45, 0.7125]**, not [0.3, 0.6]. `DUtils.Fbm(Vector2,
+  **Corrected:** that range is **[0.45, 0.7125]**, not [0.3, 0.6]. `DUtils.Fbm(Vector2,
   int, double, double)` sums `amp * PerlinNoise(...)` with amps 1, 0.5, 0.25 (`DUtils.Fbm` / decompiled
   108–122), and `Mathf.PerlinNoise` is normalised to ≈[0, 1] (the same assumption §5.3 uses for
   `GetForestFactor`), so the fbm lies in ≈[0, 1.75]; `(f + 1)/2 ∈ [0.5, 1.375]` and
   `0.3 + 0.3·that ∈ [0.45, 0.7125]`, centred near 0.58 (`GetDeepNorthHeight` / decompiled 1378–1380,
-  arithmetic run by the reviewer). Consequence: Deep North ground is **usually above the 0.5
+  arithmetic re-run). Consequence: Deep North ground is **usually above the 0.5
   "cultivated" threshold**, i.e. deep snow, whereas the [0.3, 0.6] figure would have put it usually
   below. **Unverified:** the exact output range of `Mathf.PerlinNoise` (extern, §7.1) — the bound moves
   with it, but the sign of the conclusion does not unless Perlin can go negative.
@@ -1256,7 +1256,7 @@ it uses the **pre-stream** array (or a stale `null`). The same applies to the fi
 `GetHeight` query after `PlaceStreams(true)`'s `RenderRivers`. Probability per world ≈ (64·64)/(20000·20000)
 ≈ 1×10⁻⁵, so over a billion-seed search it happens thousands of times. `FindLakes` and `PlaceRivers`
 never call `AddRivers`, so no earlier staleness is possible.
-**Refinement (reviewer):** 1×10⁻⁵ is an **upper bound**, not the rate. `RenderRivers` only replaces the
+**Refinement:** 1×10⁻⁵ is an **upper bound**, not the rate. `RenderRivers` only replaces the
 array for keys present in its local `pending` dictionary (`RenderRivers` / decompiled 564–577), so a
 stale hit is harmless unless the cached cell is also one that the just-rendered pass wrote to. The
 divergence therefore needs *both* "first query after the render lands in the cached cell" *and* "that
@@ -1504,11 +1504,11 @@ low-rate divergence source and can only be settled by comparing against dumped i
 
 **6.15 `UnityEngine.Random` is native.** `InitState`, `Range(float,float)`, `RandomRangeInt`,
 `get_value` and `GetRandomUnitCircle` have **no managed body** (`Random.il.txt`). `Range(int,int)` has a
-managed body that only forwards to `RandomRangeInt`, and — **corrected by the reviewer** — `get_state` /
+managed body that only forwards to `RandomRangeInt`, and — **corrected** — `get_state` /
 `set_state` also have managed bodies; they forward to the externs `get_state_Injected` /
 `set_state_Injected` (`Random.il.txt`, both "(no body)"). `InitState` carries
 `[NativeMethod("SetSeed")]`, and the parameter names (Mono.Cecil over
-`valheim_Data\Managed\UnityEngine.CoreModule.dll`, read by the reviewer) are
+`valheim_Data\Managed\UnityEngine.CoreModule.dll`) are
 `Range(Int32 minInclusive, Int32 maxExclusive)` and `Range(Single minInclusive, Single maxInclusive)`,
 which is the evidence for the half-open int range and the closed float range used in §1.1 and §4.4.
 `Random.State` is four `Int32` fields `s0..s3` (same dump) — consistent with xorshift128, but the
@@ -1673,12 +1673,12 @@ All the integer maths is 32-bit and **must be unchecked** (`n*n*n*60493` overflo
 `CELL_2D` is a 256-entry `Float2[]` of **float-valued doubles** (e.g. the first entry is
 `(-0.2700222134590149, -0.9628540873527527)`, the last `(-0.7743120193481445, -0.6328039765357971)`) —
 these are the upstream FastNoise `float` constants widened. Copy the table verbatim from
-`scratchpad\decomp\FastNoise.cs` lines 150–409 (or re-extract it from `assembly_utils.dll`); do not
+`<work>\decomp\FastNoise.cs` lines 150–409 (or re-extract it from `assembly_utils.dll`); do not
 regenerate it from the unit-circle formula, and do not round-trip it through `float`.
 
 `m_cellularJitter` is declared `float` (0.45f) and is widened at every use, so the effective constant is
-`(double)0.45f` = **`0.44999998807907104`** (exactly 0.449999988079071044921875). Corrected by the
-reviewer: the literal `0.449999988079071` given in the first draft is a different, 1-ulp-lower double.
+`(double)0.45f` = **`0.44999998807907104`** (exactly 0.449999988079071044921875). Corrected:
+the literal `0.449999988079071` given in the first draft is a different, 1-ulp-lower double.
 
 ---
 
@@ -1692,7 +1692,7 @@ reviewer: the literal `0.449999988079071` given in the first draft is a differen
    and `Mathf.PerlinNoise`. It needs **no** RNG replacement if those offsets are dumped from the game,
    and no rivers at all. A seed search filtered on biomes alone (distances, biome presence, biome area
    fractions) can ship before the RNG is solved.
-   **One trap (reviewer):** this only holds while `waterAlwaysOcean` stays `false`. With it `true`,
+   **One trap:** this only holds while `waterAlwaysOcean` stays `false`. With it `true`,
    `GetBiome` calls `GetHeight(wx, wy)` (`GetBiome` / IL_004e), which is the full height path — rivers,
    `m_offset3` and all. It does not recurse infinitely, because `GetHeight` calls `GetBiome` with the
    default `waterAlwaysOcean = false` (`GetHeight` / decompiled 998–1003), but a biome-only build must
@@ -1715,10 +1715,10 @@ reviewer: the literal `0.449999988079071` given in the first draft is a differen
    (`World.m_seed = seedName.GetStableHashCode()`, 0 for empty), so there are at most **2³² ≈ 4.29×10⁹
    distinct worlds** per world-gen version, not 8.53×10¹⁷. The user's count of
    853 058 371 866 181 866 for 1–10 characters over a 62-symbol alphabet is arithmetically correct
-   (Σ 62ⁿ, n = 1…10 = 853 058 371 866 181 866 — recomputed by the reviewer) but it counts *seed
+   (Σ 62ⁿ, n = 1…10 = 853 058 371 866 181 866 — recomputed) but it counts *seed
    strings*, which collide heavily onto the 2³² seed space. The right search domain is the **int seed**,
    with a reverse map to a short printable string afterwards.
-   Two facts for that reverse map (added by the reviewer):
+   Two facts for that reverse map:
    `World.GenerateSeed()` — what the game itself puts in the box — builds a **10-character** string from
    a **59-symbol** alphabet, `abcdefghijklmnpqrstuvwxyzABCDEFGHIJKLMNPQRSTUVWXYZ023456789`, i.e. the
    ambiguous `o`, `O` and `1` are excluded (`World.GenerateSeed` / decompiled 163–171; Σ 59ⁿ, n = 1…10 =
@@ -1747,14 +1747,14 @@ reviewer: the literal `0.449999988079071` given in the first draft is a differen
   (code defaults 32/1).
 - **No numerical output in this document was produced by running the game.** Every formula comes from
   reading decompiled C# and raw IL of build 1.0.15 / `assembly_valheim.dll`
-  sha256 59f53fb5…33adb1. (Still true after review: the reviewer ran arithmetic checks on constants and
+  sha256 59f53fb5…33adb1. (Still true after the independent check: it ran arithmetic checks on constants and
   the seed hash, but nothing against the running game.)
 - **`Mathf.PerlinNoise` for NaN / non-finite arguments** — extern, so `GetBaseHeight` and therefore
   `GetBiome` are unpredictable for NaN coordinates (§2.3). Keep sample coordinates finite.
 
 ---
 
-## 10. Open questions (added by the reviewer)
+## 10. Open questions
 
 1. **Does the `Mathf.PerlinNoise` output range really start at 0?** Two derived statements in this
    document depend on it and on nothing else: the Deep North `mask.g` range [0.45, 0.7125] (§3.6) and
@@ -1784,8 +1784,8 @@ reviewer: the literal `0.449999988079071` given in the first draft is a differen
 Independent adversarial check of this document, 2026-09-22, against the same build
 (`check-game-version.ps1` re-run: exit 0, `assembly_valheim.dll` sha256 `59f53fb5…33adb1`, Valheim
 1.0.15 / network 40 / Steam build 25390630). Method: every constant, ordering, RNG consumption point,
-float/double claim and determinism claim was re-derived from `scratchpad\decomp\*.cs` and
-`scratchpad\probe\*.il.txt` rather than trusted from the quotes here; quoted excerpts were diffed
+float/double claim and determinism claim was re-derived from `<work>\decomp\*.cs` and
+`<work>\probe\*.il.txt` rather than trusted from the quotes here; quoted excerpts were diffed
 against the real files; numeric claims were recomputed.
 
 ### Checked and confirmed
@@ -1876,7 +1876,7 @@ against the real files; numeric claims were recomputed.
    `DUtils.SmoothStep(0, 1, k/m_width)`, applied to both the heights and the masks.
 7. **§6.15 — `UnityEngine.Random` bodies.** `get_state`/`set_state` do have managed bodies (they forward
    to extern `*_Injected`); the parameter-name evidence for the range semantics was added.
-8. **Header — "two corrections to the knowledge base".** Both are already recorded in
+8. **Header — "two corrections to the published skills".** Both are already recorded in
    `valheim-worldgen/references/world-generator.md` (stamped 2026-09-22); reworded so the next reader
    does not re-apply them.
 9. **§0 — `GetBiomeArea` signature.** `(short x, short y)` → `(Vector2s point)`.
@@ -1898,4 +1898,4 @@ game; §10 lists what a dumper must settle before any search result is trusted. 
 above is itself derived from the unverified Perlin range — it holds if Perlin is in [0, 1], which is the
 same assumption the rest of the document already makes.
 
-*Checked by an independent reviewer.*
+*Independently checked.*

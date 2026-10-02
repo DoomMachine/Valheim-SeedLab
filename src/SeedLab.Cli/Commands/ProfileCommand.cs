@@ -1365,7 +1365,7 @@ against the memory guard, the profile's own per-seed table included.";
         /// <summary>
         /// The GC's configured MAXIMUM heap count (<c>GC.GetConfigurationVariables()["HeapCount"]</c>), or
         /// null. It is not the number of heaps in use: with dynamic adaptation (DATAS) the collector runs
-        /// anywhere from one heap up to this, and that live count is not read here (a reviewer's probe on
+        /// anywhere from one heap up to this, and that live count is not read here (an independent probe on
         /// 2026-09-26 saw the variable stay at 16 while the GC's own events reported 1 to 15 heaps).
         /// </summary>
         private static long? GcHeapCountMax()

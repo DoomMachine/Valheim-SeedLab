@@ -24,7 +24,7 @@ namespace SeedLab.SearchTests
     /// on Windows, Ctrl+C pressed once (nothing stops) and twice (the graceful stop) in the server's own
     /// console, and a third time while it stops.
     ///
-    /// <para>Since the review of 2026-09-25 also: a left-over registry file is not a server; a run's query
+    /// <para>Since 2026-09-25 also: a left-over registry file is not a server; a run's query
     /// file is saved beside its checkpoint and the resume command names it; starting a query again when a
     /// stopped run of it left a resume point is refused until the user says to replace it; a funnel stopped
     /// in its first stage is warned about as losing its work, never as saved; and, on Windows, the end of the
@@ -85,7 +85,7 @@ namespace SeedLab.SearchTests
             check(!Directory.Exists(cache) && HostChecks.Empty(env),
                   "neither created the cache root, a log, a self-test stamp or anything else", Directory.Exists(cache) ? "CREATED " + cache : "nothing");
 
-            // ---- a left-over registry file is not a server (review of 2026-09-25) ---------------------------
+            // ---- a left-over registry file is not a server ---------------------------
             // One naming a system process whose start time this account cannot read (pid 4 on Windows), and one
             // naming this very process - alive, start time right - with an address that is a program, not
             // SeedLab's. Both used to count; the first locked the user out of starting, stopping and uninstalling.
@@ -315,7 +315,7 @@ namespace SeedLab.SearchTests
                       "its checkpoint is on disk, at the block the run had reached, and --stop named it",
                       c == null ? "NO CHECKPOINT at " + (ckpt ?? "(none)") : "next block " + c.NextBlock + " of " + (20000 / 16) + ", " + ckpt);
 
-                // ---- the query file beside the checkpoint, named by every resume command (review of 2026-09-25) ----
+                // ---- the query file beside the checkpoint, named by every resume command ----
                 string? queryJson = HostChecks.Event(streamText, "started", "queryJson");
                 string? resumeCmd = HostChecks.Event(streamText, "done", "resumeCommand");
                 string sidecar = (ckpt ?? "") + ".query.json";
@@ -505,7 +505,7 @@ namespace SeedLab.SearchTests
         }
 
         // =========================================================================================
-        // Resume points (review of 2026-09-25): the end of the session saves a running search (Windows: the
+        // Resume points: the end of the session saves a running search (Windows: the
         // hidden window's WM_ENDSESSION); the same query started again is refused until the user says to
         // replace that resume point; a funnel stopped in its first stage is warned about as losing its work;
         // and the stopped search resumes from the query file saved beside its checkpoint.
@@ -904,7 +904,7 @@ namespace SeedLab.SearchTests
             Console.WriteLine("RESULT first-messages=" + Count(Text(lines), "nothing has been stopped yet"));
 
             // The late press was a new FIRST press; one more, 1.5 s after it, is the second within 10 seconds -
-            // and a third right behind it, while the stop is under way (review of 2026-09-25), must not count
+            // and a third right behind it, while the stop is under way, must not count
             // as a new first press. Back to back: a stop with no search takes only milliseconds.
             Stopwatch sw = Stopwatch.StartNew();
             GenerateConsoleCtrlEvent(0, 0);

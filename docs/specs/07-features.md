@@ -18,8 +18,8 @@
 5381, combined `num + num2 * 1566083941` with unchecked 32-bit overflow. Nothing else about the seed
 text reaches generation (`WorldGenerator..ctor` reads only `m_seed` and `m_worldGenVersion`).
 
-Verified by running the decompiled hash in Python against every sample in the knowledge base **and**
-against the user's own world:
+Verified by running the decompiled hash in Python against every sample in the published skills **and**
+against the development world `asdasdasd`:
 
 | seed text | hash | source of expectation |
 |---|---|---|
@@ -70,12 +70,12 @@ meet-in-the-middle: 3 chars forward from 5381 against 2 chars unapplied backward
 > values, about 9 % of 59^5. The mean number of lane-B draws per target is **64.8**, which is why the
 > wall-clock figure below (≈ 18 ms/seed in Python) is nevertheless right.
 
-Measured in `scratchpad/probe/seedmath.py`: **12/12 random int32 targets inverted in 0.21 s total**
+Measured in `<work>/probe/seedmath.py`: **12/12 random int32 targets inverted in 0.21 s total**
 (≈ 17.5 ms each), producing 10-char seeds in the game's own alphabet
 (`World.GenerateSeed` alphabet: `abcdefghijklmnpqrstuvwxyzABCDEFGHIJKLMNPQRSTUVWXYZ023456789`,
 59 chars, no `o`/`O`/`1`). Examples that verify (re-checked against the decompiled hash):
 `1922895273 → "KYHSGIfTsC"`, `-1499591369 → "GCZ7nJMkiq"`, `2045500108 → "NeyBfxiEfb"`.
-Independently re-run by the reviewer with the corrected `0x3E0F83E1`: **300/300 random int32 targets
+Independently re-run with the corrected `0x3E0F83E1`: **300/300 random int32 targets
 inverted**, mean 64.8 lane-B draws, 19.8 ms/target (Python, unoptimised), every result re-hashed and
 checked equal to its target.
 
@@ -116,7 +116,7 @@ cacheMinimapMeta   : 8 bytes = int seed (-1772362158) + int 1
 and the row through the texture centre has non-`−400` height exactly for column indices 149..1898,
 i.e. a radius of 875 px for the 10500 m cutoff → **`m_pixelSize = 12.0`, `m_textureSize = 2048`**, and
 the pixel-centre formula is identical to `MapSpaceToWorldSpace`. Centre lands at index 1023.5.
-*(Re-verified by the reviewer: gunzip sizes 16,777,216 / 8,388,608 / 16,777,216 and meta
+*(Re-verified: gunzip sizes 16,777,216 / 8,388,608 / 16,777,216 and meta
 `(-1772362158, 1)`; rows **and** columns 1023 and 1024 all have exactly 1750 non-`−400` samples
 spanning indices 149..1898. `−400 = -2f * GetHeightMultiplier()` is the `DUtils.Length(wx,wy) > 10500f`
 early return in `WorldGenerator.GetBiomeHeight` — it is **not** the `−1000` that
@@ -142,7 +142,7 @@ only. Steam Cloud syncs both, and the game deletes files it does not expect.
 Derived from `cacheMinimapBiome` for seed −1772362158 by cross-referencing colour against the
 distance bands and height signatures of `WorldGenerator.GetBiome`.
 
-**Corrected — the two quoted bands were wrong.** Re-measured by the reviewer over all 4,194,304 cells
+**Corrected — the two quoted bands were wrong.** Re-measured over all 4,194,304 cells
 (distance of the cell centre from the origin, and the in-world height range), which is what actually
 pins the assignment:
 
@@ -193,8 +193,8 @@ with `s_forestColor = new Color(1,0,0,0)` and `s_noForestColor = new Color(0,0,0
 per-biome forest thresholds — 1.15 for Meadows, 0.8 for Plains — were missing and V6 cannot be
 implemented without them. Note `Utils.SmoothStep`, not `DUtils.SmoothStep`.)* Measured distinct mask
 colours in the real cache: 512, dominated by `(0,0,0,0)` 2,475,151, `(0,0,255,0)` 1,201,819 (water),
-`(255,0,0,0)` 186,552 (forest), `(0,255,0,0)` 142,747 (full mist) — all four re-counted by the
-reviewer and identical.
+`(255,0,0,0)` 186,552 (forest), `(0,255,0,0)` 142,747 (full mist) — all four re-counted
+independently and identical.
 
 ### 0.6 The vanilla location list is now known by name
 
@@ -206,7 +206,7 @@ stores 12,314 location instances under 176 distinct prefab-name hashes, and `loc
 `*.prefab` basename in
 `valheim_Data\StreamingAssets\SoftRef\manifest` + `manifest_extended` — **176/176 matched**, with
 paths that confirm each one's biome folder (`Assets/world/Locations/<Biome>/<Name>.prefab`).
-*(Re-verified by the reviewer against the live save: 12,314 instances, 176 distinct hashes, location
+*(Re-verified against the live save: 12,314 instances, 176 distinct hashes, location
 version 32, 112 generated zones, 44 instances with `placed = true` across 17 prefabs;
 `probe/loc_names.json` holds 176 entries.)*
 
@@ -214,7 +214,7 @@ The `LogOutput.log` from the user's session on 2026-09-22 adds the real `m_quant
 types that failed to place, and the total cost of generation (§4.4). It carries two kinds of line:
 25 × `Failed to place all <name>, placed A out of B with N tries` and 18 ×
 `Location <name> took more than 0.5 seconds to place … (placed A out of B with N)`; their union is
-**29 distinct prefabs with a known `m_quantity`** — re-counted by the reviewer, and it is the whole
+**29 distinct prefabs with a known `m_quantity`** — re-counted, and it is the whole
 of the asset-data recovery available from the log.
 
 The run reported **183 location types** processed. That number is `ZoneSystem.m_locationsRun`, which
@@ -445,8 +445,8 @@ bit-identical distances and counts).
 - **largest island** = max component area.
 
 **Why the threshold, with numbers.** Union-find over the real G12 height cache of seed −1772362158
-(`scratchpad/probe/islands.py`), decimating the same field to coarser grids. **All five rows
-reproduced exactly by the reviewer** on an independent re-implementation (4-connected union-find,
+(`<work>/probe/islands.py`), decimating the same field to coarser grids. **All five rows
+reproduced exactly** on an independent re-implementation (4-connected union-find,
 `h >= 30.0`, `A_min = 10,000 m²`, subsampling every k-th index from index 0).
 
 **Caveat on what the table measures.** The decimation takes G12 indices `0, k, 2k, …`, whose world
@@ -730,7 +730,7 @@ Be blunt about these in the docs:
   evaluation answers it, and there is no sound coarse rejection — **because we cannot bound
   `Mathf.PerlinNoise`.** It is `[FreeFunction("PerlinNoise::NoiseNormalized")] extern` native code;
   the KB found Ken Perlin's permutation table (151,160,137,91,90,15,…) as 512 int32s at file offset
-  `0x1BE0BC0` in `UnityPlayer.dll` — **re-verified by the reviewer: the 512 little-endian int32s at
+  `0x1BE0BC0` in `UnityPlayer.dll` — **re-verified: the 512 little-endian int32s at
   that offset are exactly `perm[0..255]` repeated twice, each half a permutation of 0..255, starting
   151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225** — but the gradient set, fade curve and
   normalisation are **Unverified**. Without them there is no Lipschitz constant, so there is no
@@ -871,7 +871,7 @@ points.
 
 ### 4.2 Measured numbers
 
-Benchmark: `scratchpad/probe/bench/` (.NET 10.0.401, Release, `ServerGarbageCollection`), a
+Benchmark: `<work>/probe/bench/` (.NET 10.0.401, Release, `ServerGarbageCollection`), a
 structurally faithful port of `GetBaseHeight` / `GetBiome` / a Meadows-style `GetHeight` with the same
 float/double casts and the same Perlin call counts, driving an improved-Perlin surrogate. **The
 *values* are not the game's** (Unity's native Perlin is unverified) — only the **shape and the cost**
@@ -931,7 +931,7 @@ P(26 < h < 31) = 0.0814   -> expected start tries 12.3   (surrogate: 0.0406 -> 2
 P(36 < h < 44) = 0.0555   -> expected end   tries ~18    (surrogate: 0.0685 -> 14.6)
 ```
 
-*(Both probabilities re-measured by the reviewer over the 2,775,556 G12 cells with |x| ≤ 10000 and
+*(Both probabilities re-measured over the 2,775,556 G12 cells with |x| ≤ 10000 and
 |z| ≤ 10000 — the square `FindStreamStartPoint` actually samples with
 `Random.Range(-10000f, 10000f)`: **0.081384** and **0.055463**. The loop constants also check out:
 `PlaceStreams` runs `for (i = 0; i < 3000; i++)` with `FindStreamStartPoint(100, 26f, 31f, …)` and
@@ -1291,7 +1291,7 @@ locations whose `max(m_exteriorRadius, m_interiorRadius) ≥ 32`, so `GetRandomP
 **Unverified:** what `UnityEngine.Random.Range(float min, float max)` returns when `min > max`, and
 whether it consumes a draw — native `extern`, dumper input.
 
-*(Fixture provenance re-verified by the reviewer against the live save: every `n=` above matches, the
+*(Fixture provenance re-verified against the live save: every `n=` above matches, the
 `StartTemple` and `Eikthyrnir` `placed` flags match, `Vendor_BlackForest` / `Hildir_camp` /
 `BogWitch_Camp` each have 10 candidates and **0 placed**, and `Hildir_camp` has two candidates tied at
 d = 3017 — (−639, −2949) and (−2950, −634) — so "nearest" needs the documented tie-break, not a
@@ -1442,11 +1442,11 @@ evidence on this machine cannot settle.
 
 ## Verification
 
-Independent adversarial check of this document against `scratchpad/decomp/*.cs` (ILSpy output for
+Independent adversarial check of this document against `<work>/decomp/*.cs` (ILSpy output for
 this build), `BepInEx\LogOutput.log`, the read-only minimap cache of world `asdasdasd`, its
 `_main.3.db2`, and `UnityPlayer.dll`. `check-game-version.ps1` reports **OK** — Valheim 1.0.15,
 network 40, Steam build 25390630, `assembly_valheim.dll` SHA-256 `59f53fb5…33adb1`, matching the KB
-stamp. No file outside the scratchpad was written; both save locations were opened read-only.
+stamp. No file outside the working folder was written; both save locations were opened read-only.
 
 **Re-derived and confirmed unchanged:** the `GetStableHashCode` two-lane structure and all five hash
 samples (recomputed: `a`→372029373, `abc`→1099313834, `HHcLC5acQt`→298112588, `""`→371857150,
@@ -1525,4 +1525,4 @@ probabilities as proxies for `GetPregenerationHeight`; `Random.Range` with `min 
 remain the engineer's surrogate measurements and were checked only for internal arithmetic
 consistency, not re-measured.
 
-*checked by an independent reviewer*
+*independently checked*

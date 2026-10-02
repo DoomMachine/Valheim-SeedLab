@@ -13,7 +13,7 @@ minimap cache for world `asdasdasd`, seed −1772362158).
 | `Mathf.PerlinNoise1D(float)` | **SETTLED** by disassembly: identical to `PerlinNoise(x, 0f)`. Valheim never calls it (0 occurrences of the name in `assembly_valheim.dll` and `assembly_utils.dll`). |
 | `Random.InitState`, the xorshift128 step, `Random.state` layout | **SETTLED.** Disassembled; the seven world-gen draws for seed −1772362158 were confirmed by brute-force recovery from the biome map (§6.1, Test B/C). |
 | `Random.Range(int,int)`, incl. the full-range case | **SETTLED** (same evidence; the full-range form is draws 5 and 6 of the ctor). |
-| `Random.Range(a,a)` for ints (no draw) | **Disassembly only** — corrected (reviewer): no world-gen call site passes `min == max` to the int overload, so §6.1 does not touch it. The code path is unambiguous (`0x54940`→`0x54980`, state untouched); dumper item **D7** confirms it at runtime. |
+| `Random.Range(a,a)` for ints (no draw) | **Disassembly only** — corrected: no world-gen call site passes `min == max` to the int overload, so §6.1 does not touch it. The code path is unambiguous (`0x54940`→`0x54980`, state untouched); dumper item **D7** confirms it at runtime. |
 | `Random.value`, `Random.Range(float,float)` | **Read from the disassembly, not yet executed.** Both are a handful of instructions on the RNG core, which *is* proven. No contradicting evidence, but no runtime sample exists yet. Dumper items **D5–D7**. |
 | `Random.insideUnitCircle` | **Structure settled** (2 draws, `cos`/`sin`, `sqrt`). Open: whether the host CRT's `cosf`/`sinf` are bit-identical to .NET's `(float)Math.Cos(double)`. Dumper item **D8**. Variant list in §5.2. |
 | CPU-dependence of `cosf`/`sinf` (FMA/AVX2 path) | **Unverified:** both functions branch on a runtime CPU-feature flag at `.data` rva `0x1FA9F70`. Only affects `insideUnitCircle`. |
@@ -22,7 +22,7 @@ Nothing else in world generation calls a **Unity** native function: `Mathf.Sin/C
 wrappers over `System.Math` (`UnityEngine.Mathf.Sin` = `(float)Math.Sin(f)`, `Mathf.Cos`, `Mathf.Sqrt`,
 `Mathf.Pow` = `(float)Math.Pow(f,p)` — decompiled `UnityEngine.Mathf`), and `FastNoise` is pure C#.
 
-**Corrected (reviewer):** that is not the same as "no native maths outside these two". `System.Math.Sin`,
+**Corrected:** that is not the same as "no native maths outside these two". `System.Math.Sin`,
 `Cos`, `Atan2`, `Pow` and `Exp` are themselves runtime-provided (Mono's libm inside the game, CoreCLR's
 on the tool side); only `Math.Sqrt` is IEEE-exact and therefore safe. Valheim's world generation calls
 them on the **biome** path, not just on the river path:
@@ -157,7 +157,7 @@ At **file offset `0x1BE0BC0`** (rva `0x1BE1DC0`, `.rdata`) there are **512 `int3
 programmatically: every value is in `0..255`, the first 256 are a permutation of `0..255`, and entries
 256..511 repeat entries 0..255 exactly. It is Ken Perlin's reference table, starting
 `151, 160, 137, 91, 90, 15, 131, 13, …` and ending `… 215, 61, 156, 180`.
-**Corrected (reviewer):** two different hashes were being conflated. Recomputed from the file:
+**Corrected:** two different hashes were being conflated. Recomputed from the file:
 
 * SHA-256 of the **first 1024 bytes** (the 256 distinct entries, little-endian `int32`):
   `ea3cf748ef2eed46c8d386654894efb4a0aca29e79789c2d3a4a27b57352cecd`
@@ -169,7 +169,7 @@ The 256 values printed in §4.1 were compared entry by entry with the file: iden
 **It is the table `NoiseNormalized` uses.** `PerlinNoise::Noise(float,float)` at rva `0x0054B170` loads
 it with `lea r11, [rip+0x1696C40]` at rva `0x0054B179` (→ `0x1BE1DC0`), and index 2315 of the icall
 table points at the wrapper that calls that function (§1.1). This closes the "Unverified: whether this
-table is the one NoiseNormalized uses" item in the knowledge base.
+table is the one NoiseNormalized uses" item in the skills at the time.
 
 ### 3.2 `PerlinNoise::NoiseNormalized` — the normalisation constants
 
@@ -310,12 +310,12 @@ f = (float)(long)(new_s3 & 0x7FFFFF) * 1.1920930376163765E-07f
 return (1f - f) * maxInclusive + f * minInclusive
 ```
 
-Three consequences, all of which were open questions in the knowledge base:
+Three consequences, all of which were open questions in the skills at the time:
 
 1. The interpolation is **reversed**: `f == 0` yields `max`, `f == 1` yields `min`. The naive
    `min + f*(max-min)` is a different float expression and will differ in the last bits.
 2. There is **no `min == max` check** — `Range(20f, 20f)` **does consume a draw**, and it does **not**
-   always return exactly `20f`. **Corrected (reviewer):** enumerating all 2²³ possible draw values and
+   always return exactly `20f`. **Corrected:** enumerating all 2²³ possible draw values and
    evaluating `(1f−f)*20f + f*20f` in float32, **209 715 of 8 388 608 (2.50 %) give `0x41A00001`
    (20.000002) instead of `0x41A00000`** — e.g. the draw `r = 2` (`f = 2·0x34000001`). The first draw of
    `InitState(744350289)`'s third call happens to land on 20f exactly (§6.2 D6), which is what the
@@ -475,7 +475,7 @@ public static class UnityPerlin
 }
 ```
 
-Sanity check for the table (**corrected (reviewer)** — the two hashes were the wrong way round; both
+Sanity check for the table (**corrected** — the two hashes were the wrong way round; both
 recomputed from `UnityPlayer.dll` and from this listing): `Perm256` written back as 256 little-endian
 `int32` (1024 bytes) hashes to `ea3cf748ef2eed46c8d386654894efb4a0aca29e79789c2d3a4a27b57352cecd`, and
 the doubled 512-entry form (2048 bytes, i.e. the array `P` this code builds, and the full blob at file
@@ -591,7 +591,7 @@ public sealed class UnityRandom
 Already closed by the **ground truth in §6.1** (not §6.2, which is the dumper that has not run yet) and
 needing no dumper: the `InitState` recurrence, the xorshift shifts and order, `Range(int,int)`'s modulo
 mapping, `Range(int,int)` on the full `int` range, and the draw ordering in `WorldGenerator..ctor`.
-**Corrected (reviewer):** the **no-draw case of `Range(a,a)` for ints is not** closed by §6.1 — no
+**Corrected:** the **no-draw case of `Range(a,a)` for ints is not** closed by §6.1 — no
 world-generation call site passes `min == max` to the int overload, so no runtime artefact depends on
 it. It rests on the disassembly alone (`jge 0x54940` / `jle 0x54980` → `mov eax, r10d; ret` without
 touching the state; §3.4), which is unambiguous, and on dumper item **D7**.
@@ -610,12 +610,12 @@ and writes three gzip-compressed buffers next to the world. For world `asdasdasd
 * `cacheMinimapMask` — gzip → 2048 × 2048 `Color32` (`Minimap.GetMaskColor`).
 * `cacheMinimapHeight` — gzip → 8 388 608 bytes = 2048 × 2048 **half-floats** (`Mathf.FloatToHalf(biomeHeight)`).
 
-**Newly determined prefab constants** (the knowledge base lists these as unverified; note the
+**Newly determined prefab constants** (the skills listed these as unverified when this was written; note the
 *decompiled* field initialisers are `m_textureSize = 256` and `m_pixelSize = 64f` — the prefab overrides
 both, so do not take the values from the source):
 `Minimap.m_textureSize = 2048` (from the buffer sizes) and `Minimap.m_pixelSize = 12f` — derived from
 the height buffer and `WorldGenerator.waterEdge = 10500f` (decomp line 174).
-**Corrected (reviewer):** the floor is *not* at 875 px on all four axes. Re-measured on the row/column
+**Corrected:** the floor is *not* at 875 px on all four axes. Re-measured on the row/column
 through the centre: the `−400 m` floor (the buffer minimum is exactly `−400.0`) first appears at
 `j−1024 = +875` and `i−1024 = +875`, but at `j−1024 = −876` and `i−1024 = −876`. That asymmetry *is* the
 half-pixel offset, and it is what pins the mapping: `|k·p + p/2| > 10500` first at `k = +875` and
@@ -673,12 +673,12 @@ consumes exactly one step. The full predicted sequence for this seed is
 off0=-6080  off1=4986  off2=-7704  off3=-59  riverSeed=744350289  streamSeed=952983356  off4=718
 ```
 
-*Reproducing this:* the harness lives in `…\scratchpad\probe\val\` (`Natives.cs`, `Program.cs`,
+*Reproducing this:* the harness lives in `<work>\probe\val\` (`Natives.cs`, `Program.cs`,
 `Ref.cs`, `Range.cs`, `TestD.cs`, `Variants.cs`, `Extra.cs`, `val.csproj`;
 `dotnet run -c Release -- [<none>|ref|range|d|v|x]`, where no argument runs Tests A/B/C, `d` runs
-Test D, `v` runs the variant table, `ref`/`x` print the reference vectors). `…\scratchpad\probe\`
+Test D, `v` runs the variant table, `ref`/`x` print the reference vectors). `<work>\probe\`
 also holds the static-analysis scripts (`pe.py`, `ds.py`, `func.py`, `callers.py`, `riprefs.py`,
-`ptrto.py`, `strs.py`; capstone was installed for `ds.py`) and `…\scratchpad\probe\spectest\` holds
+`ptrto.py`, `strs.py`; capstone was installed for `ds.py`) and `<work>\probe\spectest\` holds
 §4's code extracted from this document and compiled. Everything opens the game and save files
 read-only. **Never write to `worlds_local` or the Steam Cloud save folder — Steam Cloud syncs them.**
 
@@ -703,7 +703,7 @@ restore it last, and write a single file. **Record every float as its 32-bit pat
 | **D9** | `InitState(0)`, 100 000 × `Random.value` discarding results, then `Random.state` and one more `value` | 1 | long-run drift: catches any carry/ordering error that only shows after thousands of draws |
 | **D10** | `InitState(-1772362158)`, then 16 × `Range(-10000,10000)`; also `Range(int.MinValue,int.MaxValue)` from `InitState(7)` | 17 | regression corpus for the int path |
 | **D11** | `WorldGenerator.instance`'s private `m_offset0..4`, `m_riverSeed`, `m_streamSeed` by reflection | 7 | independent confirmation of §6.1's recovered offsets |
-| **D12** (added, reviewer) | `Math.Sin`, `Math.Cos`, `Math.Atan2`, `Math.Pow` bit patterns from inside the game: `Sin/Cos` at `{0, 1e-8, 0.5, 1, 2, 3.14159265, 6.2831853, 20.0, 1000.0, −7.5}`, `Atan2(wx,wy)` at the 7×7 `wx,wy` grid of **D3**, `Pow(x,1.5)` and `Pow(x,4.0)`/`Pow(x,1.4)`/`Pow(x,2.0)` at `x ∈ {0.05, 0.28, 0.5, 0.71, 0.9, 1.0}`, plus `WorldGenerator.WorldAngle(wx,wy)` itself over that grid | ~120 | closes risk 7: Mono's libm vs .NET 10's. `WorldAngle` reaches `GetBiome`, so this is a biome-correctness item, not a river-only one |
+| **D12** (added) | `Math.Sin`, `Math.Cos`, `Math.Atan2`, `Math.Pow` bit patterns from inside the game: `Sin/Cos` at `{0, 1e-8, 0.5, 1, 2, 3.14159265, 6.2831853, 20.0, 1000.0, −7.5}`, `Atan2(wx,wy)` at the 7×7 `wx,wy` grid of **D3**, `Pow(x,1.5)` and `Pow(x,4.0)`/`Pow(x,1.4)`/`Pow(x,2.0)` at `x ∈ {0.05, 0.28, 0.5, 0.71, 0.9, 1.0}`, plus `WorldGenerator.WorldAngle(wx,wy)` itself over that grid | ~120 | closes risk 7: Mono's libm vs .NET 10's. `WorldAngle` reaches `GetBiome`, so this is a biome-correctness item, not a river-only one |
 
 Edge cases that must be in the **D1** probe list (input → expected, as produced by the port in §4):
 
@@ -758,7 +758,7 @@ D6   InitState(744350289):
      The very first draw is the sharpest R1 discriminator: variant (a) gives 0x42BF3B2E (95.615585)
      for Range(60f,100f); variant (b) `min + f*(max-min)` gives 0x4280C4D2 (64.384415) on the same
      draw. They differ by 31, not by an ULP - one dumped value decides it.
-     [corrected (reviewer): variant (b) is 0x4280C4D2, not 0x4280C4D3. 0x4280C4D3 (64.38442) is what
+     [corrected: variant (b) is 0x4280C4D2, not 0x4280C4D3. 0x4280C4D3 (64.38442) is what
      variant (a) returns for the *reversed* call Range(100f,60f) on that draw; the two are 1 ULP apart
      and the dumper comparison must use the exact bits.]
 D8   InitState(12345); insideUnitCircle x4 (x,y bits) =
@@ -789,7 +789,7 @@ update, re-run `tools\check-game-version.ps1`, re-hash `UnityPlayer.dll`, and re
   `GetDeepNorthHeight` (`wx*0.1f`, `wx*0.4f`, decomp lines 1351–1352) also feed raw, signed world
   coordinates. A `floor()`-based Perlin flips the forest mask on 20 % of the tested pixels
   (35 970 / 180 857, §5.1 P7) — a different-looking but wrong world.
-* **`GetForestFactor` is `(pos * 0.01f) * 0.4f`, not `pos * 0.004f`.** **Corrected (reviewer):** the
+* **`GetForestFactor` is `(pos * 0.01f) * 0.4f`, not `pos * 0.004f`.** **Corrected:** the
   earlier shorthand `pos*0.004f` is a real trap. `WorldGenerator.GetForestFactor` (decomp lines
   1412–1415) is `float num = 0.4f; return DUtils.Fbm(pos * 0.01f * num, 3, 1.6f, 0.7f);` — two separate
   float32 multiplies. Folding them into `0.004f` changes the last bit of the argument for 118 031 of
@@ -815,7 +815,7 @@ update, re-run `tools\check-game-version.ps1`, re-hash `UnityPlayer.dll`, and re
   times per invocation and is used by the location-placement filters. It consumes **20 draws** per call.
   Verified: `WorldGenerator.GetTerrainDelta` line 1420 `int num = 10;` and line 1427
   `Random.insideUnitCircle * radius`; `ZoneSystem.GetTerrainDelta` lines 2703/2710 are the same code.
-* **Added (reviewer) — a second native-maths surface this document does not cover.** Besides the two
+* **Added — a second native-maths surface this document does not cover.** Besides the two
   Unity functions specified here, world generation depends on `System.Math` transcendentals, which are
   runtime code, not managed arithmetic: `WorldGenerator.WorldAngle` (line 881,
   `Math.Atan2` + `Math.Sin`) feeds every `GetBiome` distance band, `GetBaseHeight` line 1142 and the
@@ -862,7 +862,7 @@ update, re-run `tools\check-game-version.ps1`, re-hash `UnityPlayer.dll`, and re
    full 32-bit equality. They are sharp — they reject a reciprocal multiply — but they do not *prove*
    bit-equality at every input. The only cheap way to close that gap completely is **D2** (a dense grid
    of raw `Mathf.PerlinNoise` bit patterns from the dumper), which costs one game launch. Do it.
-7. **Added (reviewer) — `System.Math` transcendentals (Mono vs .NET 10).** `Math.Sin`, `Math.Cos`,
+7. **Added — `System.Math` transcendentals (Mono vs .NET 10).** `Math.Sin`, `Math.Cos`,
    `Math.Atan2`, `Math.Pow` are not part of this spec's two functions but are native in both runtimes
    and are **unproven** to agree bit for bit. Blast radius, by call site (§7):
    * `WorldAngle` (`Atan2` then `Sin`) → the Mistlands / Plains / BlackForest / Meadows **distance
@@ -877,13 +877,13 @@ update, re-run `tools\check-game-version.ps1`, re-hash `UnityPlayer.dll`, and re
 
 ---
 
-## 9. Open questions (added by the reviewer)
+## 9. Open questions
 
 1. **`System.Math` transcendentals.** Nothing proves Mono's `sin`/`cos`/`atan2`/`pow` inside Valheim
    equal .NET 10's for every argument world generation uses. Closed by dumper item **D12**. This is the
    only unresolved item that can move a **biome** boundary (via `WorldGenerator.WorldAngle`, decomp
    line 881).
-2. **Test B/C's brute-force counts were only partly re-derived.** The reviewer independently confirmed
+2. **Test B/C's brute-force counts were only partly re-derived.** An independent check confirmed
    `m_offset0 = −6080`: there are exactly **62 619** Swamp pixels in the cache and all of them satisfy
    `PerlinNoise((float)(−6080+wx)·0.0010000000474974513, …) > 0.6f`, while the neighbouring candidate
    `−6079` already fails on 55 of every third Swamp pixel. The uniqueness counts claimed for
@@ -900,14 +900,14 @@ update, re-run `tools\check-game-version.ps1`, re-hash `UnityPlayer.dll`, and re
    `l0 ≠ −0f`. Valheim never calls it (0 occurrences of the string in `assembly_valheim.dll` and
    `assembly_utils.dll`, re-checked), so it is not worth closing further.
 5. **`cosf`/`sinf` CPU-path dependence (R5) is still open** and can only be settled by running **D8**
-   on two machines with different CPUs. The reviewer confirmed the branch exists in both functions
+   on two machines with different CPUs. An independent check confirmed the branch exists in both functions
    (`cmp dword ptr [rip+…], 0` → `.data` rva `0x1FA9F70` at `0x01A531A4` and `0x01A54574`).
 
 ---
 
 ## Verification
 
-Checked by an independent reviewer against `UnityPlayer.dll`
+Independently checked against `UnityPlayer.dll`
 SHA-256 `4D161E15D8CCDB32EB73262E7A3E0A66F8C175B50A38E22AE5B0E8FB9AEA98F3` (34 413 480 bytes,
 FileVersion `6000.0.75.2503836`, ProductVersion `6000.0.75f1 (26349cd2a5c8)` — all three re-read from
 the file), `UnityEngine.CoreModule.dll` SHA-256 `FBA3821A…19D990` (1 801 128 bytes), the decompiled
@@ -954,7 +954,7 @@ mismatches** (the counts match this document exactly), and the reciprocal-multip
 re-derived; P2, P3, P5–P9 were not re-run and stand on the original run (P7's mechanism — the abs fold —
 is however confirmed directly from the `andps` in the disassembly).
 
-**Corrected in place** (each with its evidence, marked "Corrected (reviewer)" at the site):
+**Corrected in place** (each with its evidence, marked "Corrected" at the site):
 §0 "nothing else touches native code"; §2.2's wrong cross-reference; §3.1 and §4.1's permutation-table
 hashes (the 1024-byte and 2048-byte hashes were conflated and reversed); §3.2's "byte-identical" 1-D
 wrapper; §3.4's claim that `Range(20f,20f)` returns exactly `20f` (**false** — 209 715 of the 8 388 608
@@ -968,4 +968,4 @@ offset); §6.2 D6's variant-(b) value (`0x4280C4D2`, not `0x4280C4D3`); §7's `p
 **Still unverified after this review:** everything in §9, plus the original R1–R5 items, which need the
 dumper. Nothing in §4's reference implementation was found to be wrong.
 
-*— checked by an independent reviewer*
+*— independently checked*

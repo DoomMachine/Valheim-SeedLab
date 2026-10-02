@@ -70,14 +70,14 @@ measurement code (copied 2026-09-23 while another workflow was editing `src\Seed
 cannot be invalidated mid-run by an edit):
 
 ```
-scratchpad\searchanalysis\study\src\WorldGen        <- src\SeedLab.WorldGen       (verbatim)
-scratchpad\searchanalysis\study\src\Render          <- src\SeedLab.Render         (verbatim)
-scratchpad\searchanalysis\study\src\SearchMetrics   <- src\SeedLab.Search\Metrics\*.cs
+<work>\searchanalysis\study\src\WorldGen        <- src\SeedLab.WorldGen       (verbatim)
+<work>\searchanalysis\study\src\Render          <- src\SeedLab.Render         (verbatim)
+<work>\searchanalysis\study\src\SearchMetrics   <- src\SeedLab.Search\Metrics\*.cs
                                                         + Execution\Permutation.cs (verbatim)
-scratchpad\searchanalysis\study\Program.cs          <- the harness (new)
+<work>\searchanalysis\study\Program.cs          <- the harness (new)
 ```
 
-Nothing under `E:\SteamLibrary\steamapps\common\Valheim\_ModSource\SeedLab` was written to. Build
+Nothing under `<SeedLab folder>` was written to. Build
 output went to the scratch tree only.
 
 **Caveat on the line citations.** They were read from the tree between 04:30 and 05:00 on
@@ -152,7 +152,7 @@ One `MeasurementPlan` requesting everything the search can ask for, over the who
 - land area within 500 m / 1 km / 2 km / 5 km;
 - area within 2 km and 5 km, total and for Swamp / Mountain / Plains / Mistlands within 5 km.
 
-Raw output: `scratchpad\searchanalysis\study.csv`, 2,560 x 9 = 23,040 rows, one per (seed, grid).
+Raw output: `<work>\searchanalysis\study.csv`, 2,560 x 9 = 23,040 rows, one per (seed, grid).
 
 ---
 
@@ -170,7 +170,7 @@ Prefer the *ratios* and the *per-seed work counts*, which contention does not ch
 
 ### 2.2 Per-seed CPU, from the study run (all nine grids, same seeds, same conditions)
 
-`scratchpad\searchanalysis\study.log`:
+`<work>\searchanalysis\study.log`:
 
 | grid | cells | in-world cells | sample + all metrics, ms/seed CPU | vs G12 |
 |---|---|---|---|---|
@@ -465,7 +465,7 @@ derived from a sample is the best available, and the tool must say so on the rec
 
 ## 6. Islands - the topological case, measured
 
-512 seeds, seven grids, `scratchpad\searchanalysis\islands.csv`. This run also answers a question the
+512 seeds, seven grids, `<work>\searchanalysis\islands.csv`. This run also answers a question the
 spec left open: `07-features.md` section 2.2 carries a five-row table measured on **one** seed by
 decimating G12 indices, with the caveat *"the table is 'G12 decimated by k', not G_r as defined
 above... **Unverified:** the same table evaluated on the section 2.1 G_r points."* The study below is
@@ -500,7 +500,7 @@ Over 512 seeds on the proper G_r points:
 | G192 | 2.0 % | -16 | 16.4 % | 25.7 % | -62 .. +26 |
 | G384 | 0.0 % | -97 | **50.0 %** | 55.8 % | -138 .. -49 |
 
-**This is a correction to the knowledge base.** +-5 % was one seed; the true spread at G24 is
+**This is a correction to the spec (`07-features.md` section 2.2).** +-5 % was one seed; the true spread at G24 is
 +-8.6 % at p95 and +-14.7 % at worst, and it is *not* monotone in the grid (G96 is better than G48).
 At A_min = 1 km2 the picture is the same: exact match 19.3 % at G24, 7.2 % at G384.
 

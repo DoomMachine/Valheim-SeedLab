@@ -38,7 +38,7 @@ namespace SeedLab.Runtime.Storage
     /// <summary>
     /// The ONE wipeable place SeedLab is allowed to leave things: checkpoints, rendered maps, web tile
     /// caches, run manifests, per-process scratch, the self-test stamp and the session log. Nothing is written beside the
-    /// user's working directory by default - that was defect 5 and defect 6 in the audit.
+    /// user's working directory by default.
     ///
     /// <para>Per OS: <c>%LOCALAPPDATA%\SeedLab</c> on Windows, <c>$XDG_CACHE_HOME/seedlab</c> (or
     /// <c>~/.cache/seedlab</c>) on Linux, <c>~/Library/Caches/SeedLab</c> on macOS, with

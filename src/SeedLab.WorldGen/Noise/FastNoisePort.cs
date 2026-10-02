@@ -40,7 +40,7 @@ namespace SeedLab.WorldGen.Noise
         /// constant is therefore (double)0.45f = 0.449999988079071044921875, whose shortest round-trip
         /// form is 0.44999998807907104. Writing the cast rather than the digits is deliberate: the
         /// literal 0.449999988079071 is a DIFFERENT double, one ulp low, and shifts every cell centre
-        /// (01-worldgen-core.md 1.4, corrected by the reviewer).
+        /// (01-worldgen-core.md 1.4, corrected).
         /// </summary>
         private const double CellularJitter = (double)0.45f;
 

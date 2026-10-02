@@ -20,7 +20,7 @@ namespace SeedLab.SearchTests
     /// COUNT against the threshold. A query asking <c>present &gt;= 2</c> was then accepted by the
     /// probe as soon as two probe cells of the biome were found, while the exact pass can never return
     /// more than 1. Every such seed was a false positive, and the probe is accept-only so nothing
-    /// downstream re-checked it. The query file is scratchpad\verify3\present2.json, reproduced
+    /// downstream re-checked it. The query file is &lt;work&gt;\verify3\present2.json, reproduced
     /// verbatim below.</item>
     /// <item><b>T0 static analysis refusing a satisfiable 'between'.</b>
     /// <c>StaticAnalysis.TooMuchArea</c> compared the goal's <i>upper</i> end against the biome's
@@ -31,7 +31,7 @@ namespace SeedLab.SearchTests
     /// </summary>
     public static class SoundnessRegressions
     {
-        /// <summary>scratchpad\verify3\present2.json, the query that exposed bug 1.</summary>
+        /// <summary>&lt;work&gt;\verify3\present2.json, the query that exposed bug 1.</summary>
         private const string Present2 = @"{ ""version"":1,""defs"":1,""name"":""present>=2 probe soundness"",""world"":{""gen_version"":2},
   ""search"":{""order"":""shuffled"",""key"":""0xAAAABBBBCCCCDDDD"",""grid"":192,""keep"":10,""block_size"":256},
   ""goals"":[
@@ -47,17 +47,17 @@ namespace SeedLab.SearchTests
    {""id"":""mist"",""target"":""biome:Mistlands"",""metric"":""present"",""test"":""at_least"",""value"":1,""importance"":""must""}
   ]}";
 
-        /// <summary>scratchpad\verify3\adv.json - a 'between' every seed satisfies. T0 must let it run.</summary>
+        /// <summary>&lt;work&gt;\verify3\adv.json - a 'between' every seed satisfies. T0 must let it run.</summary>
         private const string BetweenSatisfiable = @"{ ""version"":1,""defs"":1,""name"":""adv"",""world"":{""gen_version"":2},
   ""search"":{""order"":""shuffled"",""key"":""0x11"",""grid"":192,""keep"":10,""block_size"":64},
   ""goals"":[{""id"":""g"",""target"":""biome:Meadows"",""metric"":""area"",""test"":""between"",""value"":1000000,""max"":1000000000000,""importance"":""must""}]}";
 
-        /// <summary>scratchpad\verify3\adv2.json - the LOW end is above the cap, so T0 must still refuse it.</summary>
+        /// <summary>&lt;work&gt;\verify3\adv2.json - the LOW end is above the cap, so T0 must still refuse it.</summary>
         private const string BetweenImpossible = @"{ ""version"":1,""defs"":1,""name"":""adv2"",""world"":{""gen_version"":2},
   ""search"":{""order"":""shuffled"",""key"":""0x11"",""grid"":192,""keep"":10,""block_size"":64},
   ""goals"":[{""id"":""g"",""target"":""biome:Meadows"",""metric"":""area"",""test"":""between"",""value"":1000000000000,""max"":2000000000000,""importance"":""must""}]}";
 
-        /// <summary>scratchpad\verify3\adv3.json - the plain 'at_least' form of the same impossibility.</summary>
+        /// <summary>&lt;work&gt;\verify3\adv3.json - the plain 'at_least' form of the same impossibility.</summary>
         private const string AtLeastImpossible = @"{ ""version"":1,""defs"":1,""name"":""adv3"",""world"":{""gen_version"":2},
   ""search"":{""order"":""shuffled"",""key"":""0x11"",""grid"":192,""keep"":10,""block_size"":64},
   ""goals"":[{""id"":""g"",""target"":""biome:Meadows"",""metric"":""area"",""test"":""at_least"",""value"":400000000,""importance"":""must""}]}";

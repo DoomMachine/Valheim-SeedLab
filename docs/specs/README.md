@@ -2,7 +2,7 @@
 
 Fifty-two source files in this project cite these documents by name and section —
 `07-features.md section 2.2`, `01-worldgen-core.md`, `05-validation.md section 1.5`. They were
-written into an agent session's scratchpad, which does not survive the session, so they were
+written in a temporary working folder that was later cleared, so they were
 **copied here on 2026-09-23** to stop those citations dangling. This is a copy, not the working
 original: if a spec and the code disagree, the code and the goldens are the evidence.
 
@@ -26,10 +26,9 @@ decompiled files (`decomp\*.cs`) are not included in this repository. Regenerate
 tools\decompile.ps1 -Type WorldGenerator
 ```
 
-`scratchpad\…` and `<work>\…` name the working folder these investigations ran in; its files are not
-part of this repository, except the studies later copied to `docs\studies\`. "The knowledge base" and
-the skills the specs cite are the author's Claude Code skills; a scrubbed snapshot of them is published
-in `.claude\` at the repository root.
+`<work>\…` names the working folder these investigations ran in; its files are not part of this
+repository, except the studies later copied to `docs\studies\`. "The published skills" ("the KB" in older passages) are
+the skills the specs cite; a snapshot of them is published in `.claude\` at the repository root.
 
 The game build these specs describe is Valheim 1.0.15, `assembly_valheim.dll`
 sha256 `59f53fb5…33adb1` — the stamp of `data\1.0.15-59f53fb5\`. SeedLab is now verified against

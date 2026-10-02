@@ -358,7 +358,7 @@ namespace SeedLab.SearchTests
         // names are left exactly as they were, the last-save error says the checkpoint is still a
         // resume point, and the resume after release gives the uninterrupted run's bytes.
         //
-        // Review of 2026-09-24, measured against the built vseed: the first save of such a run could not
+        // Measured against the built vseed: the first save of such a run could not
         // read the checkpoint, took that for "it names no snapshot", and wrote the first generation -
         // which was the one the checkpoint named - before the checkpoint's own rename failed. The pair
         // was left out of step (a checkpoint at block 617 naming a snapshot now at block 722) and the
@@ -490,7 +490,7 @@ namespace SeedLab.SearchTests
         // it, and once it is let go, the next flush writes it with every closed segment - even with no
         // segment open, which is when nothing else would until the run's finish.
         //
-        // Review of 2026-09-24: each rotation spent the quick schedule's ~1.6 s on the held manifest
+        // Each rotation spent the quick schedule's ~1.6 s on the held manifest
         // with the collector standing still (31.3 s for a 6,000-seed run against 2.1 s unheld), and a
         // flush with no segment open returned before writing it, so a kill after the last rotation left
         // a manifest missing closed segments. Rotating at every record here keeps no segment open.

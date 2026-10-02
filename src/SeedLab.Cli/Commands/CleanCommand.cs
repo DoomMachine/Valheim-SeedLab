@@ -12,7 +12,7 @@ namespace SeedLab.Cli.Commands
     /// <summary>
     /// <c>vseed clean</c> - what SeedLab is using on disk, and removal of the parts it no longer needs.
     ///
-    /// <para><b>Why it exists (audit defect 7).</b> The tool writes in exactly one place by design -
+    /// <para><b>Why it exists.</b> The tool writes in exactly one place by design -
     /// the cache root - but nothing ever told the user where that was, how big it had become, or that
     /// the 49 MB dumper folder still sitting in their profile is now a duplicate of <c>data\</c>. A
     /// tool that quietly accumulates and has no way to be asked about it is the thing the whole disk
@@ -198,7 +198,7 @@ Options:
             /// The table's "this run" column, from what really happened to the category's files: "removed"
             /// only when every one went. It used to be decided by the category alone, so the logs row said
             /// "removed" above "freed 0 B" and "kept ...\vseed.log - this command's own session log"
-            /// (review of 2026-09-24) - and this command always keeps its own log.
+            /// - and this command always keeps its own log.
             /// </summary>
             public string Outcome(string category, bool dryRun)
             {

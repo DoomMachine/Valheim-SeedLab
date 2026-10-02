@@ -110,7 +110,7 @@ namespace SeedLab.Search.Execution
         /// A refusal: a size the user gave differs from the checkpoint this run resumes. It names the
         /// checkpoint file (<see cref="ResumePoint.Path"/>) for the user to delete, and a front end that
         /// re-flows it to a terminal keeps that path on one line: it can hold a space ("C:\Users\First
-        /// Last\..."), and split at it the path could not be copied (review of 2026-09-24).
+        /// Last\..."), and split at it the path could not be copied.
         /// </summary>
         public string? Refusal;
 

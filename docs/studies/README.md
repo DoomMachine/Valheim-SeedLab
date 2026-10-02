@@ -11,7 +11,7 @@ it.
 
 | file | what it settles |
 |---|---|
-| `commitment-register.md` | every commitment made to the user, with its state |
+| `commitment-register.md` | every commitment made during development, with its state |
 | `decisions-1.md`, `decisions-2.md` | the decisions taken on output safety, sampling, metrics and counts |
 | `checker-design.md` | the feasibility checker: every refuse / vacuity / rarity / combination rule, its tier and its evidence class |
 | `constraint-atlas.md` | the per-type geometry the checker reasons about, validated against 36,829 real instances with 0 violations |

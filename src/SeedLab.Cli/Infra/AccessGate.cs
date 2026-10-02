@@ -117,7 +117,7 @@ namespace SeedLab.Cli.Infra
             if (Ok) return null;
 
             // The same test decides what a real run does and what --dry-run says it would do: it used to
-            // say "would stop here and ask" to a script whose real run is refused (review of 2026-09-24).
+            // say "would stop here and ask" to a script whose real run is refused.
             bool nobodyToAsk = json || Console.IsInputRedirected;
             if (dryRun)
             {

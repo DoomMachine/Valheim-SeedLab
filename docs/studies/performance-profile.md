@@ -4,8 +4,8 @@ Measured 2026-09-23 on DoomMachine's machine: **AMD Ryzen 7 9800X3D**, 8 physica
 96 MiB L3, 64 GB, Windows 10 19045, .NET 10.0.12. Everything below is a number I watched being
 produced; where I could not measure something I say so.
 
-**This is an analysis. Nothing under `_ModSource\SeedLab` was modified.** The port was copied to
-`…\scratchpad\searchanalysis\work*\src\` and instrumented there; four trees were built:
+**This is an analysis. Nothing under `<SeedLab folder>` was modified.** The port was copied to
+`<work>\searchanalysis\work*\src\` and instrumented there; four trees were built:
 
 | tree | what it is |
 |---|---|

@@ -73,7 +73,7 @@ namespace SeedLab.RuntimeTests
                       "a starting server reaps the stale ones and leaves the live one", reaped + " reaped");
                 File.Delete(junk);
 
-                // ---- owner-only on Linux and macOS, from the start (review of 2026-09-25) -------------------
+                // ---- owner-only on Linux and macOS, from the start -------------------
                 if (OperatingSystem.IsWindows())
                 {
                     check(true, "the registry file is owner-only on Linux and macOS (SKIPPED on Windows: no file modes)", "");
@@ -94,7 +94,7 @@ namespace SeedLab.RuntimeTests
                 check(ServerRegistry.Unregister(mine), "deleting it twice is harmless", "");
 
                 // ---- a left-over file whose pid now belongs to a process this account cannot inspect ---------
-                // (review of 2026-09-25): it used to count as a live server - "already running", --stop that
+                // It used to count as a live server - "already running", --stop that
                 // could not stop it, an uninstall that refused - because an unreadable start time meant "alive".
                 CacheRoot root2 = CacheRoot.Open(new CacheRootOptions { Override = Path.Combine(tempRoot, "root2") });
                 string serve2 = Path.Combine(root2.Path, "serve");

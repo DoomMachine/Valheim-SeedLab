@@ -392,7 +392,7 @@ namespace SeedLab.Search.Execution
             // screen query that screens nothing). The CLI re-rendered its own copy at print time
             // (SearchCommand.GridLine); the web page printed Preflight.Plan as it stood, so its plan
             // block said "screen at G24 with a 1 % margin, then re-measure every survivor at G12"
-            // beside a verdict row saying "measure once at G12" (review of 2026-09-24, large-continents
+            // beside a verdict row saying "measure once at G12" (large-continents
             // at 300 seeds). Re-rendered here, once, every front end prints the grid the run has. A
             // raised session comes through here too (the recursion), and Describe does not read
             // RaisedFrom, so the line the raise branch inserts its notes under is already the true one.

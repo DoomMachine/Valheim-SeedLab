@@ -1,7 +1,7 @@
 # SeedLab — the commitment register
 
-Every substantive thing discussed with DoomMachine in this session, with its status. Written by Claude
-from the conversation itself, because no agent has the transcript. This is the checklist for the user's
+Every substantive thing discussed with DoomMachine during development, with its status, written down
+from the conversation itself. This is the checklist for the author's
 item 1: *"Check the entire conversation for all discussions and ensure that everything that was talked
 about (accepted, rejected, modified, etc) has been either implemented or rejected."*
 
@@ -51,11 +51,11 @@ be demonstrated is BUILT-NOT-WIRED or PENDING, however complete the code looks.
 | 3.6 | Stop-at-ceiling by default; evict as a confirmed opt-in | BUILT-NOT-WIRED → IN FLIGHT | `--on-limit stop|evict`; evict needs y/N or `--yes` |
 | 3.7 | Time-based flush and checkpoint (a hard kill lost 300 s of work) | SHIPPED (library) | 27 hard kills, every resume byte-identical |
 | 3.8 | Truncate a torn results file back to `results_length` on resume | SHIPPED (library) | |
-| 3.9 | Checkpoints out of the working directory, deleted on completion | IN FLIGHT | audit defect 5 — still writing `vseed-search.ckpt` to CWD as of the last verification |
-| 3.10 | `vseed map` must stop writing `map-<seed>.png` into the CWD | IN FLIGHT | audit defect 6 |
-| 3.11 | `vseed clean` + disk-use report + "the dumper folder is redundant" | IN FLIGHT | audit defect 7 |
+| 3.9 | Checkpoints out of the working directory, deleted on completion | IN FLIGHT | still writing `vseed-search.ckpt` to CWD as of the last verification |
+| 3.10 | `vseed map` must stop writing `map-<seed>.png` into the CWD | IN FLIGHT | — |
+| 3.11 | `vseed clean` + disk-use report + "the dumper folder is redundant" | IN FLIGHT | — |
 | 3.12 | Warn before a run that matches ~100 % of seeds | IN FLIGHT | `balanced`/`custom` used to; presets now carry must-haves |
-| 3.13 | A tripwire test that fails if a command writes outside the allowed set | PENDING | audit defect 9 — "a tripwire that is not tested is a suggestion" |
+| 3.13 | A tripwire test that fails if a command writes outside the allowed set | PENDING | "a tripwire that is not tested is a suggestion" |
 | 3.14 | Slices with per-slice flush/checkpoint/cleanup | SHIPPED (library) | nothing per-seed is ever written, so discarded seeds leave nothing to collect |
 
 ## 4. Estimates, metrics and honesty

@@ -21,7 +21,7 @@ namespace SeedLab.Web.Search
     /// replaying individual results and counts how many it dropped, rather than growing without limit on
     /// a run that matches millions of seeds. The live stream is unaffected.</para>
     ///
-    /// <para><b>Only results are capped</b> (review of 2026-09-24). The cap used to apply to every
+    /// <para><b>Only results are capped</b>. The cap used to apply to every
     /// event, so a run that had streamed 4,000 results and tables - measured, under three minutes of a
     /// cheap query - dropped its later <c>warning</c> events and its <c>done</c> from replay: a tab that
     /// rejoined never saw the warnings or the failed last save, and, with no <c>done</c> to end on,

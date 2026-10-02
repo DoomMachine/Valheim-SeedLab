@@ -26,7 +26,7 @@ namespace SeedLab.Cli.Infra
     /// handler, because Windows ends the process when the handler returns - about five seconds after a
     /// window is closed. A press while a stop is already under way stops nothing twice and says so.</para>
     ///
-    /// <para><b>Signing out and shutting down, on Windows</b> (review of 2026-09-25). They never reach a console
+    /// <para><b>Signing out and shutting down, on Windows</b>. They never reach a console
     /// handler here: Windows does not send CTRL_LOGOFF_EVENT or CTRL_SHUTDOWN_EVENT to a console program that
     /// has loaded user32.dll, and vseed serve has (Microsoft's SetConsoleCtrlHandler documentation, which
     /// recommends a hidden window instead). So the server keeps one - <see cref="SessionEndWindow"/> - whose
@@ -226,7 +226,7 @@ namespace SeedLab.Cli.Infra
         }
 
         /// <summary>
-        /// What stopping SeedLab costs each running search, said for THAT search (review of 2026-09-25): one
+        /// What stopping SeedLab costs each running search, said for THAT search: one
         /// with a resume point is saved, and the command that continues it is printed whole; one in a funnel's
         /// first stage has none, and loses its work. One sentence for all of them used to promise a saved part
         /// and a command, and then print no command and say the work was lost.
@@ -446,7 +446,7 @@ namespace SeedLab.Cli.Infra
         /// <summary>
         /// Keeps a window vseed owns alone open, so what it says last can be read: "Press Enter to close this
         /// window." After a failure, and after a stop that left a search's checkpoint - the command that
-        /// continues it is on the screen, and a window that vanished took it along (review of 2026-09-25).
+        /// continues it is on the screen, and a window that vanished took it along.
         /// Only when someone could press it (stdin is a keyboard), and for ten minutes at most - a window
         /// left waiting must not become the permanently running thing this whole design exists to prevent.
         /// </summary>

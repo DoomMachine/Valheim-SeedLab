@@ -83,7 +83,7 @@ namespace SeedLab.Runtime.Storage
     /// <para><b>The address must be a SeedLab address.</b> A record is read only when its <c>url</c> is
     /// exactly <c>http://127.0.0.1:&lt;port&gt;</c> with the file's own port: the url is handed to the
     /// browser (a second <c>vseed serve</c> opens it) and asked for the server's state, and a file that
-    /// named a program or another host would otherwise be opened or asked (review of 2026-09-25).</para>
+    /// named a program or another host would otherwise be opened or asked.</para>
     ///
     /// <para><b>Reading never writes.</b> <see cref="Scan"/> creates nothing and deletes nothing, so
     /// <c>--status</c> and <c>--stop</c> can be run against a cache root that an uninstall has just
@@ -98,7 +98,7 @@ namespace SeedLab.Runtime.Storage
     /// and only them: a page cannot read this file, and cannot read the page's own copy of it either (there
     /// is no CORS). It does NOT keep out a program running on this computer, or another account on it: the
     /// page reads the token from <c>GET /api/meta</c> on 127.0.0.1, and anything that can reach 127.0.0.1
-    /// can do the same (review of 2026-09-25). On Linux and macOS the folder and the file are created
+    /// can do the same. On Linux and macOS the folder and the file are created
     /// readable by their owner only, which keeps the file private and nothing more.</para>
     /// </summary>
     public static class ServerRegistry

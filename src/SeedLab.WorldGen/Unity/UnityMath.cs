@@ -5,7 +5,7 @@ namespace SeedLab.WorldGen.Unity
 {
     /// <summary>
     /// UnityEngine.Vector2, transcribed from the IL of the shipped UnityEngine.CoreModule
-    /// (scratchpad/probe/Vector2.il.txt), not from ILSpy's C#.
+    /// (&lt;work&gt;/probe/Vector2.il.txt), not from ILSpy's C#.
     ///
     /// <para><b>The x*x + y*y sums are accumulated in DOUBLE, not float.</b> In every one of
     /// get_magnitude, get_sqrMagnitude, Distance, SqrMagnitude and op_Equality the two `mul`s and the

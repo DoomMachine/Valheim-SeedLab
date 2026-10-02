@@ -35,7 +35,7 @@ Credits: see the root README - created and tested by DoomMachine; code, tests an
    `SoughtPrefabNames`, each saying FOUND or NOT FOUND in as many words.
 6. Quit. Delete `dumper.enable`. The plugin is inert on the next launch; move its folder out of
    `BepInEx\plugins\` when you want it gone entirely (the author keeps retired copies in
-   `_ModSource\_retired\`).
+   an archive folder).
 
 Nothing here touches your worlds or characters, and none of it can run while anyone is connected.
 
@@ -141,8 +141,8 @@ tree.
 
 **The build that fixed it** (2026-09-23): `SeedLab.Dumper.dll` sha256
 `ad9386ea78e15bcbd5d135a63897dfdb7b0d4e3342825a7ee3b8fe205ff6b89d`, `SeedLab.Contracts.dll` sha256
-`3c2c1f2460a400e8a3f6af0bdcba6a4c930210e8d74d2ef68bfc684e1ac39e74`; the affected copy is in
-`_ModSource\_retired\DoomMachine-SeedLabDumper-20260923`.
+`3c2c1f2460a400e8a3f6af0bdcba6a4c930210e8d74d2ef68bfc684e1ac39e74`; the affected copy is kept in
+the author's archive.
 
 **Current build** (2026-09-24, run 6 - adds the `teleports[]` / `vegvisirs[]` walk and
 `waymarksCaptured`): `SeedLab.Dumper.dll` sha256
@@ -739,7 +739,7 @@ one rather than the game being new — check `SEEDLAB_DATA_DIR` before re-dumpin
 1. Delete `dumper.enable` — the plugin is inert immediately on the next launch, and applies no
    patches at all.
 2. Move `BepInEx\plugins\DoomMachine-SeedLabDumper\` out of `BepInEx\plugins\` - move, don't delete
-   (the author keeps retired copies in `_ModSource\_retired\`).
+   (the author keeps retired copies in an archive folder).
 3. `BepInEx\config\DoomMachine.SeedLabDumper.cfg` can stay or go; it does nothing on its own.
 
 Your dumps in `%USERPROFILE%\AppData\valheim-dumper\` are untouched by any of this. So are your worlds

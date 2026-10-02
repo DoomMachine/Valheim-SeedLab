@@ -3,7 +3,7 @@
 Target: Valheim **1.0.15**, network 40, world file version **41**, worldGenVersion **2**.
 Every numeric claim below is either quoted from a decompiled member (`Type.Member`) or measured on this
 machine by decompressing the real files. Measurements were produced by throwaway scripts in
-`…\scratchpad\probe\` (`minimap_probe.py`, `minimap_probe2.py`, `minimap_probe3.py`, `names2.py`,
+`<work>\probe\` (`minimap_probe.py`, `minimap_probe2.py`, `minimap_probe3.py`, `names2.py`,
 `files.py`; re-measured independently by `rv_cache.py`, `rv_geom.py`, `rv_stats.py`, `rv_mask.py`,
 `rv_saves.py`, `rv_fch.py` — see the Verification section at the end). Anything that could not be
 settled is marked **Unverified:** with what would settle it.
@@ -232,7 +232,7 @@ That brackets **12.0** and excludes every other plausible value (the competing h
 hold, and would also contradict `waterEdge = 10500f`). Corroboration: the count of `-400` pixels is
 **1 788 980** = 42.6526 % against the analytic 1 - π·10500²/24576² = 42.6536 %; and
 `public const float c_pixelSize = 12f` *(AltBiomeWorldData line 18 / decompiled)*.
-This upgrades the knowledge base's "**Unverified:** `Minimap.m_pixelSize = 12`" to verified.
+This upgraded the skills' "**Unverified:** `Minimap.m_pixelSize = 12`" to verified.
 (Both bracket figures and both percentages re-measured independently in `rv_cache.py`; they hold
 bit-for-bit on the hold-out world too, which shares the same `u*` bracket.)
 
@@ -578,7 +578,7 @@ location prefabs) plus ASCII tokens from the 799 files in `SoftRef\Bundles\`, ha
 `GetStableHashCode`, and look the save's hashes up. Result on `asdasdasd`:
 **176 of 176 distinct hashes resolved, each by exactly one candidate string** (`names2.py`).
 Cross-checks that the mapping is real, not coincidence: `StartTemple = -1544986047` and
-`Eikthyrnir = -316818231` match the knowledge base's independently recorded values, and 175 of the 176
+`Eikthyrnir = -316818231` match the published skills' independently recorded values, and 175 of the 176
 names are themselves files under `Assets/world/Locations/`.
 
 Examples (hash → name, instances, placed): `-1544986047` StartTemple 1/1; `-316818231` Eikthyrnir 3/1;
@@ -589,7 +589,7 @@ Examples (hash → name, instances, placed): `-1544986047` StartTemple 1/1; `-31
 `-547648914` Runestone_Meadows 100/6; `259975600` Dolmen01 100/6; `663260127` Dolmen02 100/8;
 `-902823814` Dolmen03 50/4; `1705714113` ShipSetting01 100/6; `-1587608451` StoneCircle 25/2;
 `-119798395` Vendor_BlackForest 10/0; `1221023754` Hildir_camp 10/0; `103120399` BogWitch_Camp 10/0.
-The full table is `…\scratchpad\probe\names2.txt`.
+The full table is `<work>\probe\names2.txt`.
 
 The shipped tool should still prefer the **dumper plugin's** `ZoneSystem.m_locations` table (name,
 hash, biome mask, quantity, all the filters), because that is what location *reproduction* needs
@@ -647,7 +647,7 @@ and the restore, so reflecting the seven fields after construction is safe.
 
 ---
 
-**T1b — `Mathf.PerlinNoise` conformance.** (Added by review; the spec previously did not list this as a
+**T1b — `Mathf.PerlinNoise` conformance.** (Added; the spec previously did not list this as a
 risk at all.) Every biome boundary and every terrain height in the game goes through
 ```csharp
 [MethodImpl(MethodImplOptions.InternalCall)]
@@ -877,7 +877,7 @@ fixture, so a refactor that silently changes the decoder is caught in one second
 
 ● exercised · ◐ exercised indirectly (through the offsets) · ○ deliberately excluded
 
-*Added by review:* the matrix has no column for **T1b**, which is the only direct test of
+*Added:* the matrix has no column for **T1b**, which is the only direct test of
 `Mathf.PerlinNoise`; every ● in the `Mathf.PerlinNoise` row above is an *indirect* test that cannot
 localise a noise error. Add a T1b column with ● on `Mathf.PerlinNoise` and run it before T2. Likewise
 `UnityEngine.Vector2.magnitude` deserves its own row (exercised by T2b, and by T3 through `FindLakes`),
@@ -1057,7 +1057,7 @@ hashes, 49 placed, y ∈ [15.062, 409.420], 1 394 below 30 m, `max |pos − 64·
 [48.6, 10 307.0], then the same 40-byte tail (eventTimer 46.900883, empty name, the identical 15-byte
 `0b 05 80 7b 22 6c 69 73 74 22 3a 5b 5d 7d 03` payload).
 
-This closes the knowledge base's "**Unverified:** the `RandEventSystem.Save` and
+This closed the skills' "**Unverified:** the `RandEventSystem.Save` and
 `PersistentEventSystem.Save` layouts inside `.db2`".
 
 ### 5.3 `_main.<N>.chunks` and `*.chunk`
@@ -1222,7 +1222,7 @@ conditions *(Minimap.TryLoadMinimapTextureData)* and a mismatch means the cache 
 2. **Unverified — and the biggest one in the document:** `Mathf.PerlinNoise` is a native extern
    (`[FreeFunction("PerlinNoise::NoiseNormalized")]`, `[NativeHeader("Runtime/Math/PerlinNoise.h")]`).
    Every biome boundary and every height depends on it and there is no managed implementation to copy.
-   Resolution: T1b — a dumped conformance table, run before T2. *(Added by review; the original spec
+   Resolution: T1b — a dumped conformance table, run before T2. *(Added; the original spec
    did not list this.)*
 3. **Unverified:** `Mathf.FloatToHalf`'s rounding mode (native extern). Resolution: T7.
 4. **Settled, was wrongly listed as unverified:** `Color`→`Color32` is
@@ -1271,7 +1271,7 @@ conditions *(Minimap.TryLoadMinimapTextureData)* and a mismatch means the cache 
 
 ---
 
-## 7. Open questions (added by review)
+## 7. Open questions
 
 These are things this review could not settle from evidence. They are separate from the **Unverified:**
 items already listed in §6, which are known-native or known-missing dependencies.
@@ -1413,4 +1413,4 @@ and its seven draws; `Mathf.PerlinNoise`; `Mathf.FloatToHalf`'s rounding; the `P
 framing; the `.chunk` ZDO body layout), everything in §7, and §6 items 8-13, which are risks rather
 than facts. §6 item 4 (`Color` -> `Color32` ties) is now **settled** and no longer needs the dumper.
 
-*checked by an independent reviewer*
+*independently checked*

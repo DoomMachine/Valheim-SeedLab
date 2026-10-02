@@ -2340,7 +2340,7 @@ function searchQuery() {
     // blocks). It used to fall back to a fixed 64, which the query file then carried as a size the
     // user had "given". Anything typed is sent as typed, so a 0 gets the server's refusal - as
     // '--block-size 0' and 'block_size: 0' do - instead of quietly meaning "automatic" (`|| null`
-    // turned 0 into null, review of 2026-09-24).
+    // turned 0 into null).
     blockSize: blockSizeBox(),
     order: $('qOrder').value,
     rangeStart: parseInt($('qFrom').value, 10) || -2147483648,
@@ -2813,7 +2813,7 @@ function openStream() {
   // The browser reconnects a stream that closed without a done event, for as long as the tab is open.
   // That is right while the run goes on (a dropped connection), and wrong once the server has no such
   // run (it was restarted, or has since run newer searches) or the run has ended: then the stream is
-  // closed and the run's last state drawn from GET /api/search/{id} (review of 2026-09-24).
+  // closed and the run's last state drawn from GET /api/search/{id}.
   es.onerror = () => { checkLostStream(es); };
 }
 

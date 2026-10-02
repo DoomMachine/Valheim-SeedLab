@@ -1,8 +1,8 @@
 # SeedLab search & resource design — the user's decisions (master spec)
 
 Decided by DoomMachine on 2026-09-23 across several rounds of questions. These are decisions, not
-suggestions. An earlier copy of this file lived in `scratchpad\diskaudit\` and was destroyed when an
-agent cleaned up its scratch folder — keep this one at the scratchpad root.
+suggestions. An earlier copy of this file lived in a temporary working folder and was lost when that folder
+was cleaned up; this copy is the one that counts.
 
 The user's framing, in their words: *"we can have unrestricted functionality without the possibility of
 crashing a file system or filling up a drive"*, *"this needs to work as intended"*, and *"any questions

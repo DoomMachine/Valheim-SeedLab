@@ -70,7 +70,7 @@ Rules that matter for a port:
 - **All arithmetic is unchecked 32-bit and wraps.** The IL uses plain `add`/`mul`/`shl`, not the
   `.ovf` forms *(IL dump of `StringExtensionMethods.GetStableHashCode`; recorded in
   `valheim-worldgen/references/seeds-and-world-files.md` §2.1)*. Implement in `uint`/`unchecked`.
-  *Re-verified by review, directly from the assembly* (Mono.Cecil over
+  *Re-verified directly from the assembly* (Mono.Cecil over
   `valheim_Data/Managed/assembly_utils.dll`): the method body is
   `ldc.i4 5381 / stloc.0 / stloc.1 / … / shl / add / callvirt String::get_Chars / xor / … /
   ldc.i4 1566083941 / mul / add / ret` — every `add`, `mul` and `shl` is the plain opcode, no
@@ -91,8 +91,8 @@ Rules that matter for a port:
 
 | Input | `GetStableHashCode` | Note |
 |---|---|---|
-| `"MWd8eV6svz"` | **-1772362158** | the user's real world `asdasdasd`; matches the `m_seed` stored in its `_main.N.fwl2` |
-| `"hnBd9gJf2G"` | **319486907** | the real second save `testworldclaude`; matches the `m_seed` stored in its `_main.N.fwl2` |
+| `"MWd8eV6svz"` | **-1772362158** | the development world `asdasdasd` (a throwaway test world); matches the `m_seed` stored in its `_main.N.fwl2` |
+| `"hnBd9gJf2G"` | **319486907** | the second saved world `testworldclaude`; matches the `m_seed` stored in its `_main.N.fwl2` |
 | `"j"` | **372029384** | single character — exercises the `L = 1` path, where `num2` is never touched |
 | `"StartTemple"` | **-1544986047** | prefab hash seen in a real `.db2` |
 | `"Eikthyrnir"` | **-316818231** | prefab hash seen in a real `.db2` |
@@ -103,7 +103,7 @@ Rules that matter for a port:
 | `"Abc"` | 1099314826 | case sensitivity |
 | `"abc "` | -1139976598 | trailing space is significant |
 
-> *Corrected by review.* `"j"` was previously labelled "second real save on this machine". It is not a
+> *Corrected.* `"j"` was previously labelled "second real save on this machine". It is not a
 > save: `valheim_saves.py worlds` lists exactly two worlds on this machine — `asdasdasd` (seed text
 > `MWd8eV6svz`) and `testworldclaude` (seed text `hnBd9gJf2G`) — and
 > `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\worlds_local\` contains **no `.fwl2` at all**
@@ -114,13 +114,13 @@ Rules that matter for a port:
 > (`valheim_saves.py locations asdasdasd`, 12314 location instances).
 
 Four independent implementations agree on all of these: the C# port in
-`scratchpad/probe/seedspace`, a throwaway Python port written for this task, the pre-existing
+`<work>/probe/seedspace`, a throwaway Python port written for this task, the pre-existing
 `valheim-worldgen/scripts/valheim_saves.py seed "<text>"` (`stable_hash`; that script's `seed`, `worlds`
 and `locations` commands have counterparts in `vseed hash`, `vseed worlds` and
 `vseed world <name> --locations` today - the last only counts; the per-instance comparison is the
 location gate),
-and the reviewer's
-independent C# port in `scratchpad/probe/review/rv`. The two real-save values are ground truth read
+and a second
+independent C# port in `<work>/probe/review/rv`. The two saved-world values are ground truth read
 off disk.
 
 ---
@@ -240,13 +240,13 @@ Because `33·h ≡ h (mod 32)` and the XOR only touches bits 0–6:
 hash_lane(c1..cn) & 31  ==  (5381 ^ c1 ^ c2 ^ ... ^ cn) & 31
 ```
 
-*Verified on 200,000 random strings* (by the author, and again independently by the reviewer over
+*Verified on 200,000 random strings* (by the author, and again independently over
 200,000 random 1–10 character strings drawn from U+0001..U+CFFF — 0 failures of either the lane
 recomposition or this invariant). Useful as a cheap self-test of a port, and as a 5-bit
 pre-filter when brute-forcing lane values. (Note the low 5 bits of the A62 alphabet are exactly
 `{1..26}` — `0` and `27..31` are never produced by a single character. **A59 is `{1..14, 16..26}`**:
 `15` is missing because A59 drops `o` (0x6F & 31 = 15) and `O` (0x4F & 31 = 15), while `1` (0x31 &
-31 = 17) is still covered by `Q`/`q`. *Computed by review from the two alphabet literals.*)
+31 = 17) is still covered by `Q`/`q`. *Computed from the two alphabet literals.*)
 
 ---
 
@@ -257,7 +257,7 @@ seed, `m_worldGenVersion` and the `m_menu` flag — never the seed text
 *(`valheim-worldgen/references/world-generator.md` §1; `WorldGenerator..ctor`)*. The seed text is
 carried in the `.fwl2` and sent to clients for display only.
 
-**Re-verified by review, exhaustively rather than by citation** (Mono.Cecil scan over every `*.dll` in
+**Re-verified exhaustively rather than by citation** (Mono.Cecil scan over every `*.dll` in
 `valheim_Data/Managed`, listing every method whose body references the field). This was the author's
 own stated risk #4; it is now closed:
 
@@ -351,7 +351,7 @@ The union over **every** length 1..6 (not just L = 6) is still incomplete:
 **A62: 3,310,424,872 (77.0768 %), missing 984,542,424. A59: 3,213,389,948 (74.8176 %), missing
 1,081,577,348.**
 
-> **Corrected by review — the `≤5` row.** It previously read "≤ 138,431,358", which is the *single-length*
+> **Corrected — the `≤5` row.** It previously read "≤ 138,431,358", which is the *single-length*
 > `|E_3|·|E_2|` product for L = 5 and is **not** an upper bound on the union over L = 1..5; the true value
 > exceeds it. Exact unions, computed independently: **A62 = 142,962,629 (3.3286 %)**, **A59 = 136,877,472
 > (3.1869 %)**; the corresponding sum-of-per-length-products upper bounds are 142,962,687 and 136,877,524.
@@ -359,9 +359,9 @@ The union over **every** length 1..6 (not just L = 6) is still incomplete:
 > does not belong in a spec.
 
 **Completeness at L = 7 does not imply completeness at L = 8, 9, 10.** The level sets are not nested:
-the reviewer checked directly that `E_3 ⊄ E_4` for both alphabets and `E_4 ⊄ E_5` for A62, so
+an independent check showed directly that `E_3 ⊄ E_4` for both alphabets and `E_4 ⊄ E_5` for A62, so
 `E_4 + K·E_3` and `E_4 + K·E_4` are genuinely different sumsets. Each of L = 8, 9, 10 was therefore
-computed separately, and the reviewer reproduced all six of those "complete, missing = 0" results
+computed separately, and an independent check reproduced all six of those "complete, missing = 0" results
 independently (see §11).
 
 > **Answer to "what is the shortest length L such that every int32 is reachable": L = 7**, for both
@@ -390,7 +390,7 @@ Four independent computations, all on the real hash:
    2³²-bit bitmap rotated by `t` bits; OR successive rotations of the `E_5` bitmap by `K·o` and count.
    L = 9 filled after **859** shift values (A62) / 858 (A59); L = 10 after **877** (A62) / **889**
    (A59) — i.e. fewer than a thousand odd-lane values are enough to cover the whole int space at
-   those lengths. *Unverified by review: these shift counts depend on the order in which `E_co` is
+   those lengths. *Unverified: these shift counts depend on the order in which `E_co` is
    enumerated and were not reproduced. They are a performance observation, not a result — the
    **completeness** of L = 9 and L = 10 was reproduced by an unrelated method (§11) and does hold.*
 4. **Per-target witness search** (independent check of the L = 7 claim). For 16,777,216 *contiguous*
@@ -439,16 +439,16 @@ Expected iterations = `2³² / |E_5|` = **68.5** (A59) / 67.0 (A62), because a r
 with probability `|E_5|/2³²`. No meet-in-the-middle table over 2³² is needed: **membership in `E_5`
 is decided by the same backtracking that produces the characters**, using only `E_1..E_4`.
 
-> *Corrected by review:* the A59 figure was **68.6**; `4,294,967,296 / 62,658,885 = 68.545`, so it is
-> **68.5**. (A62: `4,294,967,296 / 64,105,880 = 66.998` → 67.0, as stated.) Measured over 200,000
-> targets by the reviewer: 68.61 probes/target (A59), consistent with 68.545.
+> *Corrected:* the A59 figure was **68.6**; `4,294,967,296 / 62,658,885 = 68.545`, so it is
+> **68.5**. (A62: `4,294,967,296 / 64,105,880 = 66.998` → 67.0, as stated.) Re-measured over 200,000
+> targets: 68.61 probes/target (A59), consistent with 68.545.
 
-### 6.1.1 **Corrected by review: this sampler does not produce game-looking seeds**
+### 6.1.1 **Corrected: this sampler does not produce game-looking seeds**
 
 The loop above returns **the first** branch `reconstruct_lane` finds, and it scans the alphabet in
 order at every backtracking step. The odd lane is drawn uniformly, so odd (1-indexed: 2nd, 4th, …)
 positions are uniform — but the five **even** positions are not, because they are whatever the greedy
-descent happened to settle on. Measured by the reviewer, 200,000 targets, A59, all re-hash-verified:
+descent happened to settle on. Measured, 200,000 targets, A59, all re-hash-verified:
 
 | position | χ² vs uniform (df = 58) | most common | least common |
 |---|---|---|---|
@@ -515,10 +515,10 @@ membership test. **Use the low-memory variant** — 8 MB and 0.08 ms is nothing,
 512 MB allocation from the tool.
 
 Shortest-length distribution over 1000 uniformly random int32 targets (A62): **length 4: 1,
-length 5: 32, length 6: 744, length 7: 223.** Checked against §5 by the reviewer: the exact
+length 5: 32, length 6: 744, length 7: 223.** Checked against §5: the exact
 expectations are `union(≤4)/2³²` = 0.102 % → 1.0, `[union(≤5) − union(≤4)]/2³²` = 3.23 % → 32.3,
 `[union(≤6) − union(≤5)]/2³²` = **73.75 %** → 737.5, and `1 − union(≤6)/2³²` = **22.92 %** → 229.2.
-The sample matches all four within noise (σ ≈ 14 at L = 6). **Corrected by review:** the parenthetical
+The sample matches all four within noise (σ ≈ 14 at L = 6). **Corrected:** the parenthetical
 previously called these "predicted `|E_ce|·|E_co| / 2³²` Poisson rates". At L = 4 and L = 5 the raw
 ratio and a Poisson estimate do coincide with the exact value to two figures, but at L = 6 neither
 gives 76.1 %: the raw ratio is `4,357,848,196 / 2³²` = **101.46 %** (meaningless as a probability) and
@@ -573,7 +573,7 @@ m_newWorldDone.interactable = m_newWorldName.text.Length >= 5;    // the *name*,
   one call to `TMP_InputField::set_characterLimit` in the whole game:
   `assembly_valheim.dll :: TextInput.Show` (the in-game text-entry popup — sign text, and so on).
   **Nothing in code sets the limit on `m_newWorldSeed`.**
-  *Re-run by review over every `*.dll` in `valheim_Data/Managed`, widened to the other five relevant
+  *Re-run over every `*.dll` in `valheim_Data/Managed`, widened to the other five relevant
   setters. The complete result set is three call sites:* `assembly_valheim.dll :: TextInput.Show →
   set_characterLimit`, and `Unity.TextMeshPro.dll :: TMP_InputField.SetToCustom` and
   `TMP_InputField.SetToCustomIfContentTypeIsNot → set_contentType` (TMP's own internals). **No game
@@ -582,7 +582,7 @@ m_newWorldDone.interactable = m_newWorldName.text.Length >= 5;    // the *name*,
   (§7.3) and are never changed at runtime.
 - There is **no length constraint on the seed anywhere downstream**: `World.SaveWorldFWLData` writes
   `zPackage.Write(m_seedName)` as a `BinaryWriter` string (7-bit length prefix + UTF-8), so any
-  length and any Unicode round-trips through the `.fwl2`. *(Verified by review: `ZPackage.Write(string
+  length and any Unicode round-trips through the `.fwl2`. *(Verified: `ZPackage.Write(string
   data)` is `m_writer.Write(data)` on a `System.IO.BinaryWriter`, and `ZPackage.ReadString()` is
   `m_reader.ReadString()` — the standard 7-bit-encoded length prefix plus UTF-8, with no length cap.)*
   The only other uses of `m_seedName` are display (`FejdStartup.UpdateWorldList`), `printseeds`
@@ -621,7 +621,7 @@ Consequences, all evidence-backed:
 - **Typing and pasting both end at `Append(char)` → `Insert`**, so a paste longer than the limit is
   **silently truncated**, character by character — it is not rejected, and no error is shown
   (`Insert` simply does nothing once `text.Length >= characterLimit`).
-- **Corrected by review: the two routes do *not* share a filter.** Pasting is
+- **Corrected: the two routes do *not* share a filter.** Pasting is
   `KeyPressed` case `KeyCode.V` with Ctrl → `Append(clipboard)`, i.e. the `Append(string)` overload
   above, which admits `c >= ' '` plus `'\t'`, `'\r'`, `'\n'`. Typing is the fall-through at the end of
   `KeyPressed`: `char c = evt.character;` → `if (!multiLine && (c == '\t' || c == '\r' || c == '\n'))
@@ -636,7 +636,7 @@ Consequences, all evidence-backed:
   `'\t'`/`'\n'` (typing); and `TMP_InputField.SetText`, the only thing the `text` setter calls, runs
   `value = value.Replace("\0", string.Empty)` before assigning `m_Text` (programmatic set). A
   NUL-terminated seed text is unreachable from the UI.
-- **Setting `.text` programmatically bypasses the limit** — but **corrected by review: not for the
+- **Setting `.text` programmatically bypasses the limit** — but **corrected: not for the
   reason given.** The original text claimed `set_text` "is not among the three members that read
   `characterLimit`". The first half is right — the `text` property setter is just `{ SetText(value); }`
   and `SetText` never mentions `characterLimit` — but `LateUpdate` *does* truncate:
@@ -651,7 +651,7 @@ Consequences, all evidence-backed:
   branch. **Net effect is as originally stated** (`m_newWorldSeed.text = World.GenerateSeed()` lands
   all 10 characters whatever the prefab limit is), but a port or a mod that re-enables the soft
   keyboard would see truncation, so record the real reason.
-- *Also noted by review:* `GuiInputField` has one further `characterLimit` reader of its own,
+- *Also noted:* `GuiInputField` has one further `characterLimit` reader of its own,
   `OpenSteamKeyboard` (Big Picture mode), which forwards `(characterLimit > 0) ? characterLimit :
   int.MaxValue` to `SteamUtils.ShowGamepadTextInput`; the text that comes back is written into
   `m_Text` by `ValidateVirtualKeyboardText` **without any `characterLimit` check**. Irrelevant to
@@ -670,7 +670,7 @@ build (`m_CharacterLimit` does not appear as a string in `resources.assets`, `gl
 `sharedassets0.assets` or `level0`), the UI lives in the `StreamingAssets/SoftRef` asset bundles, and
 no Unity asset parser (UnityPy/AssetsTools) is available here — so the value **could not be read
 offline**. Do not assume 10.
-*Spot-checked by review:* `grep -a -c m_CharacterLimit` returns **0** for all five files
+*Spot-checked:* `grep -a -c m_CharacterLimit` returns **0** for all five files
 (`resources.assets` 79,228,948 B, `globalgamemanagers` 205,668 B, `globalgamemanagers.assets`
 342,960 B, `sharedassets0.assets` 13,444 B, `level0` 1,408 B). The negative evidence holds; the value
 remains **Unverified**.
@@ -739,7 +739,7 @@ character output from §6 is strictly safer and is always available (§5).
   use the **uniform** sampler of §6.1.1; the greedy one produces a visibly skewed character
   distribution at even positions.
 - `SmallLevels` must be accompanied by the multiplicity tables `w_1..w_4` (one byte per entry,
-  max `w_4 = 27`) if §6.1.1 is used. *Added by review.*
+  max `w_4 = 27`) if §6.1.1 is used.
 
 ---
 
@@ -751,7 +751,7 @@ character output from §6 is strictly safer and is always available (§5).
   tooling needs (8 MB; exactly `62 + 2,097 + 66,014 + 2,058,466 = 2,126,639` entries = 8,506,556 B =
   8.11 MiB for A62, and `59 + 2,048 + 64,726 + 2,016,367 = 2,083,200` entries = 8,332,800 B =
   7.95 MiB for A59). Build it once at startup: ~0.5 s single-threaded, trivially cacheable to disk.
-  *Added by review:* if §6.1.1's uniform sampler is used, build the parallel multiplicity tables
+  *Added:* if §6.1.1's uniform sampler is used, build the parallel multiplicity tables
   `w_1..w_4` in the same pass — one `byte` per level entry (`max w_4 = 27`, so a byte is enough),
   +2.0 MiB per alphabet. `w_5` is never stored; it is `sum over c of w_4((E ^ c) * 1041204193)`.
 - A 2³²-bit bitmap is 2²⁶ `ulong`s = 512 MB; it fits in a single .NET array (no
@@ -800,11 +800,11 @@ used read-only, as ground truth for the hash.
 - The coverage results are for `GetStableHashCode` as shipped in **1.0.15**. The function has been
   stable for years and also names every prefab (changing it would invalidate every save), but
   `tools\check-game-version.ps1` should gate this document like any other decompiled fact.
-  *Checked by review, 2026-09-22:* the knowledge base's `check-game-version.ps1` (the same check
+  *Checked, 2026-09-22:* the published skills' `check-game-version.ps1` (the same check
   `tools\check-game-version.ps1` makes) exits 0 — Valheim 1.0.15, network 40,
   Steam build 25390630, `assembly_valheim.dll` sha256 `59f53fb5…33adb1`, matching the KB stamp.
 
-### Open questions (added by review)
+### Open questions
 
 - **Whether a pasted tab / CR / LF can actually survive into a seed text.** `Append(string)` lets
   `'\t'`, `'\r'`, `'\n'` through to `Append(char)` (§7.2), and `Append(char)` only filters them if
@@ -817,7 +817,7 @@ used read-only, as ground truth for the hash.
   including `-` or `_`) **must recompute `max w_5` before reusing the constant** — too small a
   constant silently breaks the rejection sampler's uniformity; too large only costs speed. A safe
   implementation computes `max w_5` at table-build time instead of hard-coding it.
-- **Whether per-position uniformity is the right acceptance test for §6.1.1.** The reviewer measured
+- **Whether per-position uniformity is the right acceptance test for §6.1.1.** An independent check measured
   the ten marginal character distributions (χ² 39–77, df = 58). The argument that the full joint
   distribution is uniform over the preimage set is analytic (uniform odd lane × acceptance ∝ `w_5(E)`
   × uniform-by-weight descent), not measured; a joint test over 10 positions is not feasible at this
@@ -830,8 +830,8 @@ used read-only, as ground truth for the hash.
 Independent adversarial check of this document, 2026-09-22, against Valheim **1.0.15** (network 40,
 Steam build 25390630, `assembly_valheim.dll` sha256 `59f53fb5…33adb1`; `check-game-version.ps1`
 exit 0). Everything below was re-derived from the decompiled sources and from a **separate** C# port
-written for this review — `scratchpad/probe/review/rv` (`Program.cs`, `rv.csproj`, .NET 10) — that
-shares no code with `scratchpad/probe/seedspace`. Its level sets are built by 2³²-bit-bitmap dedupe
+written for this review — `<work>/probe/review/rv` (`Program.cs`, `rv.csproj`, .NET 10) — that
+shares no code with `<work>/probe/seedspace`. Its level sets are built by 2³²-bit-bitmap dedupe
 rather than by sorting, and its sumset engine iterates the *even* side against a sorted `K·E_co` with
 a per-chunk saturation exit. Decompiler output came from
 `.claude\skills\valheim-modding\scripts\decompile.ps1`; assembly scans from Mono.Cecil over
@@ -850,7 +850,7 @@ a per-chunk saturation exit. Decompiler output came from
   (`ParseServerArguments` handles `-world -name -port -password -savedir -public -logfile -crossplay
   -instanceid -backups -backupshort -backuplong -saveinterval -resetmodifiers -preset -modifier
   -setkey` and nothing else).
-- **All hash vectors in §1.1**, plus the two real saves read off disk read-only, plus `StartTemple`
+- **All hash vectors in §1.1**, plus the two saved worlds read off disk read-only, plus `StartTemple`
   and `Eikthyrnir` re-confirmed present in `asdasdasd\_main.3.db2`.
 - **§2's 853,058,371,866,181,866** and the A59 total 519,929,111,116,169,700.
 - **Every `|E_n|`, both alphabets, n = 0..5** — reproduced exactly (62 / 2,097 / 66,014 / 2,058,466 /
@@ -900,8 +900,8 @@ a per-chunk saturation exit. Decompiler output came from
    `IsValidChar` → `Append(char)`; pasting is `Append(string)` → `Append(char)`. Consequence added: a
    pasted tab/CR/LF can reach `Insert` in a single-line field, a typed one cannot. NUL is still blocked
    on all routes — a third one was added (`SetText` strips `"\0"`).
-7. **§1.1 — `"j"` was labelled "second real save on this machine".** There is no such save; the real
-   second save is `testworldclaude` / `hnBd9gJf2G` → 319486907, now added as a vector. The hash value
+7. **§1.1 — `"j"` was labelled "second real save on this machine".** There is no such save; the second
+   saved world is `testworldclaude` / `hnBd9gJf2G` → 319486907, now added as a vector. The hash value
    for `"j"` was correct.
 8. **§7.1 — the `m_seedName` usage list was incomplete** (omitted `GetPublicPasswordError`; "the
    PlayFab server registration" stands for four `ZNet` members). Replaced with the exhaustive list.
@@ -928,6 +928,6 @@ a per-chunk saturation exit. Decompiler output came from
 
 Nothing in the game install, in `worlds_local\`, or in the Steam-Cloud save folder was written to.
 All save access was read-only via `valheim_saves.py`; all scratch work lives in
-`scratchpad/probe/review\`.
+`<work>/probe/review\`.
 
-*— checked by an independent reviewer*
+*— independently checked*

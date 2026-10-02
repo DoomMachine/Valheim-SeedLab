@@ -177,7 +177,7 @@ namespace SeedLab.RuntimeTests
                       "and neither vseed.log nor vseed-prev.log is touched", "");
             }
 
-            // A vseed.log that holds two sessions (review of 2026-09-25): when vseed-prev.log could not be
+            // A vseed.log that holds two sessions: when vseed-prev.log could not be
             // replaced, a session appends below the last one, so the FIRST "written by process" line names a
             // writer that has ended and the live one is further down. It used to be read from the first line
             // only: the live session was taken for "another program", and the next one waited out the

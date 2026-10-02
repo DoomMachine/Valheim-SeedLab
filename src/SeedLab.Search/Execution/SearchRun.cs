@@ -217,7 +217,7 @@ namespace SeedLab.Search.Execution
         /// it open without letting others read it - so its block is not known here. It is a resume
         /// point all the same: once it can be read again, <c>--resume</c> starts from it.
         ///
-        /// <para><b>Why it is told apart</b> (review of 2026-09-24). Any failure to read it used to count
+        /// <para><b>Why it is told apart</b>. Any failure to read it used to count
         /// as "no checkpoint": the user was told that resuming would start the run from the beginning,
         /// and the report and the page dropped the resume command - for a checkpoint that was intact
         /// the whole time and resumed at its block once the holder let go. A sentence like that sends a
@@ -697,7 +697,7 @@ namespace SeedLab.Search.Execution
                     // longer, and a failure is reported in the outcome - not thrown, because the run
                     // itself did its work and the checkpoint on disk is still an older consistent pair.
                     //
-                    // The wait is SAID, at its first failed attempt (review of 2026-09-24): after a
+                    // The wait is SAID, at its first failed attempt: after a
                     // budget stop the terminal used to sit silent for about 15 s before the error, which
                     // reads as a hang to anyone who is not watching the session log.
                     bool announced = false;
@@ -761,13 +761,13 @@ namespace SeedLab.Search.Execution
                 // first, said "the wall-clock budget ran out" on a finished run). Guarding the flag at
                 // the claim races instead: another worker can take the last block between the check
                 // and the flag. `complete` is decided after every worker has joined, so this cannot
-                // lose a true stop - blocks left unclaimed means incomplete (review of 2026-09-24).
+                // lose a true stop - blocks left unclaimed means incomplete.
                 StoppedByWall = _wallHit && !complete,
 
                 // The same rule for a Stop, for the same reason. A Stop pressed after the last block was
                 // claimed stops nothing - every block is finished - and a funnel's stage one reported so
                 // was thrown away as "stopped after 400 of 400 seeds ... not of the range asked for", on
-                // both front ends, which test StoppedByUser || StoppedByWall (review of 2026-09-24).
+                // both front ends, which test StoppedByUser || StoppedByWall.
                 StoppedByUser = _userStop && !complete,
                 StoppedByLimit = _limitHit,
                 ProbeAccepts = Interlocked.Read(ref _probeAccepts),
@@ -898,7 +898,7 @@ namespace SeedLab.Search.Execution
             };
 
             // What a resume would really start from: the file on disk, read now, not what the run
-            // believes it last wrote. Three answers, not two (review of 2026-09-24): not there or not a
+            // believes it last wrote. Three answers, not two: not there or not a
             // checkpoint - nothing to resume; read - its block; there but held so it cannot be read now
             // - still a resume point, of a block this cannot tell.
             if (!File.Exists(checkpointPath)) return e;
